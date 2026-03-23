@@ -15,6 +15,11 @@ window.addEventListener("ik-jump", (e) => {
   }
 });
 
+// Close popup via game API
+window.addEventListener("ik-close-popup", () => {
+  try { ikariam.closePopup(); } catch (e) {}
+});
+
 // Read game-side JS variables and send them back to the content script.
 // These arrays contain island coordinates for military, war, and barbarian overlays.
 window.addEventListener("ik-read-game-data", () => {

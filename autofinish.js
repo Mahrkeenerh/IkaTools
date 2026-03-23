@@ -2,11 +2,16 @@
 (() => {
   const THRESHOLD_SECONDS = 295; // 4m 55s
   const CHECK_INTERVAL = 1000;
-  const COOLDOWN_MS = 5000;
+  const FAST_INTERVAL = 100;
+  const BUTTON_COOLDOWN = 500;
+  const CONFIRM_COOLDOWN = 500;
+  const FAST_POLL_DURATION = 3000;
 
   let enabled = true;
   let checkTimer = null;
-  let lastClickTime = 0;
+  let fastTimer = null;
+  let lastButtonClick = 0;
+  let lastConfirmClick = 0;
 
   function parseTime(text) {
     let total = 0;
@@ -19,20 +24,40 @@
     return total;
   }
 
+  function startFastPoll() {
+    if (fastTimer) return;
+    fastTimer = setInterval(tryAutoFinish, FAST_INTERVAL);
+    setTimeout(() => {
+      if (fastTimer) {
+        clearInterval(fastTimer);
+        fastTimer = null;
+      }
+    }, FAST_POLL_DURATION);
+  }
+
   function tryAutoFinish() {
     if (!enabled) return;
-    if (Date.now() - lastClickTime < COOLDOWN_MS) return;
 
-    // If confirmation popup is open, handle it
+    // If confirmation popup is open, click immediately
     const confirmBtn = document.getElementById("js_buildingSpeedupActivateBtn");
     if (confirmBtn) {
+      if (Date.now() - lastConfirmClick < CONFIRM_COOLDOWN) return;
       const costEl = confirmBtn.querySelector(".ambrosiaIcon");
       if (costEl && costEl.textContent.trim() === "0") {
-        lastClickTime = Date.now();
+        lastConfirmClick = Date.now();
+        lastButtonClick = 0; // allow button click immediately after confirm
         confirmBtn.click();
+        startFastPoll(); // may need another round (speedup → finish)
+      } else {
+        // Not free — close popup via bridge
+        window.dispatchEvent(new CustomEvent("ik-close-popup"));
+        lastConfirmClick = Date.now();
       }
       return;
     }
+
+    // Cooldown for speedup button
+    if (Date.now() - lastButtonClick < BUTTON_COOLDOWN) return;
 
     // Look for countdown timer
     const countdown = document.getElementById("buildCountDown");
@@ -46,10 +71,11 @@
 
     const speedupBtn = document.getElementById("buildingSpeedupConstructionList");
     if (!speedupBtn) return;
-    if (!speedupBtn.classList.contains("free")) return;
 
-    lastClickTime = Date.now();
+    lastButtonClick = Date.now();
+    lastConfirmClick = 0; // allow confirm click immediately after button
     speedupBtn.click();
+    startFastPoll(); // watch for confirmation popup
   }
 
   function start() {
@@ -61,6 +87,10 @@
     if (checkTimer) {
       clearInterval(checkTimer);
       checkTimer = null;
+    }
+    if (fastTimer) {
+      clearInterval(fastTimer);
+      fastTimer = null;
     }
   }
 

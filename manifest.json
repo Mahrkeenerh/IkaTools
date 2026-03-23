@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ikariam Tools",
-  "version": "2.1",
+  "version": "2.2",
   "description": "Removes premium UI clutter, auto-solves piracy captchas, and scans world maps",
   "permissions": ["offscreen", "storage", "activeTab"],
   "action": {
