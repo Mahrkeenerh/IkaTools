@@ -14,7 +14,7 @@
   "content_scripts": [
     {
       "matches": ["*://*.ikariam.gameforge.com/*"],
-      "js": ["cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js"],
+      "js": ["cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js", "autofinish.js"],
       "run_at": "document_idle"
     }
   ],

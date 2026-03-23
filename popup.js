@@ -397,4 +397,21 @@
       chrome.tabs.sendMessage(ikariamTabId, { type: "cleanup-toggle", enabled }).catch(() => {});
     }
   });
+
+  // --- Auto-finish toggle ---
+  const autofinishToggle = $("autofinish-toggle");
+
+  async function loadAutoFinishState() {
+    const data = await chrome.storage.local.get("autoFinishEnabled");
+    autofinishToggle.checked = data.autoFinishEnabled !== false;
+  }
+  loadAutoFinishState();
+
+  autofinishToggle.addEventListener("change", () => {
+    const enabled = autofinishToggle.checked;
+    chrome.storage.local.set({ autoFinishEnabled: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "autofinish-toggle", enabled }).catch(() => {});
+    }
+  });
 })();
