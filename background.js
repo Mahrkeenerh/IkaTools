@@ -1,0 +1,44 @@
+// Service worker — routes messages between content script and offscreen document
+
+let offscreenReady = false;
+let readyResolve = null;
+
+function waitForReady() {
+  if (offscreenReady) return Promise.resolve();
+  return new Promise((resolve) => {
+    readyResolve = resolve;
+  });
+}
+
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg.type === "offscreen-ready") {
+    offscreenReady = true;
+    if (readyResolve) readyResolve();
+    return;
+  }
+
+  if (msg.type === "solve-captcha") {
+    ensureOffscreen()
+      .then(() => waitForReady())
+      .then(() =>
+        chrome.runtime.sendMessage({
+          type: "offscreen-solve",
+          dataUrl: msg.dataUrl,
+        })
+      )
+      .then((result) => sendResponse(result))
+      .catch((err) => sendResponse({ error: err.message }));
+    return true;
+  }
+});
+
+async function ensureOffscreen() {
+  if (await chrome.offscreen.hasDocument()) return;
+  offscreenReady = false;
+  readyResolve = null;
+  await chrome.offscreen.createDocument({
+    url: "offscreen.html",
+    reasons: ["WORKERS"],
+    justification: "Run ONNX model inference via WASM",
+  });
+}

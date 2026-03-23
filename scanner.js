@@ -1,0 +1,327 @@
+// World map scanner — uses the game's own coordinate navigator to jump around
+// and reads tiles from the live DOM after each jump.
+(() => {
+  const DELAY_AFTER_JUMP = 1500; // ms to wait for AJAX + render
+  const DELAY_BETWEEN = 300; // extra breathing room
+
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+  function extractWorldName() {
+    // Page title is "Ikariam - 20m 54s - Svět Eurydike"
+    const parts = document.title.split(" - ");
+    if (parts.length >= 3) return parts.slice(2).join(" - ").trim();
+    const m = location.hostname.match(/^(s\d+-\w+)\./);
+    return m ? m[1] : "Unknown";
+  }
+
+  // Read tiles currently in the live DOM
+  function readCurrentTiles() {
+    const islands = [];
+    let maxCol = 0,
+      maxRow = 0;
+
+    document.querySelectorAll('[id^="tile_"]').forEach((el) => {
+      const m = el.id.match(/^tile_(\d+)_(\d+)$/);
+      if (!m) return;
+      const col = parseInt(m[1], 10);
+      const row = parseInt(m[2], 10);
+      if (col > maxCol) maxCol = col;
+      if (row > maxRow) maxRow = row;
+    });
+
+    document.querySelectorAll(".islandTile").forEach((tile) => {
+      const title = tile.getAttribute("title") || "";
+      const m = title.match(/^(.+?)\s*\[(\d+):(\d+)\]$/);
+      if (!m) return;
+
+      const citiesEl = tile.querySelector(".cities");
+      const wonderEl = tile.querySelector('[class*="wonder wonder"]');
+      const tgEl = tile.querySelector('[class*="tradegood tradegood"]');
+      const piracyEl = tile.querySelector('[id^="piracy_"]');
+      const heliosEl = tile.querySelector('[id^="helios_"]');
+      const ownerEl = tile.querySelector('[id^="owner_"]');
+
+      islands.push({
+        name: m[1],
+        x: parseInt(m[2], 10),
+        y: parseInt(m[3], 10),
+        cities: citiesEl ? parseInt(citiesEl.textContent, 10) || 0 : 0,
+        wonder: wonderEl
+          ? parseInt(wonderEl.className.match(/wonder(\d+)/)?.[1], 10) || 0
+          : 0,
+        tradegood: tgEl
+          ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0
+          : 0,
+        piracy: piracyEl ? piracyEl.className.includes("piracy") : false,
+        helios: heliosEl ? heliosEl.className.includes("helios") : false,
+        owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
+      });
+    });
+
+    return { islands, cols: maxCol + 1, rows: maxRow + 1 };
+  }
+
+  // Inject bridge.js into page context (once) — it listens for custom events
+  // and calls game functions. External script src bypasses CSP.
+  function ensureBridge() {
+    if (document.getElementById("ik-bridge")) return;
+    const s = document.createElement("script");
+    s.id = "ik-bridge";
+    s.src = chrome.runtime.getURL("bridge.js");
+    document.documentElement.appendChild(s);
+  }
+
+  // Navigate by dispatching a custom event that bridge.js handles in page context
+  function jumpTo(x, y) {
+    if (!document.getElementById("inputXCoord")) {
+      throw new Error("Coordinate inputs not found — are you on the world map?");
+    }
+    ensureBridge();
+    window.dispatchEvent(
+      new CustomEvent("ik-jump", { detail: { x, y } })
+    );
+  }
+
+  // Wait for tiles to actually update after a jump
+  function waitForTilesUpdate(targetX, targetY, timeoutMs = 1000) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+
+      function check() {
+        // Check if any visible island tile contains coords near our target
+        const tiles = document.querySelectorAll(".islandTile");
+        for (const tile of tiles) {
+          const title = tile.getAttribute("title") || "";
+          const m = title.match(/\[(\d+):(\d+)\]$/);
+          if (m) {
+            const tx = parseInt(m[1], 10);
+            const ty = parseInt(m[2], 10);
+            // If we see tiles near our target, the jump landed
+            if (Math.abs(tx - targetX) < 15 && Math.abs(ty - targetY) < 15) {
+              resolve(true);
+              return;
+            }
+          }
+        }
+        if (Date.now() - start > timeoutMs) {
+          resolve(false); // timed out, read whatever is there
+          return;
+        }
+        setTimeout(check, 200);
+      }
+      // Give the AJAX a moment to start
+      setTimeout(check, 400);
+    });
+  }
+
+  async function scanWorldMap(port) {
+    const worldName = extractWorldName();
+    const allIslands = new Map();
+    const scannedCenters = new Set();
+    let aborted = false;
+    let requestsDone = 0;
+    let totalEstimate = 0;
+
+    port.onDisconnect.addListener(() => {
+      aborted = true;
+    });
+
+    function addIslands(parsed) {
+      for (const isl of parsed) {
+        const key = `${isl.x}:${isl.y}`;
+        const existing = allIslands.get(key);
+        if (!existing || isl.cities > existing.cities) {
+          allIslands.set(key, isl);
+        }
+      }
+    }
+
+    function safeSend(msg) {
+      try {
+        port.postMessage(msg);
+      } catch (e) {
+        // Port disconnected (popup closed)
+        aborted = true;
+      }
+    }
+
+    function progress(phase) {
+      safeSend({
+        type: "progress",
+        phase,
+        current: requestsDone,
+        total: totalEstimate,
+        found: allIslands.size,
+      });
+    }
+
+    async function jumpAndRead(cx, cy, phase) {
+      if (aborted) return null;
+      const key = `${cx}:${cy}`;
+      if (scannedCenters.has(key)) return null;
+      scannedCenters.add(key);
+
+      try {
+        jumpTo(cx, cy);
+        await waitForTilesUpdate(cx, cy);
+        await sleep(DELAY_BETWEEN);
+
+        const result = readCurrentTiles();
+        addIslands(result.islands);
+        requestsDone++;
+        progress(phase);
+        return result;
+      } catch (err) {
+        safeSend({ type: "log", message: `Error at [${cx}:${cy}]: ${err.message}` });
+        requestsDone++;
+        progress(phase);
+        return null;
+      }
+    }
+
+    // --- Phase 1: Probe to detect viewport stride ---
+    safeSend({ type: "started", worldName, phase: "probe" });
+    totalEstimate = 1;
+
+    // First, make sure we're on the world map view
+    const xInput = document.getElementById("inputXCoord");
+    const yInput = document.getElementById("inputYCoord");
+    if (!xInput || !yInput) {
+      safeSend({
+        type: "error",
+        message: "Navigate to the World Map view first (coordinate inputs not found).",
+      });
+      return;
+    }
+
+    // Save starting position to restore after scan
+    const startX = parseInt(xInput.value, 10) || 50;
+    const startY = parseInt(yInput.value, 10) || 50;
+
+    // Read current position as initial probe
+    const probe = readCurrentTiles();
+    if (probe.islands.length > 0) {
+      addIslands(probe.islands);
+    }
+    requestsDone++;
+
+    const strideX = Math.max(1, probe.cols - 3);
+    const strideY = Math.max(1, probe.rows - 3);
+
+    safeSend({
+      type: "stride-detected",
+      cols: probe.cols,
+      rows: probe.rows,
+      strideX,
+      strideY,
+    });
+
+    // --- Phase 2: Cross scan to find the 4 tips of the diamond ---
+    // The world map is diamond-shaped. Scan outward from center in 4
+    // cardinal directions, stop on first empty.
+    let tipRight = 50, tipLeft = 50, tipDown = 50, tipUp = 50;
+
+    totalEstimate = 30;
+    progress("cross");
+
+    const centerResult = await jumpAndRead(50, 50, "cross");
+    if (aborted) return;
+
+    // Scan right (+X)
+    for (let x = 50 + strideX; x <= 120; x += strideX) {
+      if (aborted) return;
+      const r = await jumpAndRead(x, 50, "cross");
+      if (!r || r.islands.length === 0) break;
+      tipRight = x;
+    }
+    // Scan left (-X)
+    for (let x = 50 - strideX; x >= -20; x -= strideX) {
+      if (aborted) return;
+      const r = await jumpAndRead(x, 50, "cross");
+      if (!r || r.islands.length === 0) break;
+      tipLeft = x;
+    }
+    // Scan down (+Y)
+    for (let y = 50 + strideY; y <= 120; y += strideY) {
+      if (aborted) return;
+      const r = await jumpAndRead(50, y, "cross");
+      if (!r || r.islands.length === 0) break;
+      tipDown = y;
+    }
+    // Scan up (-Y)
+    for (let y = 50 - strideY; y >= -20; y -= strideY) {
+      if (aborted) return;
+      const r = await jumpAndRead(50, y, "cross");
+      if (!r || r.islands.length === 0) break;
+      tipUp = y;
+    }
+
+    if (aborted) return;
+
+    // Diamond center and radii (in grid coords)
+    const cx = (tipLeft + tipRight) / 2;
+    const cy = (tipUp + tipDown) / 2;
+    const halfW = (tipRight - tipLeft) / 2 + strideX; // +1 stride margin
+    const halfH = (tipDown - tipUp) / 2 + strideY;
+
+    safeSend({
+      type: "bounds-detected",
+      mapMinX: Math.round(cx - halfW),
+      mapMaxX: Math.round(cx + halfW),
+      mapMinY: Math.round(cy - halfH),
+      mapMaxY: Math.round(cy + halfH),
+    });
+
+    // --- Phase 3: Fill the diamond ---
+    // A point (x,y) is inside the diamond if:
+    //   |x - cx| / halfW + |y - cy| / halfH <= 1
+    const fillCenters = [];
+    const yMin = Math.round(cy - halfH);
+    const yMax = Math.round(cy + halfH);
+    const xMin = Math.round(cx - halfW);
+    const xMax = Math.round(cx + halfW);
+    for (let y = yMin; y <= yMax; y += strideY) {
+      for (let x = xMin; x <= xMax; x += strideX) {
+        const dx = Math.abs(x - cx) / halfW;
+        const dy = Math.abs(y - cy) / halfH;
+        if (dx + dy <= 1.05) { // small tolerance
+          const key = `${x}:${y}`;
+          if (!scannedCenters.has(key)) {
+            fillCenters.push([x, y]);
+          }
+        }
+      }
+    }
+
+    totalEstimate = requestsDone + fillCenters.length;
+    progress("fill");
+
+    for (const [cx, cy] of fillCenters) {
+      if (aborted) return;
+      await jumpAndRead(cx, cy, "fill");
+    }
+
+    if (!aborted) {
+      // Jump back to starting position
+      ensureBridge();
+      window.dispatchEvent(
+        new CustomEvent("ik-jump", { detail: { x: startX, y: startY } })
+      );
+
+      safeSend({
+        type: "complete",
+        worldName,
+        islands: Array.from(allIslands.values()),
+      });
+    }
+  }
+
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "map-scan") return;
+    port.onMessage.addListener((msg) => {
+      if (msg.action === "start-scan") {
+        scanWorldMap(port);
+      }
+    });
+  });
+})();

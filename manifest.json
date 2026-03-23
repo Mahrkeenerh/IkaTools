@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "Ikariam Tools",
+  "version": "2.1",
+  "description": "Removes premium UI clutter, auto-solves piracy captchas, and scans world maps",
+  "permissions": ["offscreen", "storage", "activeTab"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Ikariam Tools"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.ikariam.gameforge.com/*"],
+      "js": ["cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["model/model.onnx", "dist/*", "bridge.js"],
+      "matches": ["*://*.ikariam.gameforge.com/*"]
+    }
+  ]
+}

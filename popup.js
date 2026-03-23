@@ -1,0 +1,400 @@
+// Popup logic: scan orchestration, map rendering (via MapRender), gallery, minimap toggle
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const mapsPanel = $("maps-panel");
+  const notIkariam = $("not-ikariam");
+  const scanBtn = $("scan-btn");
+  const phaseText = $("phase-text");
+  const progressBar = $("progress-bar");
+  const statusDetail = $("status-detail");
+  const scanLog = $("scan-log");
+  const galleryList = $("gallery-list");
+  const canvas = $("map-canvas");
+  const ctx = canvas.getContext("2d");
+  const minimapToggle = $("minimap-toggle");
+  const posLeft = $("pos-left");
+  const posRight = $("pos-right");
+  const cleanupToggle = $("cleanup-toggle");
+
+  let ikariamTabId = null;
+
+  // --- Tab switching ---
+  document.querySelectorAll(".tab-bar button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      document.querySelectorAll(".tab-bar button").forEach((b) =>
+        b.classList.remove("active")
+      );
+      btn.classList.add("active");
+      document.querySelectorAll(".panel").forEach((p) =>
+        p.classList.remove("active")
+      );
+      const target = $(btn.dataset.tab + "-panel");
+      if (target) target.classList.add("active");
+    });
+  });
+
+  // --- Init ---
+  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    const tab = tabs[0];
+    if (tab) {
+      if (tab.url && tab.url.includes("ikariam.gameforge.com")) {
+        ikariamTabId = tab.id;
+      } else if (!tab.url) {
+        ikariamTabId = tab.id;
+      }
+    }
+    if (ikariamTabId) {
+      mapsPanel.classList.add("active");
+    } else {
+      mapsPanel.classList.remove("active");
+      notIkariam.classList.add("active");
+    }
+    loadGallery();
+    loadMinimapState();
+    loadCleanupState();
+  });
+
+  // --- Log helper ---
+  function log(msg) {
+    const line = document.createElement("div");
+    line.textContent = msg;
+    scanLog.appendChild(line);
+    scanLog.scrollTop = scanLog.scrollHeight;
+  }
+
+  // --- Scan ---
+  scanBtn.addEventListener("click", startScan);
+
+  function startScan() {
+    if (!ikariamTabId) return;
+    scanBtn.disabled = true;
+    scanLog.innerHTML = "";
+    phaseText.textContent = "Connecting...";
+    statusDetail.textContent = "";
+    progressBar.style.width = "0%";
+
+    const port = chrome.tabs.connect(ikariamTabId, { name: "map-scan" });
+    port.postMessage({ action: "start-scan" });
+
+    port.onMessage.addListener((msg) => {
+      switch (msg.type) {
+        case "started":
+          phaseText.textContent = `Scanning: ${msg.worldName}`;
+          log(`World: ${msg.worldName}`);
+          break;
+
+        case "stride-detected":
+          log(`Viewport: ${msg.cols}x${msg.rows} tiles, stride: ${msg.strideX}x${msg.strideY}`);
+          break;
+
+        case "bounds-detected":
+          log(`Bounds: X[${msg.mapMinX}..${msg.mapMaxX}] Y[${msg.mapMinY}..${msg.mapMaxY}]`);
+          break;
+
+        case "progress": {
+          const pct =
+            msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
+          progressBar.style.width = pct + "%";
+          const label =
+            msg.phase === "probe"
+              ? "Detecting viewport"
+              : msg.phase === "cross"
+                ? "Scanning cross"
+                : "Filling map";
+          phaseText.textContent = label;
+          statusDetail.textContent = `${msg.current}/${msg.total} jumps \u2022 ${msg.found} islands`;
+          break;
+        }
+
+        case "log":
+          log(msg.message);
+          break;
+
+        case "complete":
+          phaseText.textContent = "Rendering...";
+          log(`Done! ${msg.islands.length} islands total`);
+          finishScan(msg.worldName, msg.islands);
+          break;
+
+        case "error":
+          phaseText.textContent = "Error";
+          statusDetail.textContent = msg.message;
+          log(`ERROR: ${msg.message}`);
+          scanBtn.disabled = false;
+          break;
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
+      scanBtn.disabled = false;
+    });
+  }
+
+  async function finishScan(worldName, islands) {
+    const png = renderMap(islands);
+    await saveMap(worldName, islands, png);
+    phaseText.textContent = "Done!";
+    progressBar.style.width = "100%";
+    scanBtn.disabled = false;
+    loadGallery();
+
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "map-updated" }).catch(() => {});
+    }
+  }
+
+  function renderMap(islands, layer) {
+    MapRender.render(ctx, islands, { layer: layer || "population" });
+    return canvas.toDataURL("image/png");
+  }
+
+  // --- Storage ---
+  const STORAGE_INDEX = "mapIndex";
+
+  async function saveMap(worldName, islands, png) {
+    const index = await getIndex();
+    const key = "map_" + worldName;
+    const entry = { worldName, scanDate: new Date().toISOString(), key };
+
+    const existing = index.findIndex((e) => e.key === key);
+    if (existing >= 0) index[existing] = entry;
+    else index.unshift(entry);
+
+    await chrome.storage.local.set({
+      [STORAGE_INDEX]: index,
+      [key]: { worldName, scanDate: entry.scanDate, islands, png },
+    });
+  }
+
+  async function getIndex() {
+    const data = await chrome.storage.local.get(STORAGE_INDEX);
+    return data[STORAGE_INDEX] || [];
+  }
+
+  async function deleteMap(key) {
+    const index = await getIndex();
+    await chrome.storage.local.set({
+      [STORAGE_INDEX]: index.filter((e) => e.key !== key),
+    });
+    await chrome.storage.local.remove(key);
+    loadGallery();
+  }
+
+  // --- Gallery ---
+  async function loadGallery() {
+    const index = await getIndex();
+    if (index.length === 0) {
+      galleryList.innerHTML =
+        '<div class="gallery-empty">No saved maps yet. Scan a world first!</div>';
+      return;
+    }
+
+    const dimData = await chrome.storage.local.get("hideZeroCities");
+    const dimEmptyActive = !!dimData.hideZeroCities;
+
+    galleryList.innerHTML = "";
+    for (const entry of index) {
+      const data = await chrome.storage.local.get(entry.key);
+      const map = data[entry.key];
+      if (!map) continue;
+
+      const card = document.createElement("div");
+      card.className = "gallery-card";
+
+      const info = document.createElement("div");
+      info.className = "gallery-info";
+
+      const date = new Date(entry.scanDate);
+      const dateStr =
+        date.toLocaleDateString() +
+        " " +
+        date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      const populated = map.islands
+        ? map.islands.filter((i) => i.cities > 0).length
+        : 0;
+
+      info.innerHTML = `
+        <h3>${entry.worldName}</h3>
+        <div class="meta">${dateStr}</div>
+        <div class="meta">${map.islands ? map.islands.length : 0} islands \u2022 ${populated} populated</div>
+      `;
+
+      // Layer thumbnail strip
+      const thumbStrip = document.createElement("div");
+      thumbStrip.className = "thumb-strip";
+
+      const layerKeys = Object.keys(MapRender.LAYERS);
+      for (const layerKey of layerKeys) {
+        const thumbCanvas = document.createElement("canvas");
+        const thumbCtx = thumbCanvas.getContext("2d");
+        if (map.islands && map.islands.length > 0) {
+          MapRender.render(thumbCtx, map.islands, {
+            tileW: 2, tileH: 2, islandSize: 2, pad: 2,
+            drawLegend: false, layer: layerKey,
+            dimEmpty: dimEmptyActive,
+          });
+        }
+        const thumbWrap = document.createElement("div");
+        thumbWrap.className = "layer-thumb-wrap";
+
+        const thumb = document.createElement("img");
+        thumb.src = thumbCanvas.toDataURL("image/png");
+        thumb.className = "layer-thumb";
+        thumb.addEventListener("click", (e) => {
+          e.stopPropagation();
+          openPreview(layerKey);
+        });
+        thumb.addEventListener("auxclick", (e) => {
+          if (e.button === 1) { e.stopPropagation(); openPreview(layerKey, true); }
+        });
+
+        const label = document.createElement("div");
+        label.className = "thumb-label";
+        label.textContent = MapRender.LAYERS[layerKey].name;
+
+        thumbWrap.appendChild(thumb);
+        thumbWrap.appendChild(label);
+        thumbStrip.appendChild(thumbWrap);
+      }
+
+      info.appendChild(thumbStrip);
+
+      card.appendChild(info);
+
+      const delBtn = document.createElement("button");
+      delBtn.className = "btn btn-danger btn-sm delete-btn";
+      delBtn.textContent = "Delete";
+      delBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        deleteMap(entry.key);
+      });
+      card.appendChild(delBtn);
+
+      galleryList.appendChild(card);
+
+      function openPreview(layerKey, background) {
+        const previewCanvas = document.createElement("canvas");
+        const previewCtx = previewCanvas.getContext("2d");
+        MapRender.render(previewCtx, map.islands || [], { layer: layerKey || "population", dimEmpty: dimEmptyActive });
+        const blob = dataUrlToBlob(previewCanvas.toDataURL("image/png"));
+        const url = URL.createObjectURL(blob);
+        chrome.tabs.create({ url, active: !background });
+      }
+
+      card.addEventListener("click", () => openPreview("population"));
+    }
+  }
+
+  function dataUrlToBlob(dataUrl) {
+    const [header, data] = dataUrl.split(",");
+    const mime = header.match(/:(.*?);/)[1];
+    const bytes = atob(data);
+    const buf = new Uint8Array(bytes.length);
+    for (let i = 0; i < bytes.length; i++) buf[i] = bytes.charCodeAt(i);
+    return new Blob([buf], { type: mime });
+  }
+
+  // --- Minimap toggle ---
+  async function loadMinimapState() {
+    const data = await chrome.storage.local.get(["minimapEnabled", "minimapPosition"]);
+    minimapToggle.checked = !!data.minimapEnabled;
+    const pos = data.minimapPosition || "right";
+    posLeft.classList.toggle("active", pos === "left");
+    posRight.classList.toggle("active", pos === "right");
+  }
+
+  minimapToggle.addEventListener("change", () => {
+    const enabled = minimapToggle.checked;
+    chrome.storage.local.set({ minimapEnabled: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "minimap-toggle", enabled }).catch(() => {});
+    }
+  });
+
+  [posLeft, posRight].forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const pos = btn.dataset.pos;
+      posLeft.classList.toggle("active", pos === "left");
+      posRight.classList.toggle("active", pos === "right");
+      chrome.storage.local.set({ minimapPosition: pos });
+      if (ikariamTabId) {
+        chrome.tabs.sendMessage(ikariamTabId, { type: "minimap-position", position: pos }).catch(() => {});
+      }
+    });
+  });
+
+  // --- Minimap scale ---
+  async function loadScaleState() {
+    const data = await chrome.storage.local.get("minimapScale");
+    const scale = data.minimapScale || 1.5;
+    document.querySelectorAll(".scale-btns button").forEach((b) => {
+      b.classList.toggle("active", parseFloat(b.dataset.scale) === scale);
+    });
+  }
+  loadScaleState();
+
+  document.querySelectorAll(".scale-btns button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const scale = parseFloat(btn.dataset.scale);
+      document.querySelectorAll(".scale-btns button").forEach((b) => b.classList.remove("active"));
+      btn.classList.add("active");
+      chrome.storage.local.set({ minimapScale: scale });
+      if (ikariamTabId) {
+        chrome.tabs.sendMessage(ikariamTabId, { type: "minimap-scale", scale }).catch(() => {});
+      }
+    });
+  });
+
+  // --- Viewport trim ---
+  const trimRight = $("trim-right");
+  const trimBottom = $("trim-bottom");
+
+  async function loadTrimState() {
+    const data = await chrome.storage.local.get(["vpTrimRight", "vpTrimBottom"]);
+    trimRight.value = Math.round((data.vpTrimRight ?? 0.08) * 100);
+    trimBottom.value = Math.round((data.vpTrimBottom ?? 0.15) * 100);
+  }
+  loadTrimState();
+
+  function sendTrim() {
+    const r = (parseInt(trimRight.value, 10) || 0) / 100;
+    const b = (parseInt(trimBottom.value, 10) || 0) / 100;
+    chrome.storage.local.set({ vpTrimRight: r, vpTrimBottom: b });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "vp-trim", right: r, bottom: b }).catch(() => {});
+    }
+  }
+  trimRight.addEventListener("change", sendTrim);
+  trimBottom.addEventListener("change", sendTrim);
+
+  // --- Hide zeros toggle ---
+  const hideZerosToggle = $("hide-zeros-toggle");
+
+  async function loadHideZerosState() {
+    const data = await chrome.storage.local.get("hideZeroCities");
+    hideZerosToggle.checked = !!data.hideZeroCities;
+  }
+  loadHideZerosState();
+
+  hideZerosToggle.addEventListener("change", () => {
+    const enabled = hideZerosToggle.checked;
+    chrome.storage.local.set({ hideZeroCities: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "hide-zeros-toggle", enabled }).catch(() => {});
+    }
+  });
+
+  // --- Cleanup toggle ---
+  async function loadCleanupState() {
+    const data = await chrome.storage.local.get("cleanupEnabled");
+    cleanupToggle.checked = data.cleanupEnabled !== false;
+  }
+
+  cleanupToggle.addEventListener("change", () => {
+    const enabled = cleanupToggle.checked;
+    chrome.storage.local.set({ cleanupEnabled: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "cleanup-toggle", enabled }).catch(() => {});
+    }
+  });
+})();

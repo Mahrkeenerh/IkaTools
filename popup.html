@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  width: fit-content;
+  min-width: 680px;
+  min-height: 400px;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  background: #1a1f2e;
+  color: #c8cdd8;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  background: #141824;
+  border-bottom: 1px solid #2a3040;
+}
+.header h1 { font-size: 14px; font-weight: 600; color: #e0e4ec; }
+.tab-bar { display: flex; gap: 4px; }
+.tab-bar button {
+  padding: 5px 12px;
+  border: 1px solid #2a3040;
+  border-radius: 4px;
+  background: transparent;
+  color: #8890a0;
+  cursor: pointer;
+  font-size: 12px;
+}
+.tab-bar button.active {
+  background: #2a3550;
+  color: #e0e4ec;
+  border-color: #3a4a6a;
+}
+
+.panel { display: none; padding: 16px; }
+.panel.active { display: block; }
+
+/* Scan panel */
+#scan-status {
+  padding: 8px 12px;
+  margin-bottom: 12px;
+  background: #141824;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #8890a0;
+}
+#scan-status .phase { color: #a0b0d0; font-weight: 500; }
+.progress-wrap {
+  height: 6px;
+  background: #0d1018;
+  border-radius: 3px;
+  margin: 8px 0;
+  overflow: hidden;
+}
+.progress-bar {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, #3a7bd5, #5ca0f2);
+  border-radius: 3px;
+  transition: width 0.3s ease;
+}
+#scan-log {
+  margin-top: 10px;
+  max-height: 80px;
+  overflow-y: auto;
+  font-size: 11px;
+  color: #667;
+  font-family: monospace;
+}
+
+.btn {
+  display: inline-block;
+  padding: 8px 20px;
+  border: none;
+  border-radius: 5px;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.btn-primary { background: #2a5fad; color: #fff; }
+.btn-primary:hover { background: #3570c4; }
+.btn-primary:disabled { background: #1e2a3e; color: #556; cursor: default; }
+.btn-danger { background: #6b2020; color: #daa; font-size: 11px; }
+.btn-danger:hover { background: #8b3030; }
+.btn-sm { padding: 4px 10px; font-size: 11px; }
+
+/* Controls row */
+.controls-row {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid #2a3040;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.control-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.control-group label { color: #8890a0; white-space: nowrap; }
+.control-group input[type="number"] {
+  width: 44px;
+  padding: 3px 4px;
+  border: 1px solid #2a3040;
+  border-radius: 3px;
+  background: #0d1018;
+  color: #c8cdd8;
+  font-size: 12px;
+  text-align: center;
+}
+.toggle {
+  position: relative;
+  width: 36px;
+  height: 20px;
+  display: inline-block;
+}
+.toggle input { opacity: 0; width: 0; height: 0; }
+.toggle .slider {
+  position: absolute;
+  inset: 0;
+  background: #2a3040;
+  border-radius: 10px;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.toggle .slider::before {
+  content: "";
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  width: 14px;
+  height: 14px;
+  background: #667;
+  border-radius: 50%;
+  transition: transform 0.2s, background 0.2s;
+}
+.toggle input:checked + .slider { background: #2a5fad; }
+.toggle input:checked + .slider::before {
+  transform: translateX(16px);
+  background: #e0e4ec;
+}
+.pos-btns { display: flex; gap: 2px; }
+.pos-btns button {
+  padding: 3px 8px;
+  border: 1px solid #2a3040;
+  border-radius: 3px;
+  background: transparent;
+  color: #8890a0;
+  cursor: pointer;
+  font-size: 11px;
+}
+.pos-btns button.active, .scale-btns button.active {
+  background: #2a3550;
+  color: #e0e4ec;
+  border-color: #3a4a6a;
+}
+.scale-btns { display: flex; gap: 2px; }
+.scale-btns button {
+  padding: 3px 6px;
+  border: 1px solid #2a3040;
+  border-radius: 3px;
+  background: transparent;
+  color: #8890a0;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+#not-ikariam {
+  text-align: center;
+  padding: 60px 20px;
+  color: #667;
+}
+
+/* Settings */
+.setting-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid #1e2535;
+}
+.setting-row:last-child { border-bottom: none; }
+.setting-label { flex: 1; }
+.setting-label span:first-child {
+  display: block;
+  font-size: 13px;
+  color: #e0e4ec;
+}
+.setting-desc {
+  display: block;
+  font-size: 11px;
+  color: #667;
+  margin-top: 2px;
+}
+
+/* Gallery */
+.gallery-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a3040; }
+.gallery-card {
+  position: relative;
+  padding: 10px;
+  background: #141824;
+  border-radius: 8px;
+  border: 1px solid #2a3040;
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+.gallery-card:hover { border-color: #3a5a8a; }
+.gallery-card .delete-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+}
+.gallery-info h3 { font-size: 14px; color: #e0e4ec; margin-bottom: 4px; }
+.gallery-info .meta { font-size: 11px; color: #778; margin-bottom: 2px; }
+.gallery-actions { display: flex; gap: 6px; margin-top: 10px; }
+.gallery-empty { text-align: center; padding: 50px 20px; color: #556; }
+.thumb-strip {
+  display: grid;
+  grid-template-columns: repeat(6, 1fr);
+  gap: 4px;
+  margin-top: 8px;
+}
+.layer-thumb-wrap {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+}
+.layer-thumb {
+  width: 100%;
+  max-width: 120px;
+  height: auto;
+  background: #0e2040;
+  border-radius: 3px;
+  border: 1px solid #2a3040;
+  cursor: pointer;
+  image-rendering: pixelated;
+  transition: border-color 0.15s;
+}
+.layer-thumb:hover { border-color: #5a8aba; }
+.thumb-label {
+  font-size: 10px;
+  color: #778;
+  text-align: center;
+}
+</style>
+</head>
+<body>
+
+<div class="header">
+  <h1>Ikariam Tools</h1>
+  <div class="tab-bar">
+    <button class="active" data-tab="maps">Maps</button>
+    <button data-tab="settings">Settings</button>
+  </div>
+</div>
+
+<div id="not-ikariam" class="panel">
+  Navigate to an Ikariam game tab first.
+</div>
+
+<div id="maps-panel" class="panel active">
+  <div id="scan-status">
+    <span class="phase" id="phase-text">Ready</span>
+    <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
+    <span id="status-detail"></span>
+  </div>
+  <button class="btn btn-primary" id="scan-btn">Scan World Map</button>
+  <div id="scan-log"></div>
+  <div id="gallery-list" class="gallery-grid"></div>
+</div>
+
+<div id="settings-panel" class="panel">
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="cleanup-toggle" checked>
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Remove premium clutter</span>
+      <span class="setting-desc">Hides shop, ambrosia fountain, premium trader, ads</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="hide-zeros-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Dim empty islands</span>
+      <span class="setting-desc">Fades uninhabited islands so populated ones stand out</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="minimap-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Mini-map overlay</span>
+      <span class="setting-desc">Shows scanned world map on the game page</span>
+    </div>
+    <div class="pos-btns">
+      <button data-pos="left" id="pos-left">L</button>
+      <button data-pos="right" id="pos-right" class="active">R</button>
+    </div>
+    <div class="scale-btns">
+      <button data-scale="0.75">0.75x</button>
+      <button data-scale="1">1x</button>
+      <button data-scale="1.25">1.25x</button>
+      <button data-scale="1.5" class="active">1.5x</button>
+      <button data-scale="2">2x</button>
+    </div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label">
+      <span>Viewport trim</span>
+      <span class="setting-desc">Adjust if the bounding box extends past visible area</span>
+    </div>
+    <div class="control-group">
+      <label>R%</label>
+      <input type="number" id="trim-right" value="8" min="0" max="30" step="1">
+    </div>
+    <div class="control-group">
+      <label>B%</label>
+      <input type="number" id="trim-bottom" value="15" min="0" max="30" step="1">
+    </div>
+  </div>
+</div>
+
+<canvas id="map-canvas" style="display:none;"></canvas>
+
+<script src="maprender.js"></script>
+<script src="popup.js"></script>
+</body>
+</html>
