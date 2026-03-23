@@ -14,3 +14,19 @@ window.addEventListener("ik-jump", (e) => {
     console.error("[IkBridge] jumpToCoord failed:", err);
   }
 });
+
+// Read game-side JS variables and send them back to the content script.
+// These arrays contain island coordinates for military, war, and barbarian overlays.
+window.addEventListener("ik-read-game-data", () => {
+  const result = {};
+  try {
+    if (typeof militaryIslandsJS !== "undefined") result.military = militaryIslandsJS;
+  } catch (e) { /* not available */ }
+  try {
+    if (typeof warIslandsJS !== "undefined") result.war = warIslandsJS;
+  } catch (e) { /* not available */ }
+  try {
+    if (typeof barbarianIslandsJS !== "undefined") result.barbarian = barbarianIslandsJS;
+  } catch (e) { /* not available */ }
+  window.dispatchEvent(new CustomEvent("ik-game-data", { detail: result }));
+});

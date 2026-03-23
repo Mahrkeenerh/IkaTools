@@ -142,9 +142,19 @@
         piracy: piracyEl ? piracyEl.className.includes("piracy") : false,
         helios: heliosEl ? heliosEl.className.includes("helios") : false,
         owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
+        military: false,
+        war: false,
+        barbarian: false,
       };
 
+      // Preserve existing overlay flags (set by scanner from game data)
       const old = existing.get(key);
+      if (old) {
+        newIsland.military = old.military || false;
+        newIsland.war = old.war || false;
+        newIsland.barbarian = old.barbarian || false;
+      }
+
       if (!old || old.cities !== newIsland.cities || old.owner !== newIsland.owner) {
         existing.set(key, newIsland);
         changed = true;

@@ -55,6 +55,9 @@
         piracy: piracyEl ? piracyEl.className.includes("piracy") : false,
         helios: heliosEl ? heliosEl.className.includes("helios") : false,
         owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
+        military: false,
+        war: false,
+        barbarian: false,
       });
     });
 
@@ -83,7 +86,7 @@
   }
 
   // Wait for tiles to actually update after a jump
-  function waitForTilesUpdate(targetX, targetY, timeoutMs = 1000) {
+  function waitForTilesUpdate(targetX, targetY, timeoutMs = 500) {
     return new Promise((resolve) => {
       const start = Date.now();
 
@@ -111,6 +114,54 @@
       }
       // Give the AJAX a moment to start
       setTimeout(check, 400);
+    });
+  }
+
+  // Request military/war/barbarian data from page context via bridge
+  function requestGameData() {
+    return new Promise((resolve) => {
+      function handler(e) {
+        window.removeEventListener("ik-game-data", handler);
+        resolve(e.detail || {});
+      }
+      window.addEventListener("ik-game-data", handler);
+      window.dispatchEvent(new CustomEvent("ik-read-game-data"));
+      // Timeout if bridge doesn't respond
+      setTimeout(() => {
+        window.removeEventListener("ik-game-data", handler);
+        resolve({});
+      }, 2000);
+    });
+  }
+
+  // Parse game overlay arrays and tag matching islands.
+  // Game uses 2D sparse arrays: array[x][y] = 1 means flagged.
+  function enrichWithGameData(allIslands) {
+    return requestGameData().then((data) => {
+      function parseCoordSet(raw) {
+        const coords = new Set();
+        if (!raw || !Array.isArray(raw)) return coords;
+        for (let x = 0; x < raw.length; x++) {
+          const row = raw[x];
+          if (!Array.isArray(row)) continue;
+          for (let y = 0; y < row.length; y++) {
+            if (row[y]) coords.add(`${x}:${y}`);
+          }
+        }
+        return coords;
+      }
+
+      const militarySet = parseCoordSet(data.military);
+      const warSet = parseCoordSet(data.war);
+      const barbarianSet = parseCoordSet(data.barbarian);
+
+      for (const [key, isl] of allIslands) {
+        isl.military = militarySet.has(key);
+        isl.war = warSet.has(key);
+        isl.barbarian = barbarianSet.has(key);
+      }
+    }).catch(() => {
+      // If bridge data unavailable, islands keep defaults (false)
     });
   }
 
@@ -302,6 +353,9 @@
     }
 
     if (!aborted) {
+      // Request game-side overlay data (military, war, barbarian)
+      await enrichWithGameData(allIslands);
+
       // Jump back to starting position
       ensureBridge();
       window.dispatchEvent(

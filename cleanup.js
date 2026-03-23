@@ -54,9 +54,12 @@
 
   function cleanZeros() {
     if (!hideZeros) return;
-    document.querySelectorAll(".islandTile").forEach((tile) => {
+    document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
+      const title = tile.getAttribute("title") || "";
+      // Only dim real islands (have [x:y] coords), not barbarian ships etc.
+      if (!title.match(/\[\d+:\d+\]$/)) { tile.style.opacity = ""; return; }
       const citiesEl = tile.querySelector(".cities");
-      if (!citiesEl) return;
+      if (!citiesEl) { tile.style.opacity = ""; return; }
       if (citiesEl.textContent.trim() === "0") {
         tile.style.opacity = "0.35";
       } else {
@@ -79,7 +82,7 @@
       zerosObserver = null;
     }
     // Restore all
-    document.querySelectorAll(".islandTile").forEach((tile) => {
+    document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
       tile.style.opacity = "";
     });
   }

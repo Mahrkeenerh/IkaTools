@@ -99,6 +99,16 @@ globalThis.MapRender = (() => {
       color: (isl) => WONDER_COLORS[isl.wonder] || DIM,
       sort: (a, b) => a.wonder - b.wonder,
     },
+    military: {
+      name: "Military",
+      color: (isl) => isl.military ? "#FF6B6B" : DIM,
+      sort: (a, b) => (a.military ? 1 : 0) - (b.military ? 1 : 0),
+    },
+    war: {
+      name: "War zones",
+      color: (isl) => isl.war ? "#FF2020" : DIM,
+      sort: (a, b) => (a.war ? 1 : 0) - (b.war ? 1 : 0),
+    },
   };
 
   function isoToPixel(gx, gy, tw, th) {
@@ -297,6 +307,22 @@ globalThis.MapRender = (() => {
           ctx.fillText(name, ox + boxSize + 4, ly + boxSize - 1);
           ox += ctx.measureText(name).width + boxSize + 14;
         }
+      } else if (layerKey === "military") {
+        const boxSize = Math.max(12, Math.round(tw * 1.2));
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#FF6B6B";
+        ctx.fillRect(lx, ly, boxSize, boxSize);
+        ctx.fillStyle = "#c0c8d8";
+        ctx.fillText("Military presence", lx + boxSize + 4, ly + boxSize - 1);
+      } else if (layerKey === "war") {
+        const boxSize = Math.max(12, Math.round(tw * 1.2));
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#FF2020";
+        ctx.fillRect(lx, ly, boxSize, boxSize);
+        ctx.fillStyle = "#c0c8d8";
+        ctx.fillText("War zone", lx + boxSize + 4, ly + boxSize - 1);
       }
     }
 
