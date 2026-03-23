@@ -52,8 +52,8 @@
         tradegood: tgEl
           ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0
           : 0,
-        piracy: piracyEl ? piracyEl.className.includes("piracy") : false,
-        helios: heliosEl ? heliosEl.className.includes("helios") : false,
+        piracy: piracyEl ? piracyEl.className !== "" : false,
+        helios: heliosEl ? heliosEl.className !== "" : false,
         owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
         military: false,
         war: false,

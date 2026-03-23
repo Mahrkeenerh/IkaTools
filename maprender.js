@@ -79,6 +79,16 @@ globalThis.MapRender = (() => {
         return rank(a.owner || "") - rank(b.owner || "");
       },
     },
+    military: {
+      name: "Military",
+      color: (isl) => isl.military ? "#FF6B6B" : DIM,
+      sort: (a, b) => (a.military ? 1 : 0) - (b.military ? 1 : 0),
+    },
+    war: {
+      name: "War zones",
+      color: (isl) => isl.war ? "#FF2020" : DIM,
+      sort: (a, b) => (a.war ? 1 : 0) - (b.war ? 1 : 0),
+    },
     piracy: {
       name: "Piracy",
       color: (isl) => isl.piracy ? "#FF4444" : DIM,
@@ -98,16 +108,6 @@ globalThis.MapRender = (() => {
       name: "Wonders",
       color: (isl) => WONDER_COLORS[isl.wonder] || DIM,
       sort: (a, b) => a.wonder - b.wonder,
-    },
-    military: {
-      name: "Military",
-      color: (isl) => isl.military ? "#FF6B6B" : DIM,
-      sort: (a, b) => (a.military ? 1 : 0) - (b.military ? 1 : 0),
-    },
-    war: {
-      name: "War zones",
-      color: (isl) => isl.war ? "#FF2020" : DIM,
-      sort: (a, b) => (a.war ? 1 : 0) - (b.war ? 1 : 0),
     },
   };
 
