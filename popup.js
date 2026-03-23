@@ -52,6 +52,7 @@
     loadGallery();
     loadMinimapState();
     loadCleanupState();
+    loadPirateState();
   });
 
   // --- Log helper ---
@@ -397,6 +398,67 @@
       chrome.tabs.sendMessage(ikariamTabId, { type: "cleanup-toggle", enabled }).catch(() => {});
     }
   });
+
+  // --- Auto pirate ---
+  const pirateToggle = $("pirate-toggle");
+  const pirateCity = $("pirate-city");
+  const pirateStart = $("pirate-start");
+  const pirateEnd = $("pirate-end");
+
+  async function loadPirateState() {
+    const data = await chrome.storage.local.get([
+      "pirateEnabled", "pirateCityId", "pirateActiveStart", "pirateActiveEnd",
+    ]);
+    pirateToggle.checked = !!data.pirateEnabled;
+    pirateStart.value = data.pirateActiveStart ?? "";
+    pirateEnd.value = data.pirateActiveEnd ?? "";
+
+    // Load city list from content script
+    if (ikariamTabId) {
+      try {
+        const resp = await chrome.tabs.sendMessage(ikariamTabId, { type: "get-cities" });
+        if (resp && resp.cities) {
+          pirateCity.innerHTML = '<option value="">-- select --</option>';
+          for (const c of resp.cities) {
+            const opt = document.createElement("option");
+            opt.value = c.id;
+            opt.textContent = c.name + " " + c.coords;
+            if (c.id === data.pirateCityId) opt.selected = true;
+            pirateCity.appendChild(opt);
+          }
+        }
+      } catch (e) {
+        // Content script not available
+      }
+    }
+  }
+
+  pirateToggle.addEventListener("change", () => {
+    const enabled = pirateToggle.checked;
+    chrome.storage.local.set({ pirateEnabled: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-toggle", enabled }).catch(() => {});
+    }
+  });
+
+  pirateCity.addEventListener("change", () => {
+    const cityId = parseInt(pirateCity.value, 10) || null;
+    chrome.storage.local.set({ pirateCityId: cityId });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", cityId }).catch(() => {});
+    }
+  });
+
+  function sendPirateHours() {
+    const s = pirateStart.value !== "" ? parseInt(pirateStart.value, 10) : null;
+    const e = pirateEnd.value !== "" ? parseInt(pirateEnd.value, 10) : null;
+    chrome.storage.local.set({ pirateActiveStart: s, pirateActiveEnd: e });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", activeStart: s, activeEnd: e }).catch(() => {});
+    }
+  }
+  pirateStart.addEventListener("change", sendPirateHours);
+  pirateEnd.addEventListener("change", sendPirateHours);
 
   // --- Auto-finish toggle ---
   const autofinishToggle = $("autofinish-toggle");

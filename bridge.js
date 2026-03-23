@@ -20,6 +20,24 @@ window.addEventListener("ik-close-popup", () => {
   try { ikariam.closePopup(); } catch (e) {}
 });
 
+// General-purpose AJAX navigation (calls game's ajaxHandlerCall)
+window.addEventListener("ik-ajax-call", (e) => {
+  try { ajaxHandlerCall(e.detail.url); } catch (err) {
+    console.error("[IkBridge] ajaxHandlerCall failed:", err);
+  }
+});
+
+// Read city list from game data for the popup city selector
+window.addEventListener("ik-read-cities", () => {
+  let result = {};
+  try {
+    if (typeof ikariam !== "undefined" && ikariam.model) {
+      result = ikariam.model.relatedCityData || {};
+    }
+  } catch (e) {}
+  window.dispatchEvent(new CustomEvent("ik-cities-data", { detail: result }));
+});
+
 // Read game-side JS variables and send them back to the content script.
 // These arrays contain island coordinates for military, war, and barbarian overlays.
 window.addEventListener("ik-read-game-data", () => {

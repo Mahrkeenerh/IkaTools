@@ -109,7 +109,7 @@ body {
 }
 .control-group label { color: #8890a0; white-space: nowrap; }
 .control-group input[type="number"] {
-  width: 44px;
+  width: 56px;
   padding: 3px 4px;
   border: 1px solid #2a3040;
   border-radius: 3px;
@@ -309,6 +309,31 @@ body {
     <div class="setting-label">
       <span>Auto-finish buildings</span>
       <span class="setting-desc">Instantly completes buildings when under 4m 55s (free)</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="pirate-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Auto pirate missions</span>
+      <span class="setting-desc">Launches tier 1 raids when idle &amp; window unfocused</span>
+    </div>
+  </div>
+  <div class="setting-row" id="pirate-config" style="flex-wrap: wrap; gap: 8px;">
+    <div class="control-group">
+      <label>City</label>
+      <select id="pirate-city" style="padding:3px 4px;border:1px solid #2a3040;border-radius:3px;background:#0d1018;color:#c8cdd8;font-size:12px;">
+        <option value="">-- select --</option>
+      </select>
+    </div>
+    <div class="control-group">
+      <label>Active</label>
+      <input type="number" id="pirate-start" min="0" max="23" step="1" style="width:56px" placeholder="8">
+      <label>–</label>
+      <input type="number" id="pirate-end" min="0" max="23" step="1" style="width:56px" placeholder="23">
+      <label style="color:#556">h (±10m)</label>
     </div>
   </div>
   <div class="setting-row">

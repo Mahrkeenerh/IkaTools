@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ikariam Tools",
-  "version": "2.2",
+  "version": "2.3",
   "description": "Removes premium UI clutter, auto-solves piracy captchas, and scans world maps",
   "permissions": ["offscreen", "storage", "activeTab"],
   "action": {
@@ -14,7 +14,7 @@
   "content_scripts": [
     {
       "matches": ["*://*.ikariam.gameforge.com/*"],
-      "js": ["cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js", "autofinish.js"],
+      "js": ["cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js", "autofinish.js", "autopirate.js"],
       "run_at": "document_idle"
     }
   ],
