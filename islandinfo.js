@@ -372,9 +372,48 @@
     }
   }
 
+  // --- Barbarian village: ships needed calculation ---
+  const SHIP_CAPACITY = 500;
+  const BARB_RESOURCE_IDS = [
+    "js_islandBarbarianResourceresource",    // wood
+    "js_islandBarbarianResourcetradegood1",  // wine
+    "js_islandBarbarianResourcetradegood2",  // marble
+    "js_islandBarbarianResourcetradegood3",  // crystal
+    "js_islandBarbarianResourcetradegood4",  // sulfur
+  ];
+
+  function injectShipsNeeded() {
+    const container = document.querySelector(".barbarianCityResources");
+    if (!container) return;
+    if (container.querySelector("#ik-ships-needed")) return;
+
+    let totalGoods = 0;
+    for (const id of BARB_RESOURCE_IDS) {
+      const el = document.getElementById(id);
+      if (el) totalGoods += parseInt(el.textContent.replace(/\s/g, ""), 10) || 0;
+    }
+
+    const ships = Math.ceil(totalGoods / SHIP_CAPACITY);
+    const div = document.createElement("div");
+    div.id = "ik-ships-needed";
+    div.style.cssText = "padding:6px 4px; font-size:14px; background:transparent; margin-top:-18px;";
+    div.innerHTML = `\u2693 Ships needed: ${ships} <span style="font-size:0.9em;opacity:0.7;">(${totalGoods.toLocaleString()} goods &divide; ${SHIP_CAPACITY})</span>`;
+    // Insert after the info box, aligned to same horizontal position
+    const infoBox = container.closest(".barbarianCityInfos");
+    if (infoBox) {
+      div.style.marginLeft = infoBox.offsetLeft + "px";
+      infoBox.after(div);
+    } else {
+      container.after(div);
+    }
+    console.log(TAG, `Barbarian loot: ${totalGoods} goods, ${ships} ships needed`);
+  }
+
   // --- Init ---
   async function init() {
     if (document.body.id !== "island") return;
+
+    injectShipsNeeded();
 
     const island = await extractAndStore();
     if (island && island.cities.length > 0) {
@@ -397,4 +436,17 @@
     }
   });
   obs.observe(document.body, { attributes: true, attributeFilter: ["id"] });
+
+  // Watch for barbarian village content appearing (user clicks barbarian village)
+  let barbTimer = null;
+  const barbObs = new MutationObserver(() => {
+    if (document.body.id !== "island") return;
+    if (document.getElementById("ik-ships-needed")) return;
+    if (barbTimer) return;
+    barbTimer = setTimeout(() => {
+      barbTimer = null;
+      injectShipsNeeded();
+    }, 300);
+  });
+  barbObs.observe(document.body, { childList: true, subtree: true });
 })();
