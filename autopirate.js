@@ -140,8 +140,8 @@
 
         if (bodyId === "city" && onPirateCity) {
           // Right city, open fortress
-          console.log(P, "Opening fortress");
-          navigate("?view=pirateFortress&cityId=" + pirateCityId + "&position=17");
+          console.log(P, "Opening fortress (BootyQuest tab)");
+          navigate("?view=pirateFortress&activeTab=tabBootyQuest&cityId=" + pirateCityId + "&position=17");
           // Watch for capture button to appear after AJAX
           const obs = new MutationObserver(() => {
             if (document.querySelector("#pirateCaptureBox .button.capture")) {
