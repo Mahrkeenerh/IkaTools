@@ -15,7 +15,7 @@
   let mapCanvas = null;
   let mapCtx = null;
   let currentMapData = null;
-  let minimapScale = 1.5;
+  let minimapScale = 1.25;
   let vpTrimRight = 0.08;
   let vpTrimBottom = 0.15;
   let currentLayer = "population";
@@ -192,16 +192,84 @@
       boxShadow: "0 4px 20px rgba(0,0,0,0.5)",
     });
 
+    // Canvas wrapper (for overlaying controls on top)
+    const wrapper = document.createElement("div");
+    Object.assign(wrapper.style, { position: "relative" });
+
     mapCanvas = document.createElement("canvas");
     mapCanvas.style.borderRadius = "6px";
     mapCanvas.style.display = "block";
     mapCanvas.style.imageRendering = "pixelated";
-    container.appendChild(mapCanvas);
+    wrapper.appendChild(mapCanvas);
     mapCtx = mapCanvas.getContext("2d");
 
     mapCanvas.addEventListener("click", onMinimapClick);
 
-    // Layer selector bar
+    // Top overlay bar (scale + collapse) — sits on top of the canvas
+    const topBar = document.createElement("div");
+    Object.assign(topBar.style, {
+      position: "absolute",
+      top: "2px",
+      left: "2px",
+      right: "2px",
+      display: "flex",
+      gap: "2px",
+      alignItems: "center",
+      pointerEvents: "none",
+    });
+
+    const scales = [0.75, 1, 1.25, 1.5, 2];
+    for (const s of scales) {
+      const btn = document.createElement("button");
+      btn.textContent = s + "x";
+      btn.dataset.scale = s;
+      Object.assign(btn.style, {
+        padding: "3px 5px", border: "1px solid rgba(42,58,85,0.7)", borderRadius: "3px",
+        background: s === minimapScale ? "rgba(42,74,106,0.8)" : "rgba(10,22,40,0.6)",
+        color: s === minimapScale ? "#e0e8f0" : "#6a7a8a",
+        cursor: "pointer", fontSize: "10px", fontFamily: "sans-serif",
+        pointerEvents: "auto",
+      });
+      btn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        minimapScale = s;
+        cachedBaseMap = null;
+        chrome.storage.local.set({ minimapScale: s });
+        topBar.querySelectorAll("[data-scale]").forEach((b) => {
+          b.style.background = parseFloat(b.dataset.scale) === s ? "rgba(42,74,106,0.8)" : "rgba(10,22,40,0.6)";
+          b.style.color = parseFloat(b.dataset.scale) === s ? "#e0e8f0" : "#6a7a8a";
+        });
+        drawMinimap();
+      });
+      topBar.appendChild(btn);
+    }
+
+    const spacer = document.createElement("div");
+    spacer.style.flex = "1";
+    topBar.appendChild(spacer);
+
+    const collapseLabel = document.createElement("span");
+    collapseLabel.textContent = "Map";
+    Object.assign(collapseLabel.style, {
+      color: "#8890a0", fontSize: "10px", fontFamily: "sans-serif",
+      display: "none", pointerEvents: "none", marginRight: "4px",
+    });
+    topBar.appendChild(collapseLabel);
+
+    const collapseBtn = document.createElement("button");
+    collapseBtn.textContent = "\u25BC";
+    Object.assign(collapseBtn.style, {
+      padding: "3px 6px", border: "1px solid rgba(42,58,85,0.7)", borderRadius: "3px",
+      background: "rgba(10,22,40,0.6)", color: "#667",
+      cursor: "pointer", fontSize: "10px", fontFamily: "sans-serif",
+      pointerEvents: "auto",
+    });
+    topBar.appendChild(collapseBtn);
+
+    wrapper.appendChild(topBar);
+    container.appendChild(wrapper);
+
+    // Layer selector bar (below canvas)
     const layerBar = document.createElement("div");
     Object.assign(layerBar.style, {
       display: "flex",
@@ -229,8 +297,8 @@
       btn.addEventListener("click", (e) => {
         e.stopPropagation();
         currentLayer = key;
+        cachedBaseMap = null;
         chrome.storage.local.set({ minimapLayer: key });
-        // Update button styles
         layerBar.querySelectorAll("button").forEach((b) => {
           b.style.background = b.dataset.layer === key ? "#2a4a6a" : "transparent";
           b.style.color = b.dataset.layer === key ? "#e0e8f0" : "#6a7a8a";
@@ -240,6 +308,29 @@
       layerBar.appendChild(btn);
     }
     container.appendChild(layerBar);
+
+    // Collapse logic — move buttons out of canvas overlay into container
+    let collapsed = false;
+    collapseBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      collapsed = !collapsed;
+      if (collapsed) {
+        mapCanvas.style.display = "none";
+        layerBar.style.display = "none";
+        topBar.style.position = "static";
+        topBar.style.pointerEvents = "auto";
+        topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
+        collapseLabel.style.display = "";
+      } else {
+        mapCanvas.style.display = "block";
+        layerBar.style.display = "flex";
+        topBar.style.position = "absolute";
+        topBar.style.pointerEvents = "none";
+        topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = ""; });
+        collapseLabel.style.display = "none";
+      }
+      collapseBtn.textContent = collapsed ? "\u25B2" : "\u25BC";
+    });
 
     document.body.appendChild(container);
   }
@@ -258,10 +349,57 @@
     setTimeout(drawMinimap, 200);
   }
 
+  let allianceIndex = null;
+  let allianceColorMap = {};
+
+  async function loadAllianceIndex() {
+    const data = await chrome.storage.local.get("allianceIndex");
+    allianceIndex = data.allianceIndex || {};
+    // Build color map for top alliances
+    const allyCounts = {};
+    for (const key of Object.keys(allianceIndex)) {
+      const entry = allianceIndex[key];
+      for (const [tag, count] of Object.entries(entry.counts || {})) {
+        if (tag === "(none)") continue;
+        allyCounts[tag] = (allyCounts[tag] || 0) + count;
+      }
+    }
+    // Sort by total presence, assign colors
+    const sorted = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
+    const palette = globalThis.MapRender?.ALLY_PALETTE || [];
+    allianceColorMap = {};
+    sorted.forEach(([tag], i) => {
+      allianceColorMap[tag] = palette[i % palette.length] || "#888";
+    });
+  }
+
+  function enrichIslandsWithAlliances(islands) {
+    if (!allianceIndex) return;
+    for (const isl of islands) {
+      const key = `${isl.x}:${isl.y}`;
+      const entry = allianceIndex[key];
+      if (!entry || !entry.counts) {
+        isl._allyColor = null;
+        isl._allyCount = 0;
+        continue;
+      }
+      // Find dominant alliance
+      let maxTag = null, maxCount = 0;
+      for (const [tag, count] of Object.entries(entry.counts)) {
+        if (tag === "(none)") continue;
+        if (count > maxCount) { maxTag = tag; maxCount = count; }
+      }
+      isl._allyColor = maxTag ? (allianceColorMap[maxTag] || "#888") : null;
+      isl._allyCount = maxCount;
+      isl._allyTag = maxTag;
+    }
+  }
+
   function rebuildBaseMap() {
     if (!currentMapData || !globalThis.MapRender) return;
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
+    enrichIslandsWithAlliances(islands);
 
     const tw = Math.max(1, Math.round(3 * minimapScale));
     const th = Math.max(1, Math.round(3 * minimapScale));
@@ -339,7 +477,8 @@
     if (!data[key]) return;
 
     currentMapData = data[key];
-    minimapScale = data[STORAGE_KEY_SCALE] || 1.5;
+    await loadAllianceIndex();
+    minimapScale = data[STORAGE_KEY_SCALE] || 1.25;
     vpTrimRight = data.vpTrimRight ?? 0.08;
     vpTrimBottom = data.vpTrimBottom ?? 0.15;
     currentLayer = data.minimapLayer || "population";

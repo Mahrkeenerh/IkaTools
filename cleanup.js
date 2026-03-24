@@ -28,6 +28,8 @@
     const ambrosia = document.querySelector("li.ambrosiaNoSpin");
     if (ambrosia) ambrosia.remove();
 
+    document.querySelectorAll(".cityLocation.buildplace.premium").forEach(el => el.remove());
+
     document.querySelectorAll(".btnIngameCountdown").forEach(el => {
       if (el.textContent.includes("bohů")) el.remove();
     });
@@ -87,12 +89,55 @@
     });
   }
 
+  // --- Pirate toggle in game header bar ---
+  function injectPirateToggle() {
+    const toolbar = document.querySelector("#GF_toolbar ul");
+    if (!toolbar || document.getElementById("ik-pirate-toggle")) return;
+
+    const li = document.createElement("li");
+    li.id = "ik-pirate-toggle";
+    li.style.cursor = "pointer";
+
+    const link = document.createElement("a");
+    link.textContent = "\u2620 Pirate";
+    link.title = "Toggle auto-pirate";
+    Object.assign(link.style, {
+      cursor: "pointer",
+      userSelect: "none",
+    });
+
+    let active = false;
+    function updateStyle() {
+      link.style.color = active ? "#ff4444" : "";
+      link.style.opacity = active ? "1" : "0.4";
+      link.style.webkitTextStroke = active ? "0.2px" : "";
+      link.textContent = "\u2620 Pirate";
+    }
+
+    chrome.storage.local.get("pirateEnabled", (d) => {
+      active = !!d.pirateEnabled;
+      updateStyle();
+    });
+
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      active = !active;
+      chrome.storage.local.set({ pirateEnabled: active });
+      updateStyle();
+    });
+
+    li.appendChild(link);
+    li.style.marginLeft = "20px";
+    toolbar.appendChild(li);
+  }
+
   // Load initial state
   chrome.storage.local.get(["cleanupEnabled", "hideZeroCities"], (data) => {
     enabled = data.cleanupEnabled !== false;
     hideZeros = !!data.hideZeroCities;
     if (enabled) start();
     if (hideZeros) startZeros();
+    injectPirateToggle();
   });
 
   // Listen for toggle from popup

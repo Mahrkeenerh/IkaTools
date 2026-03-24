@@ -37,6 +37,10 @@ async function solveCaptcha(dataUrl) {
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+  if (msg.type === "offscreen-ping") {
+    sendResponse({ pong: true });
+    return;
+  }
   if (msg.type === "offscreen-solve") {
     solveCaptcha(msg.dataUrl)
       .then((answer) => sendResponse({ answer }))

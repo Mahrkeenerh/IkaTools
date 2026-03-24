@@ -1,5 +1,13 @@
 // Popup logic: scan orchestration, map rendering (via MapRender), gallery, minimap toggle
 (() => {
+  // Keep content script informed that popup is open via heartbeat
+  setInterval(() => {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (tabs[0]?.id) {
+        chrome.tabs.sendMessage(tabs[0].id, { type: "popup-heartbeat" }).catch(() => {});
+      }
+    });
+  }, 1000);
   const $ = (id) => document.getElementById(id);
   const mapsPanel = $("maps-panel");
   const notIkariam = $("not-ikariam");
@@ -190,14 +198,45 @@
       return;
     }
 
-    const dimData = await chrome.storage.local.get("hideZeroCities");
-    const dimEmptyActive = !!dimData.hideZeroCities;
+    const extraData = await chrome.storage.local.get(["hideZeroCities", "allianceIndex"]);
+    const dimEmptyActive = !!extraData.hideZeroCities;
+    const allianceIndex = extraData.allianceIndex || {};
+
+    // Build alliance color map (same logic as minimap)
+    const allyCounts = {};
+    for (const key of Object.keys(allianceIndex)) {
+      for (const [tag, count] of Object.entries(allianceIndex[key].counts || {})) {
+        if (tag === "(none)") continue;
+        allyCounts[tag] = (allyCounts[tag] || 0) + count;
+      }
+    }
+    const sortedAllies = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
+    const allyColorMap = {};
+    const palette = MapRender.ALLY_PALETTE || [];
+    sortedAllies.forEach(([tag], i) => {
+      allyColorMap[tag] = palette[i % palette.length] || "#888";
+    });
 
     galleryList.innerHTML = "";
     for (const entry of index) {
       const data = await chrome.storage.local.get(entry.key);
       const map = data[entry.key];
       if (!map) continue;
+
+      // Enrich islands with alliance colors for rendering
+      if (map.islands) {
+        for (const isl of map.islands) {
+          const ai = allianceIndex[`${isl.x}:${isl.y}`];
+          if (!ai || !ai.counts) { isl._allyColor = null; isl._allyCount = 0; continue; }
+          let maxTag = null, maxCount = 0;
+          for (const [tag, count] of Object.entries(ai.counts)) {
+            if (tag === "(none)") continue;
+            if (count > maxCount) { maxTag = tag; maxCount = count; }
+          }
+          isl._allyColor = maxTag ? (allyColorMap[maxTag] || "#888") : null;
+          isl._allyCount = maxCount;
+        }
+      }
 
       const card = document.createElement("div");
       card.className = "gallery-card";
@@ -327,7 +366,7 @@
   // --- Minimap scale ---
   async function loadScaleState() {
     const data = await chrome.storage.local.get("minimapScale");
-    const scale = data.minimapScale || 1.5;
+    const scale = data.minimapScale || 1.25;
     document.querySelectorAll(".scale-btns button").forEach((b) => {
       b.classList.toggle("active", parseFloat(b.dataset.scale) === scale);
     });

@@ -33,7 +33,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
 });
 
 async function ensureOffscreen() {
-  if (await chrome.offscreen.hasDocument()) return;
+  const exists = await chrome.offscreen.hasDocument();
+  if (exists) {
+    // Doc exists but service worker restarted — ping to check if alive
+    if (!offscreenReady) {
+      try {
+        const resp = await chrome.runtime.sendMessage({ type: "offscreen-ping" });
+        if (resp?.pong) {
+          offscreenReady = true;
+          return;
+        }
+      } catch (e) {
+        // Offscreen doc is dead, recreate
+      }
+      // Couldn't reach it, tear down and recreate
+      await chrome.offscreen.closeDocument();
+    } else {
+      return;
+    }
+  }
   offscreenReady = false;
   readyResolve = null;
   await chrome.offscreen.createDocument({

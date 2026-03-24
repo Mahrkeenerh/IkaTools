@@ -27,6 +27,20 @@ window.addEventListener("ik-ajax-call", (e) => {
   }
 });
 
+// Switch current city via the game's city change form
+window.addEventListener("ik-switch-city", (e) => {
+  try {
+    var cityId = e.detail.cityId;
+    var form = document.getElementById("changeCityForm");
+    if (form) {
+      document.getElementById("js_cityIdOnChange").value = cityId;
+      ajaxHandlerCallFromForm(form);
+    }
+  } catch (err) {
+    console.error("[IkBridge] switchCity failed:", err);
+  }
+});
+
 // Read city list from game data for the popup city selector
 window.addEventListener("ik-read-cities", () => {
   let result = {};
@@ -36,6 +50,26 @@ window.addEventListener("ik-read-cities", () => {
     }
   } catch (e) {}
   window.dispatchEvent(new CustomEvent("ik-cities-data", { detail: result }));
+});
+
+// Read island background data (available on island view)
+window.addEventListener("ik-read-island-data", () => {
+  let result = null;
+  try {
+    // The game stores island data in ikariam.controller or as a global from updateBackgroundData
+    // Try multiple sources
+    if (typeof dataSetForView !== "undefined" && dataSetForView) {
+      result = dataSetForView;
+    }
+  } catch (e) {}
+  // Also try to grab avatarScores from the page's script context
+  let scores = null;
+  try {
+    if (typeof avatarScores !== "undefined") scores = avatarScores;
+  } catch (e) {}
+  window.dispatchEvent(new CustomEvent("ik-island-data", {
+    detail: { viewData: result, avatarScores: scores }
+  }));
 });
 
 // Read game-side JS variables and send them back to the content script.

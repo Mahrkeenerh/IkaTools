@@ -109,7 +109,29 @@ globalThis.MapRender = (() => {
       color: (isl) => WONDER_COLORS[isl.wonder] || DIM,
       sort: (a, b) => a.wonder - b.wonder,
     },
+    alliances: {
+      name: "Alliances",
+      color: (isl) => {
+        if (isl._allyColor) return isl._allyColor;
+        if (isl.dominantAlly) return ALLY_PALETTE[Math.abs(hashStr(isl.dominantAlly)) % ALLY_PALETTE.length];
+        return DIM;
+      },
+      sort: (a, b) => (a._allyCount || 0) - (b._allyCount || 0),
+    },
   };
+
+  // Generate distinct colors for alliances
+  const ALLY_PALETTE = [
+    "#FF6B6B", "#4ECDC4", "#FFD93D", "#6BCB77", "#C084FC",
+    "#F472B6", "#60A5FA", "#FB923C", "#34D399", "#A78BFA",
+    "#F87171", "#22D3EE", "#FACC15", "#86EFAC", "#E879F9",
+  ];
+
+  function hashStr(s) {
+    let h = 0;
+    for (let i = 0; i < s.length; i++) h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+    return h;
+  }
 
   function isoToPixel(gx, gy, tw, th) {
     return {
@@ -198,6 +220,7 @@ globalThis.MapRender = (() => {
     // Sort: dim islands first, highlighted on top
     const sorted = [...islands].sort(layer.sort);
     const half = size / 2;
+    const allyColorsSeen = {}; // track alliance colors for legend
 
     for (const isl of sorted) {
       const { px, py } = isoToPixel(isl.x, isl.y, tw, th);
@@ -205,7 +228,13 @@ globalThis.MapRender = (() => {
       const cy = py - pyMin + pad;
 
       ctx.globalAlpha = (dimEmpty && isl.cities === 0) ? 0.3 : 1;
-      ctx.fillStyle = layer.color(isl);
+      const fillColor = layer.color(isl);
+      ctx.fillStyle = fillColor;
+      if (layerKey === "alliances" && isl._allyColor && isl._allyTag) {
+        allyColorsSeen[isl._allyTag] = isl._allyColor;
+      } else if (layerKey === "alliances" && isl.dominantAlly && fillColor !== DIM) {
+        allyColorsSeen[isl.dominantAlly] = fillColor;
+      }
       ctx.beginPath();
       ctx.moveTo(cx, cy - half);
       ctx.lineTo(cx + half, cy);
@@ -323,11 +352,44 @@ globalThis.MapRender = (() => {
         ctx.fillRect(lx, ly, boxSize, boxSize);
         ctx.fillStyle = "#c0c8d8";
         ctx.fillText("War zone", lx + boxSize + 4, ly + boxSize - 1);
+      } else if (layerKey === "alliances") {
+        // Sort alliances by frequency (count islands with each color)
+        const allyCounts = {};
+        for (const isl of islands) {
+          const tag = isl._allyTag || isl.dominantAlly;
+          if (tag && allyColorsSeen[tag]) {
+            allyCounts[tag] = (allyCounts[tag] || 0) + 1;
+          }
+        }
+        const sortedAllies = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
+        let ox = lx;
+        const boxSize = Math.max(10, Math.round(tw * 1.1));
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textAlign = "left";
+        const maxLegendItems = Math.min(sortedAllies.length, 12);
+        for (let i = 0; i < maxLegendItems; i++) {
+          const [tag, count] = sortedAllies[i];
+          const col = allyColorsSeen[tag];
+          if (!col) continue;
+          ctx.fillStyle = col;
+          ctx.fillRect(ox, ly, boxSize, boxSize);
+          ctx.fillStyle = "#c0c8d8";
+          const label = `${tag} (${count})`;
+          ctx.fillText(label, ox + boxSize + 4, ly + boxSize - 1);
+          ox += ctx.measureText(label).width + boxSize + 14;
+          if (ox > w - pad) break; // don't overflow
+        }
+        if (sortedAllies.length === 0) {
+          ctx.fillStyle = "#556";
+          ctx.font = `${fontSize}px sans-serif`;
+          ctx.textAlign = "left";
+          ctx.fillText("Visit islands to discover alliances", lx, ly + 12);
+        }
       }
     }
 
     return { width: w, height: h, pxMin, pyMin, tileW: tw, tileH: th };
   }
 
-  return { render, LAYERS, isoToPixel };
+  return { render, LAYERS, isoToPixel, ALLY_PALETTE };
 })();
