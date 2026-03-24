@@ -201,21 +201,7 @@
     const extraData = await chrome.storage.local.get(["hideZeroCities", "allianceIndex"]);
     const dimEmptyActive = !!extraData.hideZeroCities;
     const allianceIndex = extraData.allianceIndex || {};
-
-    // Build alliance color map (same logic as minimap)
-    const allyCounts = {};
-    for (const key of Object.keys(allianceIndex)) {
-      for (const [tag, count] of Object.entries(allianceIndex[key].counts || {})) {
-        if (tag === "(none)") continue;
-        allyCounts[tag] = (allyCounts[tag] || 0) + count;
-      }
-    }
-    const sortedAllies = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
-    const allyColorMap = {};
-    const palette = MapRender.ALLY_PALETTE || [];
-    sortedAllies.forEach(([tag], i) => {
-      allyColorMap[tag] = palette[i % palette.length] || "#888";
-    });
+    const allyColorMap = IkUtils.buildAllianceColorMap(allianceIndex);
 
     galleryList.innerHTML = "";
     for (const entry of index) {
@@ -223,19 +209,8 @@
       const map = data[entry.key];
       if (!map) continue;
 
-      // Enrich islands with alliance colors for rendering
       if (map.islands) {
-        for (const isl of map.islands) {
-          const ai = allianceIndex[`${isl.x}:${isl.y}`];
-          if (!ai || !ai.counts) { isl._allyColor = null; isl._allyCount = 0; continue; }
-          let maxTag = null, maxCount = 0;
-          for (const [tag, count] of Object.entries(ai.counts)) {
-            if (tag === "(none)") continue;
-            if (count > maxCount) { maxTag = tag; maxCount = count; }
-          }
-          isl._allyColor = maxTag ? (allyColorMap[maxTag] || "#888") : null;
-          isl._allyCount = maxCount;
-        }
+        IkUtils.enrichIslandsWithAlliances(map.islands, allianceIndex, allyColorMap);
       }
 
       const card = document.createElement("div");

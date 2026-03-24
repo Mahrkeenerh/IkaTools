@@ -6,20 +6,9 @@
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-  function extractWorldName() {
-    // Page title is "Ikariam - 20m 54s - Svět Eurydike"
-    const parts = document.title.split(" - ");
-    if (parts.length >= 3) return parts.slice(2).join(" - ").trim();
-    const m = location.hostname.match(/^(s\d+-\w+)\./);
-    return m ? m[1] : "Unknown";
-  }
-
-  // Read tiles currently in the live DOM
+  // Read tiles currently in the live DOM (grid size + parsed islands)
   function readCurrentTiles() {
-    const islands = [];
-    let maxCol = 0,
-      maxRow = 0;
-
+    let maxCol = 0, maxRow = 0;
     document.querySelectorAll('[id^="tile_"]').forEach((el) => {
       const m = el.id.match(/^tile_(\d+)_(\d+)$/);
       if (!m) return;
@@ -28,50 +17,11 @@
       if (col > maxCol) maxCol = col;
       if (row > maxRow) maxRow = row;
     });
-
-    document.querySelectorAll(".islandTile").forEach((tile) => {
-      const title = tile.getAttribute("title") || "";
-      const m = title.match(/^(.+?)\s*\[(\d+):(\d+)\]$/);
-      if (!m) return;
-
-      const citiesEl = tile.querySelector(".cities");
-      const wonderEl = tile.querySelector('[class*="wonder wonder"]');
-      const tgEl = tile.querySelector('[class*="tradegood tradegood"]');
-      const piracyEl = tile.querySelector('[id^="piracy_"]');
-      const heliosEl = tile.querySelector('[id^="helios_"]');
-      const ownerEl = tile.querySelector('[id^="owner_"]');
-
-      islands.push({
-        name: m[1],
-        x: parseInt(m[2], 10),
-        y: parseInt(m[3], 10),
-        cities: citiesEl ? parseInt(citiesEl.textContent, 10) || 0 : 0,
-        wonder: wonderEl
-          ? parseInt(wonderEl.className.match(/wonder(\d+)/)?.[1], 10) || 0
-          : 0,
-        tradegood: tgEl
-          ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0
-          : 0,
-        piracy: piracyEl ? piracyEl.className !== "" : false,
-        helios: heliosEl ? heliosEl.className !== "" : false,
-        owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
-        military: false,
-        war: false,
-        barbarian: false,
-      });
-    });
-
-    return { islands, cols: maxCol + 1, rows: maxRow + 1 };
-  }
-
-  // Inject bridge.js into page context (once) — it listens for custom events
-  // and calls game functions. External script src bypasses CSP.
-  function ensureBridge() {
-    if (document.getElementById("ik-bridge")) return;
-    const s = document.createElement("script");
-    s.id = "ik-bridge";
-    s.src = chrome.runtime.getURL("bridge.js");
-    document.documentElement.appendChild(s);
+    return {
+      islands: IkUtils.parseTilesFromDOM(),
+      cols: maxCol + 1,
+      rows: maxRow + 1,
+    };
   }
 
   // Navigate by dispatching a custom event that bridge.js handles in page context
@@ -79,7 +29,7 @@
     if (!document.getElementById("inputXCoord")) {
       throw new Error("Coordinate inputs not found — are you on the world map?");
     }
-    ensureBridge();
+    IkUtils.ensureBridge();
     window.dispatchEvent(
       new CustomEvent("ik-jump", { detail: { x, y } })
     );
@@ -166,7 +116,7 @@
   }
 
   async function scanWorldMap(port) {
-    const worldName = extractWorldName();
+    const worldName = IkUtils.getWorldName() || "Unknown";
     const allIslands = new Map();
     const scannedCenters = new Set();
     let aborted = false;
@@ -357,7 +307,7 @@
       await enrichWithGameData(allIslands);
 
       // Jump back to starting position
-      ensureBridge();
+      IkUtils.ensureBridge();
       window.dispatchEvent(
         new CustomEvent("ik-jump", { detail: { x: startX, y: startY } })
       );

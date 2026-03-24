@@ -31,12 +31,6 @@
   let cachedIslandCount = 0;
   let cachedDimEmpty = null;
 
-  function getWorldName() {
-    const parts = document.title.split(" - ");
-    if (parts.length >= 3) return parts.slice(2).join(" - ").trim();
-    return null;
-  }
-
   function getViewportCorners() {
     const worldview = document.getElementById("worldview");
     if (!worldview) return null;
@@ -119,52 +113,25 @@
     }
     let changed = false;
 
-    document.querySelectorAll(".islandTile").forEach((tile) => {
-      const title = tile.getAttribute("title") || "";
-      const m = title.match(/^(.+?)\s*\[(\d+):(\d+)\]$/);
-      if (!m) return;
-
-      const x = parseInt(m[2], 10);
-      const y = parseInt(m[3], 10);
-      const key = `${x}:${y}`;
-      const citiesEl = tile.querySelector(".cities");
-      const wonderEl = tile.querySelector('[class*="wonder wonder"]');
-      const tgEl = tile.querySelector('[class*="tradegood tradegood"]');
-      const piracyEl = tile.querySelector('[id^="piracy_"]');
-      const heliosEl = tile.querySelector('[id^="helios_"]');
-      const ownerEl = tile.querySelector('[id^="owner_"]');
-
-      const newIsland = {
-        name: m[1], x, y,
-        cities: citiesEl ? parseInt(citiesEl.textContent, 10) || 0 : 0,
-        wonder: wonderEl ? parseInt(wonderEl.className.match(/wonder(\d+)/)?.[1], 10) || 0 : 0,
-        tradegood: tgEl ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0 : 0,
-        piracy: piracyEl ? piracyEl.className !== "" : false,
-        helios: heliosEl ? heliosEl.className !== "" : false,
-        owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
-        military: false,
-        war: false,
-        barbarian: false,
-      };
-
-      // Preserve existing overlay flags (set by scanner from game data)
+    for (const newIsland of IkUtils.parseTilesFromDOM()) {
+      const key = `${newIsland.x}:${newIsland.y}`;
       const old = existing.get(key);
+      // Preserve existing overlay flags (set by scanner from game data)
       if (old) {
         newIsland.military = old.military || false;
         newIsland.war = old.war || false;
         newIsland.barbarian = old.barbarian || false;
       }
-
       if (!old || old.cities !== newIsland.cities || old.owner !== newIsland.owner) {
         existing.set(key, newIsland);
         changed = true;
       }
-    });
+    }
 
     if (changed) {
       currentMapData.islands = Array.from(existing.values());
       cachedBaseMap = null; // invalidate cache
-      const worldName = getWorldName();
+      const worldName = IkUtils.getWorldName();
       if (worldName) {
         chrome.storage.local.set({
           ["map_" + worldName]: { ...currentMapData, scanDate: new Date().toISOString() },
@@ -355,51 +322,14 @@
   async function loadAllianceIndex() {
     const data = await chrome.storage.local.get("allianceIndex");
     allianceIndex = data.allianceIndex || {};
-    // Build color map for top alliances
-    const allyCounts = {};
-    for (const key of Object.keys(allianceIndex)) {
-      const entry = allianceIndex[key];
-      for (const [tag, count] of Object.entries(entry.counts || {})) {
-        if (tag === "(none)") continue;
-        allyCounts[tag] = (allyCounts[tag] || 0) + count;
-      }
-    }
-    // Sort by total presence, assign colors
-    const sorted = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
-    const palette = globalThis.MapRender?.ALLY_PALETTE || [];
-    allianceColorMap = {};
-    sorted.forEach(([tag], i) => {
-      allianceColorMap[tag] = palette[i % palette.length] || "#888";
-    });
-  }
-
-  function enrichIslandsWithAlliances(islands) {
-    if (!allianceIndex) return;
-    for (const isl of islands) {
-      const key = `${isl.x}:${isl.y}`;
-      const entry = allianceIndex[key];
-      if (!entry || !entry.counts) {
-        isl._allyColor = null;
-        isl._allyCount = 0;
-        continue;
-      }
-      // Find dominant alliance
-      let maxTag = null, maxCount = 0;
-      for (const [tag, count] of Object.entries(entry.counts)) {
-        if (tag === "(none)") continue;
-        if (count > maxCount) { maxTag = tag; maxCount = count; }
-      }
-      isl._allyColor = maxTag ? (allianceColorMap[maxTag] || "#888") : null;
-      isl._allyCount = maxCount;
-      isl._allyTag = maxTag;
-    }
+    allianceColorMap = IkUtils.buildAllianceColorMap(allianceIndex);
   }
 
   function rebuildBaseMap() {
     if (!currentMapData || !globalThis.MapRender) return;
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
-    enrichIslandsWithAlliances(islands);
+    IkUtils.enrichIslandsWithAlliances(islands, allianceIndex, allianceColorMap);
 
     const tw = Math.max(1, Math.round(3 * minimapScale));
     const th = Math.max(1, Math.round(3 * minimapScale));
@@ -467,7 +397,7 @@
   async function loadAndShow() {
     if (!isWorldMapView()) return;
 
-    const worldName = getWorldName();
+    const worldName = IkUtils.getWorldName();
     if (!worldName) return;
 
     const key = "map_" + worldName;
@@ -490,6 +420,7 @@
     }
     container.style.display = "";
 
+    if (dimEmpty) startZeros();
     readAndMergeTiles();
     drawMinimap();
   }
@@ -539,6 +470,38 @@
     }
   }
 
+  // --- Dim empty islands on world map (zero-city opacity) ---
+  let zerosObserver = null;
+
+  function cleanZeros() {
+    if (!dimEmpty) return;
+    document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
+      const title = tile.getAttribute("title") || "";
+      if (!title.match(/\[\d+:\d+\]$/)) { tile.style.opacity = ""; return; }
+      const citiesEl = tile.querySelector(".cities");
+      if (!citiesEl) { tile.style.opacity = ""; return; }
+      tile.style.opacity = citiesEl.textContent.trim() === "0" ? "0.35" : "";
+    });
+  }
+
+  function startZeros() {
+    cleanZeros();
+    if (!zerosObserver) {
+      zerosObserver = new MutationObserver(cleanZeros);
+      zerosObserver.observe(document.body, { childList: true, subtree: true });
+    }
+  }
+
+  function stopZeros() {
+    if (zerosObserver) {
+      zerosObserver.disconnect();
+      zerosObserver = null;
+    }
+    document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
+      tile.style.opacity = "";
+    });
+  }
+
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "minimap-toggle") {
       if (msg.enabled) showOrHide();
@@ -560,6 +523,7 @@
     if (msg.type === "hide-zeros-toggle") {
       dimEmpty = msg.enabled;
       cachedBaseMap = null;
+      if (dimEmpty) startZeros(); else stopZeros();
       if (container && container.style.display !== "none") drawMinimap();
     }
     if (msg.type === "vp-trim") {
@@ -578,16 +542,14 @@
     obs.observe(document.body, { attributes: true, attributeFilter: ["id"] });
   }
 
-  function ensureBridge() {
-    if (document.getElementById("ik-bridge")) return;
-    const s = document.createElement("script");
-    s.id = "ik-bridge";
-    s.src = chrome.runtime.getURL("bridge.js");
-    document.documentElement.appendChild(s);
-  }
-
-  ensureBridge();
+  IkUtils.ensureBridge();
   showOrHide();
   watchViewChanges();
   watchWorldmapScroll();
+
+  // Init dim-empty independently of minimap overlay
+  chrome.storage.local.get("hideZeroCities", (data) => {
+    dimEmpty = !!data.hideZeroCities;
+    if (dimEmpty && isWorldMapView()) startZeros();
+  });
 })();

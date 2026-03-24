@@ -84,6 +84,7 @@
   }
 
   function navigate(url) {
+    IkUtils.ensureBridge();
     window.dispatchEvent(new CustomEvent("ik-ajax-call", { detail: { url } }));
   }
 
@@ -176,6 +177,44 @@
     console.log(P, "Stopped");
   }
 
+  // --- Pirate toggle in game header bar ---
+  function injectPirateToggle() {
+    const toolbar = document.querySelector("#GF_toolbar ul");
+    if (!toolbar || document.getElementById("ik-pirate-toggle")) return;
+
+    const li = document.createElement("li");
+    li.id = "ik-pirate-toggle";
+    li.style.cursor = "pointer";
+
+    const link = document.createElement("a");
+    link.textContent = "\u2620 Pirate";
+    link.title = "Toggle auto-pirate";
+    Object.assign(link.style, {
+      cursor: "pointer",
+      userSelect: "none",
+    });
+
+    let active = enabled;
+    function updateStyle() {
+      link.style.color = active ? "#ff4444" : "";
+      link.style.opacity = active ? "1" : "0.4";
+      link.style.webkitTextStroke = active ? "0.2px" : "";
+      link.textContent = "\u2620 Pirate";
+    }
+    updateStyle();
+
+    link.addEventListener("click", (e) => {
+      e.preventDefault();
+      active = !active;
+      chrome.storage.local.set({ pirateEnabled: active });
+      updateStyle();
+    });
+
+    li.appendChild(link);
+    li.style.marginLeft = "20px";
+    toolbar.appendChild(li);
+  }
+
   // --- Storage ---
   chrome.storage.local.get(
     ["pirateEnabled", "pirateCityId", "pirateActiveStart", "pirateActiveEnd", "pirateIdleTimeout"],
@@ -187,6 +226,7 @@
       if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
       console.log(P, "Config loaded — enabled=" + enabled + ", city=" + pirateCityId + ", hours=" + activeStart + "-" + activeEnd + ", idle=" + fmt(idleTimeout));
       if (enabled && pirateCityId) start();
+      injectPirateToggle();
     }
   );
 
