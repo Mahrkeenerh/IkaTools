@@ -5,7 +5,7 @@
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
-  width: 800px;
+  width: 500px;
   min-height: 400px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
@@ -238,7 +238,6 @@ body {
 }
 .layer-thumb {
   width: 100%;
-  max-width: 120px;
   height: auto;
   background: #0e2040;
   border-radius: 3px;
@@ -253,6 +252,99 @@ body {
   color: #778;
   text-align: center;
 }
+
+/* Notes */
+.notes-container {
+  display: flex;
+  min-height: 350px;
+  gap: 0;
+}
+.notes-sidebar {
+  width: 200px;
+  min-width: 200px;
+  border-right: 1px solid #2a3040;
+  display: flex;
+  flex-direction: column;
+}
+.notes-sidebar-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 10px;
+  border-bottom: 1px solid #2a3040;
+}
+.notes-sidebar-header span { font-size: 12px; color: #8890a0; }
+.notes-sidebar-header button {
+  padding: 2px 8px;
+  border: 1px solid #2a3040;
+  border-radius: 3px;
+  background: transparent;
+  color: #8890a0;
+  cursor: pointer;
+  font-size: 14px;
+}
+.notes-sidebar-header button:hover { background: #2a3550; color: #e0e4ec; }
+#notes-list {
+  flex: 1;
+  overflow-y: auto;
+}
+.note-item {
+  padding: 8px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  color: #c8cdd8;
+  border-bottom: 1px solid #1e2535;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.note-item:hover { background: rgba(42, 74, 106, 0.3); }
+.note-item.active { background: #2a3550; color: #e0e4ec; }
+.note-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  padding: 10px;
+}
+.note-content-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+#note-title {
+  flex: 1;
+  padding: 4px 6px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  color: #e0e4ec;
+  font-size: 14px;
+  font-weight: 600;
+  font-family: inherit;
+}
+#note-title:focus { border-color: #3a4a6a; background: #0d1018; outline: none; }
+#note-editor {
+  flex: 1;
+  padding: 8px;
+  border: 1px solid #2a3040;
+  border-radius: 4px;
+  background: #0d1018;
+  color: #c8cdd8;
+  font-size: 12px;
+  font-family: inherit;
+  resize: none;
+  outline: none;
+}
+#note-editor:focus { border-color: #3a4a6a; }
+.notes-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #556;
+  font-size: 12px;
+}
 </style>
 </head>
 <body>
@@ -261,6 +353,7 @@ body {
   <h1>Ikariam Tools</h1>
   <div class="tab-bar">
     <button class="active" data-tab="maps">Maps</button>
+    <button data-tab="notes">Notes</button>
     <button data-tab="settings">Settings</button>
   </div>
 </div>
@@ -278,6 +371,26 @@ body {
   <button class="btn btn-primary" id="scan-btn">Scan World Map</button>
   <div id="scan-log"></div>
   <div id="gallery-list" class="gallery-grid"></div>
+</div>
+
+<div id="notes-panel" class="panel">
+  <div class="notes-container">
+    <div class="notes-sidebar">
+      <div class="notes-sidebar-header">
+        <span>Notes</span>
+        <button id="note-add-btn" title="New note">+</button>
+      </div>
+      <div id="notes-list"></div>
+    </div>
+    <div id="note-content-area" class="note-content" style="display:none;">
+      <div class="note-content-header">
+        <input type="text" id="note-title" placeholder="Note title">
+        <button class="btn btn-danger btn-sm" id="note-delete-btn">Delete</button>
+      </div>
+      <textarea id="note-editor" placeholder="Write your note here..."></textarea>
+    </div>
+    <div id="notes-empty" class="notes-empty">No notes yet. Click + to create one.</div>
+  </div>
 </div>
 
 <div id="settings-panel" class="panel">
@@ -369,6 +482,12 @@ body {
     <div class="control-group">
       <label>B%</label>
       <input type="number" id="trim-bottom" value="15" min="0" max="30" step="1">
+    </div>
+  </div>
+  <div class="setting-row">
+    <div class="setting-label">
+      <span>Friend highlighting</span>
+      <span class="setting-desc">Friends are highlighted in green on island views (your cities show in blue). If all 6 friend slots are full, scroll the friend list once so all friends get cached.</span>
     </div>
   </div>
 </div>

@@ -61,6 +61,7 @@
     loadMinimapState();
     loadCleanupState();
     loadPirateState();
+    loadNotes();
   });
 
   // --- Log helper ---
@@ -473,6 +474,107 @@
   }
   pirateStart.addEventListener("change", sendPirateHours);
   pirateEnd.addEventListener("change", sendPirateHours);
+
+  // --- Notes ---
+  const NOTES_KEY = "ikNotes";
+  const notesList = $("notes-list");
+  const noteTitle = $("note-title");
+  const noteEditor = $("note-editor");
+  const noteAddBtn = $("note-add-btn");
+  const noteDeleteBtn = $("note-delete-btn");
+  const noteContentArea = $("note-content-area");
+  const notesEmpty = $("notes-empty");
+  let notes = [];
+  let activeNoteId = null;
+  let noteSaveTimer = null;
+
+  async function loadNotes() {
+    const data = await chrome.storage.local.get(NOTES_KEY);
+    notes = data[NOTES_KEY] || [];
+    renderNotesList();
+    if (notes.length > 0) {
+      selectNote(notes[0].id);
+    } else {
+      showNotesEmpty(true);
+    }
+  }
+
+  function saveNotes() {
+    chrome.storage.local.set({ [NOTES_KEY]: notes });
+  }
+
+  function renderNotesList() {
+    notesList.innerHTML = "";
+    for (const note of notes) {
+      const item = document.createElement("div");
+      item.className = "note-item" + (note.id === activeNoteId ? " active" : "");
+      item.textContent = note.title || "Untitled";
+      item.addEventListener("click", () => selectNote(note.id));
+      notesList.appendChild(item);
+    }
+  }
+
+  function selectNote(id) {
+    activeNoteId = id;
+    const note = notes.find((n) => n.id === id);
+    if (!note) return;
+    noteTitle.value = note.title;
+    noteEditor.value = note.content;
+    showNotesEmpty(false);
+    renderNotesList();
+  }
+
+  function showNotesEmpty(empty) {
+    noteContentArea.style.display = empty ? "none" : "flex";
+    notesEmpty.style.display = empty ? "flex" : "none";
+  }
+
+  noteAddBtn.addEventListener("click", () => {
+    const note = {
+      id: Date.now(),
+      title: "Untitled",
+      content: "",
+      updated: new Date().toISOString(),
+    };
+    notes.unshift(note);
+    saveNotes();
+    renderNotesList();
+    selectNote(note.id);
+    noteTitle.focus();
+    noteTitle.select();
+  });
+
+  noteDeleteBtn.addEventListener("click", () => {
+    if (!activeNoteId) return;
+    const idx = notes.findIndex((n) => n.id === activeNoteId);
+    notes.splice(idx, 1);
+    saveNotes();
+    if (notes.length > 0) {
+      const next = notes[Math.min(idx, notes.length - 1)];
+      selectNote(next.id);
+    } else {
+      activeNoteId = null;
+      showNotesEmpty(true);
+    }
+    renderNotesList();
+  });
+
+  function debouncedNoteSave() {
+    clearTimeout(noteSaveTimer);
+    noteSaveTimer = setTimeout(() => {
+      const note = notes.find((n) => n.id === activeNoteId);
+      if (note) {
+        note.content = noteEditor.value;
+        note.title = noteTitle.value;
+        note.updated = new Date().toISOString();
+        saveNotes();
+        renderNotesList();
+      }
+    }, 500);
+  }
+
+  noteEditor.addEventListener("input", debouncedNoteSave);
+  noteTitle.addEventListener("input", debouncedNoteSave);
 
   // --- Auto-finish toggle ---
   const autofinishToggle = $("autofinish-toggle");

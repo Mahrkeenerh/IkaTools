@@ -2,6 +2,32 @@
 (() => {
   const TAG = "[IslandInfo]";
   const STORAGE_PREFIX = "island_";
+  const OWN_COLOR = "#64B5F6"; // blue for own cities (matches game)
+  const FRIEND_COLOR = "#00FF88"; // green for friends
+  let friendIds = new Set();
+
+  // --- Scrape & cache friends from the sidebar list ---
+  async function scrapeFriends() {
+    const slots = document.querySelectorAll("#js_viewFriends .friends li.expandable .name a");
+    if (slots.length === 0) return;
+    const scraped = {};
+    for (const a of slots) {
+      const m = a.href.match(/playerId=(\d+)/);
+      if (m) scraped[m[1]] = a.textContent.trim();
+    }
+    // Merge with stored friends (accumulate across pages)
+    const data = await chrome.storage.local.get("friendList");
+    const stored = data.friendList || {};
+    const merged = { ...stored, ...scraped };
+    await chrome.storage.local.set({ friendList: merged });
+    friendIds = new Set(Object.keys(merged));
+    console.log(TAG, `Friends cached: ${Object.keys(merged).length}`, Object.values(merged).join(", "));
+  }
+
+  async function loadFriends() {
+    const data = await chrome.storage.local.get("friendList");
+    friendIds = new Set(Object.keys(data.friendList || {}));
+  }
 
   // --- Extract updateBackgroundData from inline scripts ---
   function parseBackgroundData() {
@@ -291,8 +317,9 @@
 
       for (const city of sorted) {
         const badge = city.state === "vacation" ? ' \ud83c\udf34' : city.state === "inactive" ? ' \ud83d\udca4' : '';
-        const nameStyle = city.isOwn ? "color:#00FF88;font-weight:bold;" : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
-        const rowBg = city.isOwn ? "background:rgba(0,255,136,0.06);" : "";
+        const isFriend = !city.isOwn && friendIds.has(city.ownerId);
+        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
+        const rowBg = "";
         html += `<tr class="ik-city-row" data-position="${city.position}" style="cursor:pointer;border-bottom:1px solid #1e2535;${rowBg}" title="Click to view ${city.name}">
           <td style="padding:3px 4px;${nameStyle}"><div>${city.ownerName}${badge}</div><div style="font-size:9px;color:#667;">${city.name}</div></td>
           <td style="padding:3px 4px;">${city.level}</td>
@@ -352,12 +379,15 @@
       label.className = "ik-city-label";
 
       const allyPart = city.allyTag ? `<span style="color:#7ec8e3;">[${city.allyTag}]</span> ` : "";
-      const nameColor = city.isOwn ? "#00FF88" : "#dde";
-      label.innerHTML = `${allyPart}<span style="color:${nameColor};">${city.ownerName}</span>`;
+      const isFriend = !city.isOwn && friendIds.has(city.ownerId);
+      const nameColor = city.isOwn ? OWN_COLOR : isFriend ? FRIEND_COLOR : "#dde";
+      const nameBold = city.isOwn || isFriend ? "font-weight:bold;" : "";
+      label.innerHTML = `${allyPart}<span style="color:${nameColor};${nameBold}">${city.ownerName}</span>`;
 
+      const labelBg = "rgba(0,0,0,0.85)";
       Object.assign(label.style, {
         fontSize: "9px",
-        background: "rgba(0,0,0,0.65)",
+        background: labelBg,
         padding: "1px 4px",
         borderRadius: "3px",
         whiteSpace: "nowrap",
@@ -422,14 +452,17 @@
     }
   }
 
-  // Run on island view
-  init();
+  // Load cached friends first, then scrape visible ones
+  loadFriends().then(() => {
+    scrapeFriends();
+    init();
+  });
 
   // Watch for AJAX navigation to island view
   const obs = new MutationObserver(() => {
     if (document.body.id === "island") {
       // Re-init after a short delay for DOM to settle
-      setTimeout(init, 500);
+      setTimeout(() => { scrapeFriends(); init(); }, 500);
     } else if (panel) {
       panel.remove();
       panel = null;

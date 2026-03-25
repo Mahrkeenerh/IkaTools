@@ -4,7 +4,8 @@
   let idleTimeout = 5000; // ms before taking control (configurable via storage)
   const CHECK_INTERVAL = 5000;
   const NAVIGATE_COOLDOWN = 10000;
-  const MISSION_DURATION = 150; // tier 1 = 2m 30s
+  const MISSION_DURATIONS = [150, 450]; // tier 1 = 2m30s, tier 2 = 7m30s
+  const TIER2_CHANCE = 0.05; // 1 in 20 chance to pick tier 2
 
   let enabled = false;
   let pirateCityId = null;
@@ -119,17 +120,21 @@
         return;
       }
 
-      const captureBtn = document.querySelector("#pirateCaptureBox a.button.capture");
-      if (captureBtn) {
+      const captureBtns = document.querySelectorAll("#pirateCaptureBox a.button.capture");
+      if (captureBtns.length > 0) {
+        // Pick tier 2 with 1/20 chance if available, otherwise tier 1
+        let tier = 0;
+        if (captureBtns.length > 1 && Math.random() < TIER2_CHANCE) tier = 1;
+        const captureBtn = captureBtns[tier];
         const href = captureBtn.getAttribute("href");
-        console.log(P, "Launching capture via AJAX:", href);
-        // Use ajaxHandlerCall via bridge instead of clicking (plain <a> has no onclick)
+        const duration = MISSION_DURATIONS[tier] || MISSION_DURATIONS[0];
+        console.log(P, "Launching tier", tier + 1, "capture via AJAX:", href);
         navigate(href);
         const delay = randomDelay();
-        const total = MISSION_DURATION * 1000 + delay;
+        const total = duration * 1000 + delay;
         nextActionTime = Date.now() + total;
         lastNavigateTime = 0;
-        console.log(P, "Mission launched, next in", fmt(total), "(mission", fmt(MISSION_DURATION * 1000), "+ delay", fmt(delay) + ")");
+        console.log(P, "Mission launched (tier " + (tier + 1) + "), next in", fmt(total), "(mission", fmt(duration * 1000), "+ delay", fmt(delay) + ")");
         return;
       }
 
