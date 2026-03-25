@@ -422,21 +422,29 @@
 
   // Advanced timing param IDs and their storage keys
   const PIRATE_ADV = [
-    { id: "pirate-mu",       key: "pirateBaseMu",         parse: parseFloat },
-    { id: "pirate-sigma",    key: "pirateBaseSigma",      parse: parseFloat },
-    { id: "pirate-brk-min",  key: "pirateBreakMin",       parse: (v) => parseInt(v, 10) },
-    { id: "pirate-brk-max",  key: "pirateBreakMax",        parse: (v) => parseInt(v, 10) },
-    { id: "pirate-strk-lo",  key: "pirateStreakLo",        parse: (v) => parseInt(v, 10) },
-    { id: "pirate-strk-hi",  key: "pirateStreakHi",        parse: (v) => parseInt(v, 10) },
-    { id: "pirate-distract", key: "pirateDistractChance", parse: parseFloat },
-    { id: "pirate-t2",       key: "pirateT2Chance",        parse: parseFloat },
+    { id: "pirate-mu",         key: "pirateBaseMu",           parse: parseFloat },
+    { id: "pirate-sigma",      key: "pirateBaseSigma",        parse: parseFloat },
+    { id: "pirate-brk-min",    key: "pirateBreakMin",         parse: (v) => parseInt(v, 10) },
+    { id: "pirate-brk-max",    key: "pirateBreakMax",          parse: (v) => parseInt(v, 10) },
+    { id: "pirate-strk-lo",    key: "pirateStreakLo",          parse: (v) => parseInt(v, 10) },
+    { id: "pirate-strk-hi",    key: "pirateStreakHi",          parse: (v) => parseInt(v, 10) },
+    { id: "pirate-distract",   key: "pirateDistractChance",   parse: parseFloat },
+    { id: "pirate-t2-base",    key: "pirateT2Base",            parse: parseFloat },
+    { id: "pirate-t2-ramp",    key: "pirateT2Ramp",            parse: parseFloat },
+    { id: "pirate-t2-distract",key: "pirateT2Distract",        parse: parseFloat },
+    { id: "pirate-force-brk",  key: "pirateForceBreakChance", parse: parseFloat },
+    { id: "pirate-bb",         key: "pirateBackToBack",        parse: parseFloat },
   ];
-  // Map cfg key names to message key names for pirate-config
+  // Map storage key names to cfg key names for pirate-config messages
   const STORAGE_TO_CFG = {
     pirateBaseMu: "baseMu", pirateBaseSigma: "baseSigma",
     pirateBreakMin: "breakMin", pirateBreakMax: "breakMax",
     pirateStreakLo: "streakLo", pirateStreakHi: "streakHi",
-    pirateDistractChance: "distractChance", pirateT2Chance: "t2Chance",
+    pirateDistractChance: "distractChance",
+    pirateT2Base: "t2Base", pirateT2Ramp: "t2Ramp",
+    pirateT2Distract: "t2Distract",
+    pirateForceBreakChance: "forceBreakChance",
+    pirateBackToBack: "backToBackChance",
   };
 
   async function loadPirateState() {

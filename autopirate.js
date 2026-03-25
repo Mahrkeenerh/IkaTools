@@ -10,18 +10,23 @@
 
   // --- Tunable timing parameters (randomized per-user, stored in chrome.storage) ---
   let cfg = {
-    sleepStart: 1,      // hour when bot stops
-    sleepEnd: 7,         // hour when bot can resume
-    baseMu: 3.3,         // log-normal center (higher = slower)
-    baseSigma: 1.0,      // log-normal spread
-    breakMin: 5,          // streak break min duration (minutes)
-    breakMax: 12,         // streak break max duration (minutes)
-    streakLo: 8,          // min raids before streak break
-    streakHi: 15,         // max raids before streak break
-    distractChance: 0.12, // chance to enter distracted state per raid
-    t2Chance: 0.05,       // chance to pick tier 2 mission
+    sleepStart: 1,       // hour when bot stops
+    sleepEnd: 7,          // hour when bot can resume
+    baseMu: 2.9,          // log-normal center (higher = slower)
+    baseSigma: 1.0,       // log-normal spread
+    breakMin: 4,           // streak break min duration (minutes)
+    breakMax: 10,          // streak break max duration (minutes)
+    streakLo: 10,          // min raids before break hazard starts
+    streakHi: 20,          // raids where break becomes near-certain
+    distractChance: 0.10,  // chance to enter distracted state per raid
+    t2Base: 0.10,          // base T2 chance (early in streak)
+    t2Ramp: 0.60,          // T2 sigmoid max addition (peaks near break)
+    t2Distract: 0.45,      // T2 chance during distraction state
+    forceBreakChance: 0.20, // chance T2 triggers immediate break
+    backToBackChance: 0.15, // chance to allow consecutive T2
   };
   let sleepJitter = (Math.random() - 0.5) * 20; // +/- 10 min daily variance
+  let sleepJitterDate = new Date().toDateString(); // track date for daily re-roll
 
   let lastActivity = Date.now();
   let inControl = false;
@@ -33,10 +38,13 @@
 
   // --- Humanized timing state ---
   let streakCount = 0;
-  let streakBreakAt = 8 + Math.floor(Math.random() * 8);
-  let distractionMu = 0; // added to base mu during "distracted" state
-  let distractionRaids = 0; // how many raids left in distracted state
+  let distractionMu = 0;
+  let distractionRaids = 0;
   let sessionStartTime = Date.now();
+  let lastMissionWasT2 = false;
+  let forceBreakNext = false;
+  let postBreakRaids = 0; // raids remaining in post-break re-engagement
+  let tempo = 0; // AR(1) latent speed variable (adds momentum to delays)
 
   function fmt(ms) {
     const s = Math.round(ms / 1000);
@@ -95,50 +103,105 @@
     return !(mins >= sleepStartMins || mins < sleepEndMins);
   }
 
-  // --- Humanized delay (log-normal + distraction state + streak breaking) ---
-  function lognormal(mu, sigma) {
+  // --- Random number generators ---
+  function randn() {
     const u = 1 - Math.random();
     const v = 1 - Math.random();
-    const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
-    return Math.exp(mu + sigma * z);
+    return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+  }
+
+  function lognormal(mu, sigma) {
+    return Math.exp(mu + sigma * randn());
+  }
+
+  // --- Hazard-based break probability (sigmoid, rises with streak) ---
+  function getBreakHazard() {
+    if (streakCount < cfg.streakLo) return 0;
+    const midpoint = (cfg.streakLo + cfg.streakHi) / 2;
+    const steepness = 6 / (cfg.streakHi - cfg.streakLo);
+    return 1 / (1 + Math.exp(-steepness * (streakCount - midpoint)));
+  }
+
+  // --- Contextual tier selection (sigmoid ramp + state) ---
+  function getT2Probability() {
+    if (lastMissionWasT2) return cfg.backToBackChance;
+
+    let chance = cfg.t2Base;
+
+    // Post-break: lower T2 (player is re-engaged, picks fast option)
+    if (postBreakRaids > 0) return Math.max(chance * 0.3, 0.02);
+
+    // Distraction: flat elevated chance (player picks lazy option)
+    if (distractionRaids > 0) {
+      chance = Math.max(chance, cfg.t2Distract);
+    }
+
+    // Sigmoid ramp: T2 increasingly likely as streak approaches break
+    const progress = Math.min(streakCount / cfg.streakHi, 1.0);
+    const sigmoid = cfg.t2Ramp / (1 + Math.exp(-8 * (progress - 0.6)));
+    chance += sigmoid;
+
+    return chance;
   }
 
   function randomDelay() {
-    // Streak breaking: force a long break after consecutive raids
     streakCount++;
-    if (streakCount >= streakBreakAt) {
+
+    // --- Break decision: hazard-based OR T2-forced ---
+    const breakRoll = Math.random() < getBreakHazard();
+    if (breakRoll || forceBreakNext) {
+      const wasForced = forceBreakNext;
+      forceBreakNext = false;
+
+      // Correlated break duration: longer streak = longer break
+      const streakFactor = Math.min(streakCount / cfg.streakHi, 1.0);
+      const dynBreakMin = cfg.breakMin + streakFactor * 2;
+      const breakMu = Math.log((dynBreakMin + cfg.breakMax) / 2 * 60);
+      const breakD = Math.min(lognormal(breakMu, 0.4), (cfg.breakMax + 5) * 60);
+      const d = Math.max(breakD, (dynBreakMin - 2) * 60) * 1000;
+
+      console.log(P, "Break after", streakCount, "raids (" + (wasForced ? "T2-forced" : "hazard") + "):", fmt(d));
       streakCount = 0;
-      streakBreakAt = cfg.streakLo + Math.floor(Math.random() * (cfg.streakHi - cfg.streakLo + 1));
-      // Log-normal break duration (not uniform) for natural feel
-      const breakMu = Math.log((cfg.breakMin + cfg.breakMax) / 2 * 60);
-      const breakD = Math.min(lognormal(breakMu, 0.4), cfg.breakMax * 60);
-      const d = Math.max(breakD, cfg.breakMin * 60) * 1000;
-      console.log(P, "Streak break after", streakBreakAt, "raids:", fmt(d));
+
+      // Post-break re-engagement: probability-based, 1-3 faster raids
+      if (Math.random() < 0.70) {
+        postBreakRaids = 1 + Math.floor(Math.random() * 3);
+        console.log(P, "Post-break re-engagement for", postBreakRaids, "raids");
+      }
       return d;
     }
 
-    // Distraction state: occasionally enter "slow mode" for a few raids
+    // --- Post-break state: slightly faster, less distracted ---
+    if (postBreakRaids > 0) postBreakRaids--;
+
+    // --- Distraction state ---
     if (distractionRaids <= 0) {
       distractionMu = 0;
-      if (Math.random() < cfg.distractChance) {
+      const distractRoll = postBreakRaids > 0 ? cfg.distractChance * 0.3 : cfg.distractChance;
+      if (Math.random() < distractRoll) {
         distractionMu = 0.5 + Math.random() * 1.0;
         distractionRaids = 2 + Math.floor(Math.random() * 4);
-        console.log(P, "Entering distracted state: mu+" + distractionMu.toFixed(1) + " for", distractionRaids, "raids");
+        console.log(P, "Distracted: mu+" + distractionMu.toFixed(1) + " for", distractionRaids, "raids");
       }
     }
     if (distractionRaids > 0) distractionRaids--;
 
-    // Session fatigue: +0.1 mu per hour of session
-    const sessionHours = (Date.now() - sessionStartTime) / 3600000;
-    const fatigueMu = Math.min(sessionHours * 0.1, 0.5);
+    // --- AR(1) tempo: creates natural momentum in delays ---
+    tempo = 0.6 * tempo + 0.15 * randn();
 
-    const mu = cfg.baseMu + distractionMu + fatigueMu;
+    // --- Session fatigue: saturating exponential ---
+    const sessionHours = (Date.now() - sessionStartTime) / 3600000;
+    const fatigueMu = 0.5 * (1 - Math.exp(-0.3 * sessionHours));
+
+    // --- Post-break speed boost ---
+    const postBreakMu = postBreakRaids > 0 ? -0.3 : 0;
+
+    const mu = cfg.baseMu + distractionMu + fatigueMu + postBreakMu + tempo;
     const sigma = cfg.baseSigma;
-    // Soft cap: fuzzy max between 20-30 min instead of hard 25 min cliff
     const softCap = (20 + Math.random() * 10) * 60;
     const delaySec = Math.min(lognormal(mu, sigma), softCap);
-    const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000; // soft floor 3-5s
-    console.log(P, "Delay:", fmt(d), "(mu=" + mu.toFixed(1) + ", streak=" + streakCount + "/" + streakBreakAt + ")");
+    const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000;
+    console.log(P, "Delay:", fmt(d), "(mu=" + mu.toFixed(1) + ", tempo=" + tempo.toFixed(2) + ", streak=" + streakCount + ", haz=" + getBreakHazard().toFixed(2) + ")");
     return d;
   }
 
@@ -169,8 +232,26 @@
       }
 
       if (!inControl) {
-        console.log(P, "Taking control — idle", fmt(Date.now() - lastActivity));
+        const idleDuration = Date.now() - lastActivity;
+        console.log(P, "Taking control — idle", fmt(idleDuration));
         inControl = true;
+
+        // Long interruption: decay transient states
+        if (idleDuration > 30 * 60 * 1000) {
+          distractionRaids = 0;
+          distractionMu = 0;
+          forceBreakNext = false;
+          postBreakRaids = 0;
+          tempo = 0;
+          console.log(P, "Long interruption — cleared transient states");
+        }
+      }
+
+      // Daily sleep jitter re-roll
+      const today = new Date().toDateString();
+      if (today !== sleepJitterDate) {
+        sleepJitter = (Math.random() - 0.5) * 20;
+        sleepJitterDate = today;
       }
 
       if (document.querySelector("img.captchaImage")) {
@@ -180,19 +261,27 @@
 
       const captureBtns = document.querySelectorAll("#pirateCaptureBox a.button.capture");
       if (captureBtns.length > 0) {
-        // Pick tier 2 occasionally if available, otherwise tier 1
+        // Contextual tier selection: T2 chance scales with streak + distraction
         let tier = 0;
-        if (captureBtns.length > 1 && Math.random() < cfg.t2Chance) tier = 1;
+        const t2Prob = getT2Probability(); // cache to avoid double-call
+        if (captureBtns.length > 1 && Math.random() < t2Prob) tier = 1;
+
+        // Track T2 state for break correlation
+        lastMissionWasT2 = (tier === 1);
+        if (lastMissionWasT2 && Math.random() < cfg.forceBreakChance) {
+          forceBreakNext = true;
+        }
+
         const captureBtn = captureBtns[tier];
         const href = captureBtn.getAttribute("href");
         const duration = MISSION_DURATIONS[tier] || MISSION_DURATIONS[0];
-        console.log(P, "Launching tier", tier + 1, "capture via AJAX:", href);
+        console.log(P, "Launching tier", tier + 1, "capture (t2p=" + t2Prob.toFixed(2) + ", brk=" + getBreakHazard().toFixed(2) + ")");
         navigate(href);
         const delay = randomDelay();
         const total = duration * 1000 + delay;
         nextActionTime = Date.now() + total;
         lastNavigateTime = 0;
-        console.log(P, "Mission launched (tier " + (tier + 1) + "), next in", fmt(total), "(mission", fmt(duration * 1000), "+ delay", fmt(delay) + ")");
+        console.log(P, "Tier " + (tier + 1) + " next in", fmt(total), "(mission", fmt(duration * 1000), "+ delay", fmt(delay) + ")" + (forceBreakNext ? " [break queued]" : ""));
         return;
       }
 
@@ -238,12 +327,21 @@
   }
 
   function start() {
+    if (checkTimer) return; // guard: don't reset state if already running
+    if (!sessionStartTime || sessionStartTime === 0) sessionStartTime = Date.now();
+    scheduleNext();
+    console.log(P, "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + "-" + cfg.sleepEnd);
+  }
+
+  function resetSession() {
     sessionStartTime = Date.now();
     streakCount = 0;
     distractionRaids = 0;
     distractionMu = 0;
-    scheduleNext();
-    console.log(P, "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + "-" + cfg.sleepEnd);
+    lastMissionWasT2 = false;
+    forceBreakNext = false;
+    postBreakRaids = 0;
+    tempo = 0;
   }
 
   function stop() {
@@ -292,16 +390,20 @@
 
   // --- Randomized defaults for new users ---
   const CFG_KEYS = {
-    sleepStart:     { storage: "pirateSleepStart",     min: 0,    max: 3,    round: true },
-    sleepEnd:       { storage: "pirateSleepEnd",       min: 5,    max: 9,    round: true },
-    baseMu:         { storage: "pirateBaseMu",         min: 3.1,  max: 3.5,  round: false },
-    baseSigma:      { storage: "pirateBaseSigma",      min: 0.8,  max: 1.2,  round: false },
-    breakMin:       { storage: "pirateBreakMin",       min: 4,    max: 7,    round: true },
-    breakMax:       { storage: "pirateBreakMax",        min: 10,   max: 16,   round: true },
-    streakLo:       { storage: "pirateStreakLo",        min: 6,    max: 10,   round: true },
-    streakHi:       { storage: "pirateStreakHi",        min: 12,   max: 18,   round: true },
-    distractChance: { storage: "pirateDistractChance", min: 0.08, max: 0.15, round: false },
-    t2Chance:       { storage: "pirateT2Chance",        min: 0.03, max: 0.08, round: false },
+    sleepStart:       { storage: "pirateSleepStart",       min: 0,    max: 3,    round: true },
+    sleepEnd:         { storage: "pirateSleepEnd",         min: 5,    max: 9,    round: true },
+    baseMu:           { storage: "pirateBaseMu",           min: 2.7,  max: 3.3,  round: false },
+    baseSigma:        { storage: "pirateBaseSigma",        min: 0.8,  max: 1.2,  round: false },
+    breakMin:         { storage: "pirateBreakMin",         min: 3,    max: 6,    round: true },
+    breakMax:         { storage: "pirateBreakMax",          min: 8,    max: 14,   round: true },
+    streakLo:         { storage: "pirateStreakLo",          min: 8,    max: 12,   round: true },
+    streakHi:         { storage: "pirateStreakHi",          min: 16,   max: 22,   round: true },
+    distractChance:   { storage: "pirateDistractChance",   min: 0.08, max: 0.15, round: false },
+    t2Base:           { storage: "pirateT2Base",            min: 0.06, max: 0.14, round: false },
+    t2Ramp:           { storage: "pirateT2Ramp",            min: 0.40, max: 0.70, round: false },
+    t2Distract:       { storage: "pirateT2Distract",        min: 0.30, max: 0.50, round: false },
+    forceBreakChance: { storage: "pirateForceBreakChance", min: 0.15, max: 0.30, round: false },
+    backToBackChance: { storage: "pirateBackToBack",        min: 0.08, max: 0.20, round: false },
   };
 
   function randomInRange(min, max, round) {
@@ -333,7 +435,7 @@
       console.log(P, "Initialized random timing params:", toSave);
     }
 
-    streakBreakAt = cfg.streakLo + Math.floor(Math.random() * (cfg.streakHi - cfg.streakLo + 1));
+    resetSession();
     console.log(P, "Config loaded — enabled=" + enabled + ", city=" + pirateCityId + ", cfg=", JSON.stringify(cfg));
     if (enabled && pirateCityId) start();
     injectPirateToggle();
