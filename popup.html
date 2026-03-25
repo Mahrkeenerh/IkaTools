@@ -442,11 +442,45 @@ body {
       </select>
     </div>
     <div class="control-group">
-      <label>Active</label>
-      <input type="number" id="pirate-start" min="0" max="23" step="1" style="width:56px" placeholder="8">
+      <label>Sleep</label>
+      <input type="number" id="pirate-start" min="0" max="23" step="1" style="width:56px" placeholder="1">
       <label>–</label>
-      <input type="number" id="pirate-end" min="0" max="23" step="1" style="width:56px" placeholder="23">
+      <input type="number" id="pirate-end" min="0" max="23" step="1" style="width:56px" placeholder="7">
       <label style="color:#556">h (±10m)</label>
+    </div>
+    <div class="control-group" style="width:100%">
+      <a id="pirate-adv-toggle" style="color:#556;cursor:pointer;font-size:11px;user-select:none">&#9654; Advanced</a>
+    </div>
+    <div id="pirate-adv-panel" style="display:none;flex-wrap:wrap;gap:6px 12px;width:100%;padding:4px 0">
+      <div class="control-group">
+        <label title="Log-normal center (higher = slower delays)">Mu</label>
+        <input type="number" id="pirate-mu" min="2.5" max="4.5" step="0.1" style="width:56px">
+      </div>
+      <div class="control-group">
+        <label title="Log-normal spread (higher = more variance)">Sigma</label>
+        <input type="number" id="pirate-sigma" min="0.5" max="2.0" step="0.1" style="width:56px">
+      </div>
+      <div class="control-group">
+        <label title="Break duration range in minutes">Break</label>
+        <input type="number" id="pirate-brk-min" min="1" max="30" step="1" style="width:44px">
+        <label>–</label>
+        <input type="number" id="pirate-brk-max" min="1" max="30" step="1" style="width:44px">
+        <label style="color:#556">m</label>
+      </div>
+      <div class="control-group">
+        <label title="Raids before a forced break">Streak</label>
+        <input type="number" id="pirate-strk-lo" min="2" max="30" step="1" style="width:44px">
+        <label>–</label>
+        <input type="number" id="pirate-strk-hi" min="2" max="30" step="1" style="width:44px">
+      </div>
+      <div class="control-group">
+        <label title="Chance per raid to enter slow mode (0-1)">Distract</label>
+        <input type="number" id="pirate-distract" min="0" max="0.5" step="0.01" style="width:56px">
+      </div>
+      <div class="control-group">
+        <label title="Chance to pick tier 2 mission (0-1)">T2 %</label>
+        <input type="number" id="pirate-t2" min="0" max="0.5" step="0.01" style="width:56px">
+      </div>
     </div>
   </div>
   <div class="setting-row">

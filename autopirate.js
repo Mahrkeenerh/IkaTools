@@ -1,17 +1,27 @@
 // Auto-launch pirate missions when user is idle
 (() => {
   const P = "[AutoPirate]";
-  let idleTimeout = 5000; // ms before taking control (configurable via storage)
-  const CHECK_INTERVAL = 5000;
   const NAVIGATE_COOLDOWN = 10000;
   const MISSION_DURATIONS = [150, 450]; // tier 1 = 2m30s, tier 2 = 7m30s
-  const TIER2_CHANCE = 0.05; // 1 in 20 chance to pick tier 2
 
   let enabled = false;
   let pirateCityId = null;
-  let activeStart = null;
-  let activeEnd = null;
-  let activeJitter = (Math.random() - 0.5) * 20;
+  let idleTimeout = 5000;
+
+  // --- Tunable timing parameters (randomized per-user, stored in chrome.storage) ---
+  let cfg = {
+    sleepStart: 1,      // hour when bot stops
+    sleepEnd: 7,         // hour when bot can resume
+    baseMu: 3.3,         // log-normal center (higher = slower)
+    baseSigma: 1.0,      // log-normal spread
+    breakMin: 5,          // streak break min duration (minutes)
+    breakMax: 12,         // streak break max duration (minutes)
+    streakLo: 8,          // min raids before streak break
+    streakHi: 15,         // max raids before streak break
+    distractChance: 0.12, // chance to enter distracted state per raid
+    t2Chance: 0.05,       // chance to pick tier 2 mission
+  };
+  let sleepJitter = (Math.random() - 0.5) * 20; // +/- 10 min daily variance
 
   let lastActivity = Date.now();
   let inControl = false;
@@ -20,6 +30,13 @@
   let checkTimer = null;
   let windowFocused = document.hasFocus();
   let lastPopupHeartbeat = 0;
+
+  // --- Humanized timing state ---
+  let streakCount = 0;
+  let streakBreakAt = 8 + Math.floor(Math.random() * 8);
+  let distractionMu = 0; // added to base mu during "distracted" state
+  let distractionRaids = 0; // how many raids left in distracted state
+  let sessionStartTime = Date.now();
 
   function fmt(ms) {
     const s = Math.round(ms / 1000);
@@ -56,7 +73,7 @@
 
   function handBack() {
     inControl = false;
-    nextActionTime = 0;
+    // Preserve nextActionTime so remaining delay survives user interruptions
     lastNavigateTime = 0;
   }
 
@@ -66,22 +83,63 @@
   }
 
   function isInActiveHours() {
-    if (activeStart === null || activeEnd === null) return true;
+    if (cfg.sleepStart === null || cfg.sleepEnd === null) return true;
     const now = new Date();
     const mins = now.getHours() * 60 + now.getMinutes();
-    const startMins = activeStart * 60 + activeJitter;
-    const endMins = activeEnd * 60 + activeJitter;
-    if (startMins < endMins) return mins >= startMins && mins < endMins;
-    return mins >= startMins || mins < endMins;
+    const sleepStartMins = cfg.sleepStart * 60 + sleepJitter;
+    const sleepEndMins = cfg.sleepEnd * 60 + sleepJitter;
+    // Sleep window: if inside it, NOT active
+    if (sleepStartMins < sleepEndMins) {
+      return !(mins >= sleepStartMins && mins < sleepEndMins);
+    }
+    return !(mins >= sleepStartMins || mins < sleepEndMins);
+  }
+
+  // --- Humanized delay (log-normal + distraction state + streak breaking) ---
+  function lognormal(mu, sigma) {
+    const u = 1 - Math.random();
+    const v = 1 - Math.random();
+    const z = Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+    return Math.exp(mu + sigma * z);
   }
 
   function randomDelay() {
-    if (Math.random() < 0.05) {
-      const d = (9 * 60 + Math.random() * 2 * 60) * 1000;
-      console.log(P, "Long wait rolled:", fmt(d));
+    // Streak breaking: force a long break after consecutive raids
+    streakCount++;
+    if (streakCount >= streakBreakAt) {
+      streakCount = 0;
+      streakBreakAt = cfg.streakLo + Math.floor(Math.random() * (cfg.streakHi - cfg.streakLo + 1));
+      // Log-normal break duration (not uniform) for natural feel
+      const breakMu = Math.log((cfg.breakMin + cfg.breakMax) / 2 * 60);
+      const breakD = Math.min(lognormal(breakMu, 0.4), cfg.breakMax * 60);
+      const d = Math.max(breakD, cfg.breakMin * 60) * 1000;
+      console.log(P, "Streak break after", streakBreakAt, "raids:", fmt(d));
       return d;
     }
-    return (5 + Math.random() * 115) * 1000;
+
+    // Distraction state: occasionally enter "slow mode" for a few raids
+    if (distractionRaids <= 0) {
+      distractionMu = 0;
+      if (Math.random() < cfg.distractChance) {
+        distractionMu = 0.5 + Math.random() * 1.0;
+        distractionRaids = 2 + Math.floor(Math.random() * 4);
+        console.log(P, "Entering distracted state: mu+" + distractionMu.toFixed(1) + " for", distractionRaids, "raids");
+      }
+    }
+    if (distractionRaids > 0) distractionRaids--;
+
+    // Session fatigue: +0.1 mu per hour of session
+    const sessionHours = (Date.now() - sessionStartTime) / 3600000;
+    const fatigueMu = Math.min(sessionHours * 0.1, 0.5);
+
+    const mu = cfg.baseMu + distractionMu + fatigueMu;
+    const sigma = cfg.baseSigma;
+    // Soft cap: fuzzy max between 20-30 min instead of hard 25 min cliff
+    const softCap = (20 + Math.random() * 10) * 60;
+    const delaySec = Math.min(lognormal(mu, sigma), softCap);
+    const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000; // soft floor 3-5s
+    console.log(P, "Delay:", fmt(d), "(mu=" + mu.toFixed(1) + ", streak=" + streakCount + "/" + streakBreakAt + ")");
+    return d;
   }
 
   function navigate(url) {
@@ -122,9 +180,9 @@
 
       const captureBtns = document.querySelectorAll("#pirateCaptureBox a.button.capture");
       if (captureBtns.length > 0) {
-        // Pick tier 2 with 1/20 chance if available, otherwise tier 1
+        // Pick tier 2 occasionally if available, otherwise tier 1
         let tier = 0;
-        if (captureBtns.length > 1 && Math.random() < TIER2_CHANCE) tier = 1;
+        if (captureBtns.length > 1 && Math.random() < cfg.t2Chance) tier = 1;
         const captureBtn = captureBtns[tier];
         const href = captureBtn.getAttribute("href");
         const duration = MISSION_DURATIONS[tier] || MISSION_DURATIONS[0];
@@ -170,14 +228,26 @@
     }
   }
 
+  function scheduleNext() {
+    if (checkTimer) clearTimeout(checkTimer);
+    const jitter = 3500 + Math.random() * 3000; // 3.5-6.5s
+    checkTimer = setTimeout(() => {
+      tryPirate();
+      if (enabled) scheduleNext();
+    }, jitter);
+  }
+
   function start() {
-    if (checkTimer) clearInterval(checkTimer);
-    checkTimer = setInterval(tryPirate, CHECK_INTERVAL);
-    console.log(P, "Started — city=" + pirateCityId + ", hours=" + activeStart + "-" + activeEnd);
+    sessionStartTime = Date.now();
+    streakCount = 0;
+    distractionRaids = 0;
+    distractionMu = 0;
+    scheduleNext();
+    console.log(P, "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + "-" + cfg.sleepEnd);
   }
 
   function stop() {
-    if (checkTimer) { clearInterval(checkTimer); checkTimer = null; }
+    if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
     handBack();
     console.log(P, "Stopped");
   }
@@ -220,20 +290,54 @@
     toolbar.appendChild(li);
   }
 
+  // --- Randomized defaults for new users ---
+  const CFG_KEYS = {
+    sleepStart:     { storage: "pirateSleepStart",     min: 0,    max: 3,    round: true },
+    sleepEnd:       { storage: "pirateSleepEnd",       min: 5,    max: 9,    round: true },
+    baseMu:         { storage: "pirateBaseMu",         min: 3.1,  max: 3.5,  round: false },
+    baseSigma:      { storage: "pirateBaseSigma",      min: 0.8,  max: 1.2,  round: false },
+    breakMin:       { storage: "pirateBreakMin",       min: 4,    max: 7,    round: true },
+    breakMax:       { storage: "pirateBreakMax",        min: 10,   max: 16,   round: true },
+    streakLo:       { storage: "pirateStreakLo",        min: 6,    max: 10,   round: true },
+    streakHi:       { storage: "pirateStreakHi",        min: 12,   max: 18,   round: true },
+    distractChance: { storage: "pirateDistractChance", min: 0.08, max: 0.15, round: false },
+    t2Chance:       { storage: "pirateT2Chance",        min: 0.03, max: 0.08, round: false },
+  };
+
+  function randomInRange(min, max, round) {
+    const v = min + Math.random() * (max - min);
+    return round ? Math.round(v) : Math.round(v * 100) / 100;
+  }
+
   // --- Storage ---
-  chrome.storage.local.get(
-    ["pirateEnabled", "pirateCityId", "pirateActiveStart", "pirateActiveEnd", "pirateIdleTimeout"],
-    (data) => {
-      enabled = !!data.pirateEnabled;
-      pirateCityId = data.pirateCityId || null;
-      activeStart = data.pirateActiveStart ?? null;
-      activeEnd = data.pirateActiveEnd ?? null;
-      if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
-      console.log(P, "Config loaded — enabled=" + enabled + ", city=" + pirateCityId + ", hours=" + activeStart + "-" + activeEnd + ", idle=" + fmt(idleTimeout));
-      if (enabled && pirateCityId) start();
-      injectPirateToggle();
+  const allStorageKeys = ["pirateEnabled", "pirateCityId", "pirateIdleTimeout",
+    ...Object.values(CFG_KEYS).map((k) => k.storage)];
+
+  chrome.storage.local.get(allStorageKeys, (data) => {
+    enabled = !!data.pirateEnabled;
+    pirateCityId = data.pirateCityId || null;
+    if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
+
+    // Initialize missing timing params with random values (preserves existing)
+    const toSave = {};
+    for (const [key, def] of Object.entries(CFG_KEYS)) {
+      if (data[def.storage] != null) {
+        cfg[key] = data[def.storage];
+      } else {
+        cfg[key] = randomInRange(def.min, def.max, def.round);
+        toSave[def.storage] = cfg[key];
+      }
     }
-  );
+    if (Object.keys(toSave).length > 0) {
+      chrome.storage.local.set(toSave);
+      console.log(P, "Initialized random timing params:", toSave);
+    }
+
+    streakBreakAt = cfg.streakLo + Math.floor(Math.random() * (cfg.streakHi - cfg.streakLo + 1));
+    console.log(P, "Config loaded — enabled=" + enabled + ", city=" + pirateCityId + ", cfg=", JSON.stringify(cfg));
+    if (enabled && pirateCityId) start();
+    injectPirateToggle();
+  });
 
   // --- Messages from popup ---
   chrome.runtime.onMessage.addListener((msg) => {
@@ -248,15 +352,20 @@
     }
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;
-      if (msg.activeStart !== undefined) activeStart = msg.activeStart;
-      if (msg.activeEnd !== undefined) activeEnd = msg.activeEnd;
-      chrome.storage.local.set({
-        pirateCityId: pirateCityId,
-        pirateActiveStart: activeStart,
-        pirateActiveEnd: activeEnd,
-      });
-      activeJitter = (Math.random() - 0.5) * 20;
-      console.log(P, "Config updated — city=" + pirateCityId + ", hours=" + activeStart + "-" + activeEnd);
+      const save = {};
+      if (msg.cityId !== undefined) save.pirateCityId = msg.cityId;
+      // Update any cfg params included in the message
+      for (const [key, def] of Object.entries(CFG_KEYS)) {
+        if (msg[key] !== undefined) {
+          cfg[key] = msg[key];
+          save[def.storage] = msg[key];
+        }
+      }
+      if (msg.sleepStart !== undefined || msg.sleepEnd !== undefined) {
+        sleepJitter = (Math.random() - 0.5) * 20;
+      }
+      chrome.storage.local.set(save);
+      console.log(P, "Config updated — city=" + pirateCityId + ", cfg=", JSON.stringify(cfg));
     }
   });
 

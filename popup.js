@@ -420,13 +420,40 @@
   const pirateStart = $("pirate-start");
   const pirateEnd = $("pirate-end");
 
+  // Advanced timing param IDs and their storage keys
+  const PIRATE_ADV = [
+    { id: "pirate-mu",       key: "pirateBaseMu",         parse: parseFloat },
+    { id: "pirate-sigma",    key: "pirateBaseSigma",      parse: parseFloat },
+    { id: "pirate-brk-min",  key: "pirateBreakMin",       parse: (v) => parseInt(v, 10) },
+    { id: "pirate-brk-max",  key: "pirateBreakMax",        parse: (v) => parseInt(v, 10) },
+    { id: "pirate-strk-lo",  key: "pirateStreakLo",        parse: (v) => parseInt(v, 10) },
+    { id: "pirate-strk-hi",  key: "pirateStreakHi",        parse: (v) => parseInt(v, 10) },
+    { id: "pirate-distract", key: "pirateDistractChance", parse: parseFloat },
+    { id: "pirate-t2",       key: "pirateT2Chance",        parse: parseFloat },
+  ];
+  // Map cfg key names to message key names for pirate-config
+  const STORAGE_TO_CFG = {
+    pirateBaseMu: "baseMu", pirateBaseSigma: "baseSigma",
+    pirateBreakMin: "breakMin", pirateBreakMax: "breakMax",
+    pirateStreakLo: "streakLo", pirateStreakHi: "streakHi",
+    pirateDistractChance: "distractChance", pirateT2Chance: "t2Chance",
+  };
+
   async function loadPirateState() {
-    const data = await chrome.storage.local.get([
-      "pirateEnabled", "pirateCityId", "pirateActiveStart", "pirateActiveEnd",
-    ]);
+    const keys = [
+      "pirateEnabled", "pirateCityId", "pirateSleepStart", "pirateSleepEnd",
+      ...PIRATE_ADV.map((a) => a.key),
+    ];
+    const data = await chrome.storage.local.get(keys);
     pirateToggle.checked = !!data.pirateEnabled;
-    pirateStart.value = data.pirateActiveStart ?? "";
-    pirateEnd.value = data.pirateActiveEnd ?? "";
+    pirateStart.value = data.pirateSleepStart ?? 1;
+    pirateEnd.value = data.pirateSleepEnd ?? 7;
+
+    // Load advanced params
+    for (const a of PIRATE_ADV) {
+      const el = $(a.id);
+      if (el && data[a.key] != null) el.value = data[a.key];
+    }
 
     // Load city list from content script
     if (ikariamTabId) {
@@ -467,13 +494,39 @@
   function sendPirateHours() {
     const s = pirateStart.value !== "" ? parseInt(pirateStart.value, 10) : null;
     const e = pirateEnd.value !== "" ? parseInt(pirateEnd.value, 10) : null;
-    chrome.storage.local.set({ pirateActiveStart: s, pirateActiveEnd: e });
+    chrome.storage.local.set({ pirateSleepStart: s, pirateSleepEnd: e });
     if (ikariamTabId) {
-      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", activeStart: s, activeEnd: e }).catch(() => {});
+      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", sleepStart: s, sleepEnd: e }).catch(() => {});
     }
   }
   pirateStart.addEventListener("change", sendPirateHours);
   pirateEnd.addEventListener("change", sendPirateHours);
+
+  // Advanced timing params — each input sends its value on change
+  for (const a of PIRATE_ADV) {
+    const el = $(a.id);
+    if (!el) continue;
+    el.addEventListener("change", () => {
+      const val = a.parse(el.value);
+      if (isNaN(val)) return;
+      const cfgKey = STORAGE_TO_CFG[a.key];
+      chrome.storage.local.set({ [a.key]: val });
+      if (ikariamTabId && cfgKey) {
+        chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", [cfgKey]: val }).catch(() => {});
+      }
+    });
+  }
+
+  // Toggle advanced section visibility
+  const advToggle = $("pirate-adv-toggle");
+  const advPanel = $("pirate-adv-panel");
+  if (advToggle && advPanel) {
+    advToggle.addEventListener("click", () => {
+      const open = advPanel.style.display !== "none";
+      advPanel.style.display = open ? "none" : "flex";
+      advToggle.textContent = (open ? "\u25b6" : "\u25bc") + " Advanced";
+    });
+  }
 
   // --- Notes ---
   const NOTES_KEY = "ikNotes";
