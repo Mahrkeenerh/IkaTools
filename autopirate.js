@@ -362,6 +362,13 @@
         return;
       }
 
+      // Close any open building/view panel (port, shipyard, etc.) that blocks fortress navigation
+      const openView = document.querySelector(".templateView:not(#pirateFortress_c) .close");
+      if (openView && !document.querySelector("#pirateCaptureBox")) {
+        console.log(P, "Building panel open, closing");
+        openView.click();
+        return;
+      }
 
       // Mission still running — crew is out, just wait
       if (document.querySelector("#pirateCaptureBox .red_box")) {

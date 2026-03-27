@@ -169,6 +169,27 @@
           finishScan(msg.worldName, msg.islands);
           break;
 
+        case "navigate-to-world":
+          log("Navigating to world map...");
+          phaseText.textContent = "Navigating...";
+          port.disconnect();
+          chrome.tabs.get(ikariamTabId, (tab) => {
+            const base = new URL(tab.url);
+            base.search = "?view=worldmap_iso";
+            chrome.tabs.update(ikariamTabId, { url: base.href }, () => {
+              // Wait for tab to finish loading, then re-trigger scan
+              function onUpdated(tabId, info) {
+                if (tabId === ikariamTabId && info.status === "complete") {
+                  chrome.tabs.onUpdated.removeListener(onUpdated);
+                  // Small delay for content scripts to initialize
+                  setTimeout(() => startScan(), 500);
+                }
+              }
+              chrome.tabs.onUpdated.addListener(onUpdated);
+            });
+          });
+          return; // don't set up onDisconnect below
+
         case "error":
           phaseText.textContent = "Error";
           statusDetail.textContent = msg.message;

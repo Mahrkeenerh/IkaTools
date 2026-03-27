@@ -182,43 +182,14 @@
     totalEstimate = 1;
 
     // Navigate to the world map if not already there
-    if (document.body.id !== "worldmap_iso") {
-      safeSend({ type: "log", message: "Not on world map — navigating..." });
-      IkUtils.ensureBridge();
-      window.dispatchEvent(
-        new CustomEvent("ik-ajax-call", { detail: { url: "?view=worldmap_iso" } })
-      );
-      // Wait for body ID to change to worldmap_iso
-      const navOk = await new Promise((resolve) => {
-        const start = Date.now();
-        function check() {
-          if (document.body.id === "worldmap_iso") return resolve(true);
-          if (Date.now() - start > 8000) return resolve(false);
-          setTimeout(check, 300);
-        }
-        setTimeout(check, 500);
-      });
-      if (!navOk) {
-        safeSend({
-          type: "error",
-          message: "Could not navigate to the World Map view.",
-        });
-        return;
-      }
-      await sleep(500); // let tiles render
-    }
-
-    const xInput = document.getElementById("inputXCoord");
-    const yInput = document.getElementById("inputYCoord");
-    if (!xInput || !yInput) {
-      safeSend({
-        type: "error",
-        message: "Coordinate inputs not found on world map.",
-      });
+    if (!document.getElementById("inputXCoord")) {
+      safeSend({ type: "navigate-to-world" });
       return;
     }
 
     // Save starting position to restore after scan
+    const xInput = document.getElementById("inputXCoord");
+    const yInput = document.getElementById("inputYCoord");
     const startX = parseInt(xInput.value, 10) || 50;
     const startY = parseInt(yInput.value, 10) || 50;
 
