@@ -1,0 +1,344 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>City Advisor Report — Ikariam Tools</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 13px;
+  background: #1a1f2e;
+  color: #c8cdd8;
+  min-height: 100vh;
+}
+
+::-webkit-scrollbar { width: 7px; height: 7px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #3a4a6a; border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: #5a7aaa; }
+
+.page-header {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 14px 24px; background: #141824;
+  border-bottom: 1px solid #2a3040;
+  position: sticky; top: 0; z-index: 100;
+}
+.page-header h1 { font-size: 16px; font-weight: 600; color: #e0e4ec; }
+.header-meta { font-size: 11px; color: #667; }
+#report-timestamp { color: #8890a0; }
+
+.tab-bar {
+  display: flex; gap: 0; padding: 0 24px;
+  background: #141824; border-bottom: 1px solid #2a3040;
+}
+.tab-btn {
+  padding: 10px 20px; border: none;
+  border-bottom: 2px solid transparent;
+  background: transparent; color: #8890a0;
+  cursor: pointer; font-size: 13px; font-weight: 500;
+  transition: color 0.15s, border-color 0.15s;
+  margin-bottom: -1px;
+}
+.tab-btn:hover { color: #c8cdd8; }
+.tab-btn.active { color: #5ca0f2; border-bottom-color: #5ca0f2; }
+
+.content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+
+.report-panel { display: none; }
+.report-panel.active { display: block; }
+
+.panel-title {
+  font-size: 15px; font-weight: 600; color: #e0e4ec;
+  margin-bottom: 16px; padding-bottom: 10px;
+  border-bottom: 1px solid #2a3040;
+}
+
+.table-wrap {
+  background: #141824; border: 1px solid #2a3040;
+  border-radius: 8px; overflow: hidden;
+  overflow-x: auto; margin-bottom: 24px;
+}
+.report-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+.report-table th {
+  padding: 9px 12px; background: #141824; color: #8890a0;
+  font-weight: 500; text-align: left; border-bottom: 1px solid #2a3040;
+  white-space: nowrap; font-size: 11px; text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+.report-table th.right, .report-table td.right { text-align: right; }
+.report-table td {
+  padding: 7px 12px; border-bottom: 1px solid #1e2535;
+  vertical-align: middle; white-space: nowrap;
+}
+.report-table tr:last-child td { border-bottom: none; }
+.report-table tbody tr:hover td { background: rgba(42, 53, 80, 0.4); }
+.report-table tbody tr:nth-child(even) td { background: rgba(20, 24, 36, 0.5); }
+.report-table tbody tr:nth-child(even):hover td { background: rgba(42, 53, 80, 0.4); }
+.report-table tfoot td {
+  padding: 9px 12px; background: #141824; color: #a0b8e0;
+  font-weight: 600; border-top: 1px solid #2a3040;
+}
+
+.city-name { font-weight: 600; color: #e0e4ec; }
+.capital-badge {
+  display: inline-block; font-size: 9px; font-weight: 600;
+  color: #f2c85c; background: rgba(242, 200, 92, 0.12);
+  border: 1px solid rgba(242, 200, 92, 0.3);
+  border-radius: 3px; padding: 1px 5px; margin-left: 6px;
+  vertical-align: middle; text-transform: uppercase;
+}
+.coords { color: #667; font-size: 11px; font-family: monospace; }
+.island-name { color: #778; font-size: 11px; }
+
+.lvl {
+  display: inline-block; min-width: 24px; padding: 2px 6px;
+  background: #2a3550; border-radius: 4px; font-size: 12px;
+  font-weight: 600; color: #a0b8e0; text-align: center;
+}
+.lvl-hi { background: #1e3a2a; color: #6fce8c; }
+.lvl-md { background: #2a2a1a; color: #d4c050; }
+.lvl-lo { background: #2a1a1a; color: #b06060; }
+.lvl-no { color: #445; }
+
+.val-pos { color: #6fce8c; }
+.val-neg { color: #e06060; }
+.val-zero { color: #556; }
+.val-warn { color: #e0a040; }
+
+.res-bar {
+  display: inline-block; height: 4px; border-radius: 2px;
+  background: #3a5a8a; vertical-align: middle; margin-left: 6px;
+}
+.res-bar-bg {
+  display: inline-block; height: 4px; width: 60px;
+  border-radius: 2px; background: #1a2030; vertical-align: middle;
+  margin-left: 6px; position: relative;
+}
+.res-bar-fill {
+  height: 100%; border-radius: 2px; background: #3a7bd5;
+  position: absolute; left: 0; top: 0;
+}
+.res-bar-fill.high { background: #e06060; }
+
+.building-active { color: #5ca0f2; font-weight: 500; }
+.building-idle { color: #556; }
+.time-short { color: #5cc864; }
+.time-medium { color: #5ca0f2; }
+.time-long { color: #c88832; }
+.time-done { color: #5cc864; font-weight: 600; }
+
+.section-subtitle {
+  font-size: 11px; color: #667; margin-bottom: 12px;
+}
+
+.building-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 6px; margin-bottom: 8px;
+}
+.building-chip {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 4px 8px; background: #1e2535; border-radius: 4px;
+  border: 1px solid #2a3040; font-size: 12px;
+}
+.chip-name { color: #a0aac0; }
+.chip-level { font-weight: 600; color: #c8cdd8; }
+.chip-dim .chip-name { color: #445; }
+.chip-dim .chip-level { color: #334; }
+
+.city-header {
+  margin: 16px 0 6px; font-weight: 600; color: #e0e4ec;
+}
+.city-header .coords { margin-left: 8px; }
+
+.no-data {
+  text-align: center; padding: 60px 20px; color: #445;
+}
+.no-data strong { display: block; font-size: 16px; margin-bottom: 8px; color: #556; }
+
+.summary-cards {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 10px; margin-bottom: 24px;
+}
+.summary-card {
+  padding: 12px 14px; background: #141824;
+  border: 1px solid #2a3040; border-radius: 8px;
+}
+.summary-card .label { font-size: 11px; color: #667; text-transform: uppercase; letter-spacing: 0.4px; }
+.summary-card .value { font-size: 20px; font-weight: 600; color: #e0e4ec; margin-top: 4px; }
+.summary-card .sub { font-size: 11px; color: #778; margin-top: 2px; }
+
+.rate { font-size: 12px; }
+td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-left: 4px; }
+
+th.res-wood, td.res-wood { color: #b08850 !important; }
+th.res-wine, td.res-wine { color: #c06080 !important; }
+th.res-marble, td.res-marble { color: #a0b0c0 !important; }
+th.res-crystal, td.res-crystal { color: #60b0d0 !important; }
+th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
+
+.trade-section-header {
+  display: flex; align-items: center; gap: 8px;
+  margin: 16px 0 6px; font-size: 13px; font-weight: 600;
+}
+.trade-type-badge {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 3px; text-transform: uppercase;
+}
+.trade-type-buy { background: rgba(96, 176, 208, 0.15); color: #60b0d0; border: 1px solid rgba(96, 176, 208, 0.3); }
+.trade-type-sell { background: rgba(111, 206, 140, 0.15); color: #6fce8c; border: 1px solid rgba(111, 206, 140, 0.3); }
+</style>
+</head>
+<body>
+
+<div class="page-header">
+  <h1>City Advisor Report</h1>
+  <div class="header-meta">
+    Generated: <span id="report-timestamp">—</span>
+  </div>
+</div>
+
+<div class="tab-bar">
+  <button class="tab-btn active" data-tab="panel-overview">Overview</button>
+  <button class="tab-btn" data-tab="panel-economy">Economy</button>
+  <button class="tab-btn" data-tab="panel-builder">Builder</button>
+  <button class="tab-btn" data-tab="panel-buildings">Buildings</button>
+  <button class="tab-btn" data-tab="panel-workers">Workers</button>
+  <button class="tab-btn" data-tab="panel-army">Army</button>
+  <button class="tab-btn" data-tab="panel-storage">Storage</button>
+  <button class="tab-btn" data-tab="panel-trading">Trading</button>
+</div>
+
+<div class="content">
+
+  <!-- Overview -->
+  <div id="panel-overview" class="report-panel active">
+    <div id="summary-cards" class="summary-cards"></div>
+    <div class="panel-title">City Overview</div>
+    <div class="table-wrap">
+      <table class="report-table">
+        <thead><tr>
+          <th>City</th><th>Island</th><th>Coords</th>
+          <th class="right">Pop</th>
+          <th>Tradegood</th>
+          <th class="right res-wood">Wood</th>
+          <th class="right res-wine">Wine</th>
+          <th class="right res-marble">Marble</th>
+          <th class="right res-crystal">Crystal</th>
+          <th class="right res-sulfur">Sulfur</th>
+          <th>Status</th>
+        </tr></thead>
+        <tbody id="overview-body"></tbody>
+        <tfoot id="overview-foot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Economy -->
+  <div id="panel-economy" class="report-panel">
+    <div class="panel-title">Economy — Resources &amp; Production</div>
+    <div class="table-wrap">
+      <table class="report-table">
+        <thead><tr>
+          <th>City</th>
+          <th class="right res-wood">Wood</th>
+          <th class="right res-wood">/h</th>
+          <th class="right res-wine">Wine</th>
+          <th class="right res-wine">/h</th>
+          <th class="right res-marble">Marble</th>
+          <th class="right res-marble">/h</th>
+          <th class="right res-crystal">Crystal</th>
+          <th class="right res-crystal">/h</th>
+          <th class="right res-sulfur">Sulfur</th>
+          <th class="right res-sulfur">/h</th>
+        </tr></thead>
+        <tbody id="economy-body"></tbody>
+        <tfoot id="economy-foot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Builder -->
+  <div id="panel-builder" class="report-panel">
+    <div class="panel-title">Builder — Active Construction</div>
+    <div class="table-wrap">
+      <table class="report-table">
+        <thead><tr>
+          <th>City</th><th>Coords</th>
+          <th>Building</th><th>Target Level</th><th>Time Remaining</th>
+        </tr></thead>
+        <tbody id="builder-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Buildings -->
+  <div id="panel-buildings" class="report-panel">
+    <div class="panel-title">Buildings — All Cities</div>
+    <div class="section-subtitle">Complete building overview per city.</div>
+    <div id="buildings-overview"></div>
+  </div>
+
+  <!-- Workers -->
+  <div id="panel-workers" class="report-panel">
+    <div class="panel-title">Workers — Population Allocation</div>
+    <div class="table-wrap">
+      <table class="report-table">
+        <thead><tr>
+          <th>City</th>
+          <th class="right">Wood Workers</th>
+          <th class="right">Luxury Workers</th>
+          <th class="right">Scientists</th>
+          <th class="right">Priests</th>
+          <th class="right">Citizens</th>
+          <th class="right">Pop / Max</th>
+          <th class="right">Growth/h</th>
+          <th class="right">Happiness</th>
+          <th class="right">Net Gold</th>
+        </tr></thead>
+        <tbody id="workers-body"></tbody>
+        <tfoot id="workers-foot"></tfoot>
+      </table>
+    </div>
+  </div>
+
+  <!-- Army -->
+  <div id="panel-army" class="report-panel">
+    <div class="panel-title">Army — Military Units</div>
+    <div id="army-container"></div>
+  </div>
+
+  <!-- Storage -->
+  <div id="panel-storage" class="report-panel">
+    <div class="panel-title">Storage — Safe &amp; Lootable Resources</div>
+    <div class="section-subtitle">Total stock with <span class="val-pos">safe</span> and <span class="val-neg">lootable</span> amounts.</div>
+    <div class="table-wrap">
+      <table class="report-table">
+        <thead><tr>
+          <th>City</th>
+          <th class="right">Safe / Total Cap</th>
+          <th class="right res-wood">Wood</th>
+          <th class="right res-wine">Wine</th>
+          <th class="right res-marble">Marble</th>
+          <th class="right res-crystal">Crystal</th>
+          <th class="right res-sulfur">Sulfur</th>
+        </tr></thead>
+        <tbody id="storage-body"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- Trading -->
+  <div id="panel-trading" class="report-panel">
+    <div class="panel-title">Trading — Market Offers</div>
+    <div class="section-subtitle">Buy and sell offers visible from your cities' markets.</div>
+    <div id="trading-container"></div>
+  </div>
+
+</div>
+
+<script src="report.js"></script>
+</body>
+</html>

@@ -73,23 +73,25 @@
   }
 
   // --- Advisor Report ---
-  const advisorAllBtn = $("advisor-all-btn");
-  const advisorArmyBtn = $("advisor-army-btn");
+  const advisorBtns = [
+    $("advisor-basic-btn"),
+    $("advisor-army-btn"),
+    $("advisor-trade-btn"),
+    $("advisor-full-btn"),
+  ];
   const advisorStatus = $("advisor-status");
   const advisorProgress = $("advisor-progress");
   const advisorStatusText = $("advisor-status-text");
 
   function startAdvisor(mode) {
     if (!ikariamTabId) return;
-    advisorAllBtn.disabled = true;
-    advisorArmyBtn.disabled = true;
+    advisorBtns.forEach((b) => b.disabled = true);
     advisorStatus.style.display = "block";
     advisorProgress.style.width = "0%";
     advisorStatusText.textContent = "Starting...";
 
     chrome.tabs.sendMessage(ikariamTabId, { type: "generate-advisor-report", mode }, (resp) => {
-      advisorAllBtn.disabled = false;
-      advisorArmyBtn.disabled = false;
+      advisorBtns.forEach((b) => b.disabled = false);
       advisorStatus.style.display = "none";
       if (chrome.runtime.lastError) {
         console.error("Advisor report error:", chrome.runtime.lastError.message);
@@ -99,8 +101,10 @@
     });
   }
 
-  advisorAllBtn.addEventListener("click", () => startAdvisor("full"));
-  advisorArmyBtn.addEventListener("click", () => startAdvisor("army"));
+  $("advisor-basic-btn").addEventListener("click", () => startAdvisor("basic"));
+  $("advisor-army-btn").addEventListener("click", () => startAdvisor("army"));
+  $("advisor-trade-btn").addEventListener("click", () => startAdvisor("trading"));
+  $("advisor-full-btn").addEventListener("click", () => startAdvisor("full"));
 
   // Listen for progress updates from advisor.js
   chrome.runtime.onMessage.addListener((msg) => {

@@ -26,9 +26,6 @@
 
   // Navigate by dispatching a custom event that bridge.js handles in page context
   function jumpTo(x, y) {
-    if (!document.getElementById("inputXCoord")) {
-      throw new Error("Coordinate inputs not found — are you on the world map?");
-    }
     IkUtils.ensureBridge();
     window.dispatchEvent(
       new CustomEvent("ik-jump", { detail: { x, y } })
@@ -184,13 +181,39 @@
     safeSend({ type: "started", worldName, phase: "probe" });
     totalEstimate = 1;
 
-    // First, make sure we're on the world map view
+    // Navigate to the world map if not already there
+    if (document.body.id !== "worldmap_iso") {
+      safeSend({ type: "log", message: "Not on world map — navigating..." });
+      IkUtils.ensureBridge();
+      window.dispatchEvent(
+        new CustomEvent("ik-ajax-call", { detail: { url: "?view=worldmap_iso" } })
+      );
+      // Wait for body ID to change to worldmap_iso
+      const navOk = await new Promise((resolve) => {
+        const start = Date.now();
+        function check() {
+          if (document.body.id === "worldmap_iso") return resolve(true);
+          if (Date.now() - start > 8000) return resolve(false);
+          setTimeout(check, 300);
+        }
+        setTimeout(check, 500);
+      });
+      if (!navOk) {
+        safeSend({
+          type: "error",
+          message: "Could not navigate to the World Map view.",
+        });
+        return;
+      }
+      await sleep(500); // let tiles render
+    }
+
     const xInput = document.getElementById("inputXCoord");
     const yInput = document.getElementById("inputYCoord");
     if (!xInput || !yInput) {
       safeSend({
         type: "error",
-        message: "Navigate to the World Map view first (coordinate inputs not found).",
+        message: "Coordinate inputs not found on world map.",
       });
       return;
     }

@@ -362,6 +362,7 @@
         return;
       }
 
+
       // Mission still running — crew is out, just wait
       if (document.querySelector("#pirateCaptureBox .red_box")) {
         console.log(P, "Mission still running, waiting");
