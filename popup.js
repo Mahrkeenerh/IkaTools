@@ -72,6 +72,45 @@
     scanLog.scrollTop = scanLog.scrollHeight;
   }
 
+  // --- Advisor Report ---
+  const advisorAllBtn = $("advisor-all-btn");
+  const advisorArmyBtn = $("advisor-army-btn");
+  const advisorStatus = $("advisor-status");
+  const advisorProgress = $("advisor-progress");
+  const advisorStatusText = $("advisor-status-text");
+
+  function startAdvisor(mode) {
+    if (!ikariamTabId) return;
+    advisorAllBtn.disabled = true;
+    advisorArmyBtn.disabled = true;
+    advisorStatus.style.display = "block";
+    advisorProgress.style.width = "0%";
+    advisorStatusText.textContent = "Starting...";
+
+    chrome.tabs.sendMessage(ikariamTabId, { type: "generate-advisor-report", mode }, (resp) => {
+      advisorAllBtn.disabled = false;
+      advisorArmyBtn.disabled = false;
+      advisorStatus.style.display = "none";
+      if (chrome.runtime.lastError) {
+        console.error("Advisor report error:", chrome.runtime.lastError.message);
+      } else if (resp?.error) {
+        console.error("Advisor report error:", resp.error);
+      }
+    });
+  }
+
+  advisorAllBtn.addEventListener("click", () => startAdvisor("full"));
+  advisorArmyBtn.addEventListener("click", () => startAdvisor("army"));
+
+  // Listen for progress updates from advisor.js
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "advisor-progress") {
+      const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
+      advisorProgress.style.width = pct + "%";
+      advisorStatusText.textContent = msg.phase;
+    }
+  });
+
   // --- Scan ---
   scanBtn.addEventListener("click", startScan);
 
@@ -416,6 +455,7 @@
 
   // --- Auto pirate ---
   const pirateToggle = $("pirate-toggle");
+  const convertToggle = $("convert-toggle");
   const pirateCity = $("pirate-city");
   const pirateStart = $("pirate-start");
   const pirateEnd = $("pirate-end");
@@ -449,11 +489,12 @@
 
   async function loadPirateState() {
     const keys = [
-      "pirateEnabled", "pirateCityId", "pirateSleepStart", "pirateSleepEnd",
+      "pirateEnabled", "pirateConvertEnabled", "pirateCityId", "pirateSleepStart", "pirateSleepEnd",
       ...PIRATE_ADV.map((a) => a.key),
     ];
     const data = await chrome.storage.local.get(keys);
     pirateToggle.checked = !!data.pirateEnabled;
+    convertToggle.checked = !!data.pirateConvertEnabled;
     pirateStart.value = data.pirateSleepStart ?? 1;
     pirateEnd.value = data.pirateSleepEnd ?? 7;
 
@@ -488,6 +529,14 @@
     chrome.storage.local.set({ pirateEnabled: enabled });
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-toggle", enabled }).catch(() => {});
+    }
+  });
+
+  convertToggle.addEventListener("change", () => {
+    const enabled = convertToggle.checked;
+    chrome.storage.local.set({ pirateConvertEnabled: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-convert-toggle", enabled }).catch(() => {});
     }
   });
 
@@ -528,13 +577,149 @@
   // Toggle advanced section visibility
   const advToggle = $("pirate-adv-toggle");
   const advPanel = $("pirate-adv-panel");
+  const expectedDiv = $("pirate-expected");
   if (advToggle && advPanel) {
     advToggle.addEventListener("click", () => {
       const open = advPanel.style.display !== "none";
       advPanel.style.display = open ? "none" : "flex";
+      expectedDiv.style.display = open ? "none" : "block";
       advToggle.textContent = (open ? "\u25b6" : "\u25bc") + " Advanced";
+      if (!open) updateExpected();
     });
   }
+
+  // --- Live expected-value computation ---
+  function getAdvVal(id, fallback) {
+    const el = $(id);
+    const v = el ? parseFloat(el.value) : NaN;
+    return isNaN(v) ? fallback : v;
+  }
+
+  function updateExpected() {
+    if (!expectedDiv || expectedDiv.style.display === "none") return;
+
+    const mu = getAdvVal("pirate-mu", 2.9);
+    const sigma = getAdvVal("pirate-sigma", 1.0);
+    const brkMin = getAdvVal("pirate-brk-min", 4);
+    const brkMax = getAdvVal("pirate-brk-max", 10);
+    const strkLo = getAdvVal("pirate-strk-lo", 10);
+    const strkHi = getAdvVal("pirate-strk-hi", 20);
+    const distractChance = getAdvVal("pirate-distract", 0.10);
+    const t2Base = getAdvVal("pirate-t2-base", 0.10);
+    const t2Ramp = getAdvVal("pirate-t2-ramp", 0.60);
+    const t2Distract = getAdvVal("pirate-t2-distract", 0.45);
+    const forceBreakChance = getAdvVal("pirate-force-brk", 0.20);
+    const bbChance = getAdvVal("pirate-bb", 0.15);
+
+    // Lognormal stats (base delay, no distraction/fatigue/tempo)
+    const medianDelay = Math.exp(mu);
+    const meanDelay = Math.exp(mu + sigma * sigma / 2);
+    const p10Delay = Math.exp(mu + sigma * (-1.2816));
+    const p90Delay = Math.exp(mu + sigma * 1.2816);
+
+    // Break hazard: sigmoid between strkLo and strkHi
+    function hazard(n) {
+      if (n < strkLo) return 0;
+      const mid = (strkLo + strkHi) / 2;
+      const steep = 6 / (strkHi - strkLo);
+      return 1 / (1 + Math.exp(-steep * (n - mid)));
+    }
+
+    // Expected streak length: sum of survival probabilities
+    let expectedStreak = 0;
+    let survival = 1;
+    for (let n = 1; n <= 100; n++) {
+      survival *= (1 - hazard(n));
+      expectedStreak += survival;
+      if (survival < 0.001) break;
+    }
+
+    // Average T2 probability across a typical streak (no distraction, no back-to-back)
+    let t2Sum = 0;
+    const streakSim = Math.round(expectedStreak);
+    for (let n = 0; n < streakSim; n++) {
+      const progress = Math.min(n / strkHi, 1.0);
+      const sigmoid = t2Ramp / (1 + Math.exp(-8 * (progress - 0.6)));
+      t2Sum += t2Base + sigmoid;
+    }
+    const avgT2 = streakSim > 0 ? t2Sum / streakSim : t2Base;
+
+    // Rewards per tier
+    const T1_PTS = 115, T2_PTS = 276;
+    const T1_GOLD = 40, T2_GOLD = 96;
+    const t1dur = 150; // seconds
+    const t2dur = 450;
+
+    // Average per-raid rewards
+    const avgPts = T1_PTS * (1 - avgT2) + T2_PTS * avgT2;
+    const avgGold = T1_GOLD * (1 - avgT2) + T2_GOLD * avgT2;
+
+    // Average cycle time: mission + delay
+    const avgMission = t1dur * (1 - avgT2) + t2dur * avgT2;
+    const avgCycle = avgMission + meanDelay;
+
+    // Break duration (mean of lognormal with mu=log(midpoint), sigma=0.4)
+    const dynBrkMinMid = brkMin + 0.5 * 2; // approx mid-streak factor
+    const brkMu = Math.log((dynBrkMinMid + brkMax) / 2 * 60);
+    const meanBreak = Math.exp(brkMu + 0.4 * 0.4 / 2);
+
+    // Raids per hour (accounting for breaks)
+    const streakTime = expectedStreak * avgCycle;
+    const cycleWithBreak = streakTime + meanBreak;
+    const raidsPerHour = expectedStreak / cycleWithBreak * 3600;
+
+    // Points & gold per hour
+    const ptsPerHour = raidsPerHour * avgPts;
+    const goldPerHour = raidsPerHour * avgGold;
+
+    // Active hours per day (24 - sleep window)
+    const sleepStart = getAdvVal("pirate-start", 1);
+    const sleepEnd = getAdvVal("pirate-end", 7);
+    let activeHours = 24 - ((sleepEnd - sleepStart + 24) % 24 || 24);
+    if (sleepStart === sleepEnd) activeHours = 24; // no sleep = always active
+
+    // Daily totals
+    const dailyPts = ptsPerHour * activeHours;
+    const dailyGold = goldPerHour * activeHours;
+    const dailyRaids = raidsPerHour * activeHours;
+
+    function fmtTime(sec) {
+      if (sec < 60) return sec.toFixed(0) + "s";
+      const m = Math.floor(sec / 60);
+      const s = Math.round(sec % 60);
+      return m + "m " + (s < 10 ? "0" : "") + s + "s";
+    }
+
+    function fmtNum(n) {
+      return n >= 1000 ? (n / 1000).toFixed(1) + "k" : Math.round(n).toString();
+    }
+
+    expectedDiv.innerHTML =
+      `<b style="color:#e0e4ec">Expected yield</b><br>` +
+      `Per hour: <b style="color:#5ca0f2">${fmtNum(ptsPerHour)} pts</b>, ` +
+      `<b style="color:#f2c85c">${fmtNum(goldPerHour)} gold</b> ` +
+      `<span style="color:#556">(${raidsPerHour.toFixed(1)} raids/h)</span><br>` +
+      `Per day <span style="color:#556">(${activeHours}h active)</span>: ` +
+      `<b style="color:#5ca0f2">${fmtNum(dailyPts)} pts</b>, ` +
+      `<b style="color:#f2c85c">${fmtNum(dailyGold)} gold</b> ` +
+      `<span style="color:#556">(~${Math.round(dailyRaids)} raids)</span><br>` +
+      `<span style="color:#556">───</span><br>` +
+      `Delay: <b style="color:#c8cdd8">${fmtTime(medianDelay)}</b> median, ` +
+      `<b style="color:#c8cdd8">${fmtTime(meanDelay)}</b> mean ` +
+      `<span style="color:#556">(p10=${fmtTime(p10Delay)}, p90=${fmtTime(p90Delay)})</span><br>` +
+      `Streak: <b style="color:#c8cdd8">${expectedStreak.toFixed(1)}</b> raids, ` +
+      `break: <b style="color:#c8cdd8">${fmtTime(meanBreak)}</b>, ` +
+      `T2: <b style="color:#c8cdd8">${(avgT2 * 100).toFixed(1)}%</b>`;
+  }
+
+  // Update expected values when any param changes
+  for (const a of PIRATE_ADV) {
+    const el = $(a.id);
+    if (!el) continue;
+    el.addEventListener("input", updateExpected);
+  }
+  pirateStart.addEventListener("input", updateExpected);
+  pirateEnd.addEventListener("input", updateExpected);
 
   // --- Notes ---
   const NOTES_KEY = "ikNotes";

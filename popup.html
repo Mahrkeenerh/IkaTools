@@ -6,12 +6,16 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   width: 500px;
-  min-height: 400px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
   background: #1a1f2e;
   color: #c8cdd8;
+  overflow: hidden;
 }
+::-webkit-scrollbar { width: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #5c6a85; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #7a8aaa; }
 
 .header {
   display: flex;
@@ -38,7 +42,7 @@ body {
   border-color: #3a4a6a;
 }
 
-.panel { display: none; padding: 16px; }
+.panel { display: none; padding: 16px; overflow-y: auto; max-height: 520px; }
 .panel.active { display: block; }
 
 /* Scan panel */
@@ -368,7 +372,18 @@ body {
     <div class="progress-wrap"><div class="progress-bar" id="progress-bar"></div></div>
     <span id="status-detail"></span>
   </div>
-  <button class="btn btn-primary" id="scan-btn">Scan World Map</button>
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+    <button class="btn btn-primary" id="scan-btn">Scan World Map</button>
+  </div>
+  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
+    <button class="btn btn-primary btn-sm" id="advisor-all-btn">Full Report</button>
+    <button class="btn btn-primary btn-sm" id="advisor-army-btn">Army</button>
+    <button class="btn btn-primary btn-sm" id="advisor-trade-btn" disabled title="Coming soon">Trading</button>
+  </div>
+  <div id="advisor-status" style="font-size:11px;color:#8890a0;margin-top:6px;display:none;">
+    <div class="progress-wrap"><div class="progress-bar" id="advisor-progress"></div></div>
+    <span id="advisor-status-text"></span>
+  </div>
   <div id="scan-log"></div>
   <div id="gallery-list" class="gallery-grid"></div>
 </div>
@@ -497,6 +512,17 @@ body {
         <label title="Chance to allow back-to-back T2">T2&#215;2</label>
         <input type="number" id="pirate-bb" min="0" max="0.5" step="0.05" style="width:56px">
       </div>
+    </div>
+    <div id="pirate-expected" style="display:none;width:100%;padding:8px 10px;margin-top:4px;background:#0d1018;border-radius:5px;font-size:11px;color:#8890a0;line-height:1.7;font-family:monospace"></div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="convert-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Auto convert to crew</span>
+      <span class="setting-desc">Converts pirate points to crew strength between raids</span>
     </div>
   </div>
   <div class="setting-row">

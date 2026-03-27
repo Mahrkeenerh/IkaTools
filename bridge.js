@@ -41,6 +41,19 @@ window.addEventListener("ik-switch-city", (e) => {
   }
 });
 
+// Convert pirate points to crew: click slider max, then click submit
+window.addEventListener("ik-convert-crew", () => {
+  try {
+    var maxBtn = document.getElementById("CPToCrewSliderMax");
+    if (maxBtn) {
+      maxBtn.click();
+      console.log("[IkBridge] convertCrew: clicked slider max");
+    }
+  } catch (err) {
+    console.error("[IkBridge] convertCrew failed:", err);
+  }
+});
+
 // Read city list from game data for the popup city selector
 window.addEventListener("ik-read-cities", () => {
   let result = {};

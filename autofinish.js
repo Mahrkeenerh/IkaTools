@@ -65,24 +65,42 @@
       // Cooldown for speedup button
       if (Date.now() - lastButtonClick < BUTTON_COOLDOWN) return;
 
-      // Look for countdown timer
+      // Try premium builder queue first
       const countdown = document.getElementById("buildCountDown");
-      if (!countdown) return;
+      if (countdown) {
+        const timeText = countdown.textContent.trim();
+        if (!timeText) return;
+        const seconds = parseTime(timeText);
+        if (seconds <= 0 || seconds > threshold) return;
+        const speedupBtn = document.getElementById("buildingSpeedupConstructionList");
+        if (!speedupBtn) return;
+        lastClickWasFinish = speedupBtn.classList.contains("finish");
+        lastButtonClick = Date.now();
+        lastConfirmClick = 0;
+        speedupBtn.click();
+        startFastPoll();
+        return;
+      }
 
-      const timeText = countdown.textContent.trim();
-      if (!timeText) return;
-
-      const seconds = parseTime(timeText);
-      if (seconds <= 0 || seconds > threshold) return;
-
-      const speedupBtn = document.getElementById("buildingSpeedupConstructionList");
-      if (!speedupBtn) return;
-
-      lastClickWasFinish = speedupBtn.classList.contains("finish");
-      lastButtonClick = Date.now();
-      lastConfirmClick = 0;
-      speedupBtn.click();
-      startFastPoll();
+      // Non-premium: find active construction countdown on city view
+      for (let i = 0; i <= 24; i++) {
+        const countdownEl = document.getElementById(`js_CityPosition${i}Countdown`);
+        if (!countdownEl || !countdownEl.classList.contains("timetofinish")) continue;
+        const textEl = document.getElementById(`js_CityPosition${i}CountdownText`);
+        if (!textEl) continue;
+        const timeText = textEl.textContent.trim();
+        if (!timeText) continue;
+        const seconds = parseTime(timeText);
+        if (seconds <= 0 || seconds > threshold) continue;
+        const speedupBtn = document.getElementById(`js_CityPosition${i}SpeedupButton`);
+        if (!speedupBtn || speedupBtn.classList.contains("invisible")) continue;
+        lastClickWasFinish = countdownEl.classList.contains("buildingSpeedup");
+        lastButtonClick = Date.now();
+        lastConfirmClick = 0;
+        speedupBtn.click();
+        startFastPoll();
+        return;
+      }
     } catch (e) {
       // Never let an error kill the interval
     }

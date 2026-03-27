@@ -5,6 +5,7 @@
   const MISSION_DURATIONS = [150, 450]; // tier 1 = 2m30s, tier 2 = 7m30s
 
   let enabled = false;
+  let convertEnabled = false;
   let pirateCityId = null;
   let idleTimeout = 5000;
 
@@ -45,6 +46,7 @@
   let forceBreakNext = false;
   let postBreakRaids = 0; // raids remaining in post-break re-engagement
   let tempo = 0; // AR(1) latent speed variable (adds momentum to delays)
+  let raidsSinceLastConvert = 0; // resets on break and after convert
 
   function fmt(ms) {
     const s = Math.round(ms / 1000);
@@ -162,6 +164,7 @@
 
       console.log(P, "Break after", streakCount, "raids (" + (wasForced ? "T2-forced" : "hazard") + "):", fmt(d));
       streakCount = 0;
+      raidsSinceLastConvert = 0;
 
       // Post-break re-engagement: probability-based, 1-3 faster raids
       if (Math.random() < 0.70) {
@@ -210,6 +213,104 @@
     window.dispatchEvent(new CustomEvent("ik-ajax-call", { detail: { url } }));
   }
 
+  // --- Auto-convert: pirate points → crew strength ---
+  function getConvertChance() {
+    // High after break (90%), decays exponentially over raids
+    return 0.9 * Math.exp(-0.4 * raidsSinceLastConvert);
+  }
+
+  function tryConvert() {
+    if (!convertEnabled) return;
+    if (!inControl || !isIdle() || !pirateCityId) {
+      console.log(P, "Convert: skipped (inControl=" + inControl + ", idle=" + isIdle() + ", city=" + pirateCityId + ")");
+      return;
+    }
+    const chance = getConvertChance();
+    const roll = Math.random();
+    console.log(P, "Convert roll: " + roll.toFixed(3) + " vs " + chance.toFixed(3) + " (raidsSince=" + raidsSinceLastConvert + ")");
+    if (roll >= chance) {
+      console.log(P, "Convert: skipped (roll failed)");
+      return;
+    }
+
+    // Schedule convert with 2-6s delay (player switches tab after launching raid)
+    const delay = (2 + Math.random() * 4) * 1000;
+    console.log(P, "Will convert in", fmt(delay));
+    setTimeout(() => {
+      if (!inControl || !isIdle() || !convertEnabled) return;
+      console.log(P, "Navigating to Crew tab for convert");
+      navigate("?view=pirateFortress&activeTab=tabCrew&cityId=" + pirateCityId + "&position=17");
+      waitForConvertForm();
+    }, delay);
+  }
+
+  function waitForConvertForm() {
+    // Check immediately
+    if (checkConvertDom()) return;
+    // Watch for AJAX content to load
+    const obs = new MutationObserver(() => {
+      if (checkConvertDom()) obs.disconnect();
+    });
+    obs.observe(document.body, { childList: true, subtree: true });
+    setTimeout(() => obs.disconnect(), 8000);
+  }
+
+  function checkConvertDom() {
+    if (document.getElementById("ongoingConversion")) {
+      console.log(P, "Convert: ongoing conversion detected, skipping");
+      return true;
+    }
+    const form = document.getElementById("CPToCrewForm");
+    if (form) {
+      console.log(P, "Convert: form found, will submit after delay");
+      submitConvert();
+      return true;
+    }
+    console.log(P, "Convert: DOM not ready yet, waiting...");
+    return false;
+  }
+
+  function submitConvert() {
+    // Wait 1-3s, click slider max (via bridge), then wait and click submit
+    const fillDelay = (1 + Math.random() * 2) * 1000;
+    console.log(P, "Convert: clicking max in", fmt(fillDelay));
+    setTimeout(() => {
+      if (!inControl || !isIdle()) {
+        console.log(P, "Convert: aborted (lost control or not idle)");
+        return;
+      }
+      if (!document.getElementById("CPToCrewForm")) {
+        console.log(P, "Convert: aborted (form disappeared)");
+        return;
+      }
+      // Click slider max via bridge (page context handles slider JS)
+      IkUtils.ensureBridge();
+      window.dispatchEvent(new CustomEvent("ik-convert-crew"));
+      console.log(P, "Convert: slider max clicked, waiting for submit to enable");
+
+      // Wait 0.5-1.5s for game JS to update slider + enable submit button
+      const submitDelay = (500 + Math.random() * 1000);
+      setTimeout(() => {
+        if (!inControl || !isIdle()) {
+          console.log(P, "Convert: aborted before submit");
+          return;
+        }
+        const submitBtn = document.getElementById("CPToCrewSubmit");
+        if (!submitBtn) {
+          console.log(P, "Convert: submit button not found");
+          return;
+        }
+        if (submitBtn.classList.contains("button_disabled")) {
+          console.log(P, "Convert: submit still disabled, aborting");
+          return;
+        }
+        submitBtn.click();
+        raidsSinceLastConvert = 0;
+        console.log(P, "Convert: SUBMITTED via button click");
+      }, submitDelay);
+    }, fillDelay);
+  }
+
   // --- Main loop ---
   function tryPirate() {
     try {
@@ -226,10 +327,7 @@
         return;
       }
 
-      if (Date.now() < nextActionTime) {
-        console.log(P, "Waiting", fmt(nextActionTime - Date.now()));
-        return;
-      }
+      if (Date.now() < nextActionTime) return;
 
       if (!inControl) {
         const idleDuration = Date.now() - lastActivity;
@@ -254,8 +352,19 @@
         sleepJitterDate = today;
       }
 
+      if (document.querySelector("#cinema_c")) {
+        console.log(P, "Theater open, skipping");
+        return;
+      }
+
       if (document.querySelector("img.captchaImage")) {
         console.log(P, "Captcha present, waiting for solver");
+        return;
+      }
+
+      // Mission still running — crew is out, just wait
+      if (document.querySelector("#pirateCaptureBox .red_box")) {
+        console.log(P, "Mission still running, waiting");
         return;
       }
 
@@ -282,6 +391,8 @@
         nextActionTime = Date.now() + total;
         lastNavigateTime = 0;
         console.log(P, "Tier " + (tier + 1) + " next in", fmt(total), "(mission", fmt(duration * 1000), "+ delay", fmt(delay) + ")" + (forceBreakNext ? " [break queued]" : ""));
+        raidsSinceLastConvert++;
+        tryConvert();
         return;
       }
 
@@ -304,9 +415,14 @@
           });
           obs.observe(document.body, { childList: true, subtree: true });
           setTimeout(() => obs.disconnect(), 5000);
+        } else if (bodyId === "city") {
+          // Wrong city — switch via game's city change form
+          console.log(P, "Switching to pirate city", pirateCityId);
+          IkUtils.ensureBridge();
+          window.dispatchEvent(new CustomEvent("ik-switch-city", { detail: { cityId: pirateCityId } }));
         } else {
-          // Wrong city or wrong view — navigate to pirate city
-          console.log(P, "Navigating to pirate city", pirateCityId);
+          // Not on city view (island, world map, etc.) — navigate directly
+          console.log(P, "Not on city view (body#" + bodyId + "), navigating to pirate city");
           navigate("?view=city&cityId=" + pirateCityId);
         }
       } else {
@@ -342,6 +458,7 @@
     forceBreakNext = false;
     postBreakRaids = 0;
     tempo = 0;
+    raidsSinceLastConvert = 0;
   }
 
   function stop() {
@@ -412,11 +529,12 @@
   }
 
   // --- Storage ---
-  const allStorageKeys = ["pirateEnabled", "pirateCityId", "pirateIdleTimeout",
+  const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", "pirateCityId", "pirateIdleTimeout",
     ...Object.values(CFG_KEYS).map((k) => k.storage)];
 
   chrome.storage.local.get(allStorageKeys, (data) => {
     enabled = !!data.pirateEnabled;
+    convertEnabled = !!data.pirateConvertEnabled;
     pirateCityId = data.pirateCityId || null;
     if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
 
@@ -452,6 +570,10 @@
       console.log(P, "Toggle:", enabled);
       if (enabled && pirateCityId) start(); else stop();
     }
+    if (msg.type === "pirate-convert-toggle") {
+      convertEnabled = msg.enabled;
+      console.log(P, "Convert toggle:", convertEnabled);
+    }
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;
       const save = {};
@@ -477,6 +599,10 @@
       enabled = !!changes.pirateEnabled.newValue;
       console.log(P, "Storage toggle:", enabled);
       if (enabled && pirateCityId) start(); else stop();
+    }
+    if (changes.pirateConvertEnabled) {
+      convertEnabled = !!changes.pirateConvertEnabled.newValue;
+      console.log(P, "Convert storage toggle:", convertEnabled);
     }
   });
 

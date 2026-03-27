@@ -17,6 +17,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return;
   }
 
+  if (msg.type === "open-advisor-report") {
+    chrome.tabs.create({ url: chrome.runtime.getURL("report.html") });
+    return;
+  }
+
   if (msg.type === "solve-captcha") {
     ensureOffscreen()
       .then(() => waitForReady())

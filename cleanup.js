@@ -35,8 +35,9 @@
 
     document.querySelectorAll(".cityLocation.buildplace.premium").forEach(el => el.remove());
 
+    // Hide instead of remove — game timers keep referencing hidden fields inside these
     document.querySelectorAll(".btnIngameCountdown").forEach(el => {
-      if (el.textContent.includes("bohů")) el.remove();
+      if (el.textContent.includes("bohů") || el.classList.contains("happyHour")) el.style.display = "none";
     });
   }
 
