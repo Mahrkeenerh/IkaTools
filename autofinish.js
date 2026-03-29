@@ -12,6 +12,7 @@
   let enabled = true;
   let checkTimer = null;
   let fastTimer = null;
+  let fastStopTimer = null;
   let lastButtonClick = 0;
   let lastConfirmClick = 0;
   let lastClickWasFinish = false;
@@ -29,12 +30,14 @@
 
   function startFastPoll() {
     if (fastTimer) clearInterval(fastTimer);
+    if (fastStopTimer) clearTimeout(fastStopTimer);
     fastTimer = setInterval(tryAutoFinish, FAST_INTERVAL);
-    setTimeout(() => {
+    fastStopTimer = setTimeout(() => {
       if (fastTimer) {
         clearInterval(fastTimer);
         fastTimer = null;
       }
+      fastStopTimer = null;
     }, FAST_POLL_DURATION);
   }
 
@@ -102,7 +105,7 @@
         return;
       }
     } catch (e) {
-      // Never let an error kill the interval
+      console.error("[IkAutoFinish]", e);
     }
   }
 
@@ -120,6 +123,10 @@
     if (fastTimer) {
       clearInterval(fastTimer);
       fastTimer = null;
+    }
+    if (fastStopTimer) {
+      clearTimeout(fastStopTimer);
+      fastStopTimer = null;
     }
   }
 

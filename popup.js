@@ -47,8 +47,6 @@
     if (tab) {
       if (tab.url && tab.url.includes("ikariam.gameforge.com")) {
         ikariamTabId = tab.id;
-      } else if (!tab.url) {
-        ikariamTabId = tab.id;
       }
     }
     if (ikariamTabId) {
@@ -75,8 +73,11 @@
   // --- Advisor Report ---
   const advisorBtns = [
     $("advisor-basic-btn"),
+    $("advisor-workers-btn"),
+    $("advisor-storage-btn"),
     $("advisor-army-btn"),
     $("advisor-trade-btn"),
+    $("advisor-spy-btn"),
     $("advisor-full-btn"),
   ];
   const advisorStatus = $("advisor-status");
@@ -102,8 +103,11 @@
   }
 
   $("advisor-basic-btn").addEventListener("click", () => startAdvisor("basic"));
+  $("advisor-workers-btn").addEventListener("click", () => startAdvisor("workers"));
+  $("advisor-storage-btn").addEventListener("click", () => startAdvisor("storage"));
   $("advisor-army-btn").addEventListener("click", () => startAdvisor("army"));
   $("advisor-trade-btn").addEventListener("click", () => startAdvisor("trading"));
+  $("advisor-spy-btn").addEventListener("click", () => startAdvisor("spy"));
   $("advisor-full-btn").addEventListener("click", () => startAdvisor("full"));
 
   // Listen for progress updates from advisor.js
@@ -359,6 +363,7 @@
         const blob = dataUrlToBlob(previewCanvas.toDataURL("image/png"));
         const url = URL.createObjectURL(blob);
         chrome.tabs.create({ url, active: !background });
+        setTimeout(() => URL.revokeObjectURL(url), 5000);
       }
 
       card.addEventListener("click", () => openPreview("population"));
@@ -636,11 +641,12 @@
     const forceBreakChance = getAdvVal("pirate-force-brk", 0.20);
     const bbChance = getAdvVal("pirate-bb", 0.15);
 
-    // Lognormal stats (base delay, no distraction/fatigue/tempo)
-    const medianDelay = Math.exp(mu);
-    const meanDelay = Math.exp(mu + sigma * sigma / 2);
-    const p10Delay = Math.exp(mu + sigma * (-1.2816));
-    const p90Delay = Math.exp(mu + sigma * 1.2816);
+    // Lognormal stats — adjusted for avg session fatigue (+0.35 to mu over ~17h)
+    const adjMu = mu + 0.35;
+    const medianDelay = Math.exp(adjMu);
+    const meanDelay = Math.exp(adjMu + sigma * sigma / 2);
+    const p10Delay = Math.exp(adjMu + sigma * (-1.2816));
+    const p90Delay = Math.exp(adjMu + sigma * 1.2816);
 
     // Break hazard: sigmoid between strkLo and strkHi
     function hazard(n) {
@@ -679,9 +685,9 @@
     const avgPts = T1_PTS * (1 - avgT2) + T2_PTS * avgT2;
     const avgGold = T1_GOLD * (1 - avgT2) + T2_GOLD * avgT2;
 
-    // Average cycle time: mission + delay
+    // Average cycle time: mission + delay + nav/poll overhead (~5s per raid)
     const avgMission = t1dur * (1 - avgT2) + t2dur * avgT2;
-    const avgCycle = avgMission + meanDelay;
+    const avgCycle = avgMission + meanDelay + 5;
 
     // Break duration (mean of lognormal with mu=log(midpoint), sigma=0.4)
     const dynBrkMinMid = brkMin + 0.5 * 2; // approx mid-streak factor

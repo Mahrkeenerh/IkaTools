@@ -7,6 +7,7 @@ globalThis.IkUtils = (() => {
     const s = document.createElement("script");
     s.id = "ik-bridge";
     s.src = chrome.runtime.getURL("bridge.js");
+    s.onerror = () => console.warn("[IkUtils] bridge.js failed to load");
     document.documentElement.appendChild(s);
   }
 

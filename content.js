@@ -22,9 +22,19 @@
   async function getImageDataUrl(imgEl) {
     if (!imgEl.complete || !imgEl.naturalWidth) {
       console.log(C, "Waiting for captcha image to load...");
-      await new Promise((r) =>
-        imgEl.addEventListener("load", r, { once: true })
-      );
+      await new Promise((resolve, reject) => {
+        let timer;
+        const cleanup = () => clearTimeout(timer);
+        const onLoad = () => { cleanup(); resolve(); };
+        const onError = () => { cleanup(); reject(new Error("Captcha image failed to load")); };
+        imgEl.addEventListener("load", onLoad, { once: true });
+        imgEl.addEventListener("error", onError, { once: true });
+        timer = setTimeout(() => {
+          imgEl.removeEventListener("load", onLoad);
+          imgEl.removeEventListener("error", onError);
+          reject(new Error("Captcha image load timed out"));
+        }, 10000);
+      });
     }
     const canvas = document.createElement("canvas");
     canvas.width = imgEl.naturalWidth;
@@ -53,13 +63,11 @@
 
       if (response?.error) {
         console.error(C, "Solver error:", response.error);
-        solving = false;
         return;
       }
 
       if (!response?.answer) {
         console.log(C, "No answer from solver, response:", response);
-        solving = false;
         return;
       }
 
@@ -96,9 +104,9 @@
       } else {
         console.log(C, "Channel closed (page updated, likely success)");
       }
+    } finally {
+      solving = false;
     }
-
-    solving = false;
   }
 
   function check() {
@@ -124,11 +132,12 @@
   }
 
   // Watch for captcha appearing / changing
-  const observer = new MutationObserver(check);
+  let debounceTimer = null;
+  const observer = new MutationObserver(() => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(check, 200);
+  });
   observer.observe(document.body, { childList: true, subtree: true });
-
-  // Also check periodically in case mutations are missed
-  setInterval(check, 1000);
 
   // Initial check
   console.log(C, "Captcha solver initialized");

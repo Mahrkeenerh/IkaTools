@@ -5,6 +5,8 @@
   const OWN_COLOR = "#64B5F6"; // blue for own cities (matches game)
   const FRIEND_COLOR = "#00FF88"; // green for friends
   let friendIds = new Set();
+  let initialized = false; // guard against duplicate init() calls
+  let lastIslandId = null; // track current island to detect island-to-island navigation
 
   // --- Scrape & cache friends from the sidebar list ---
   async function scrapeFriends() {
@@ -41,7 +43,8 @@
       // Find the JSON object that follows
       const start = text.indexOf("{", idx);
       if (start === -1) return;
-      // Walk to find matching closing brace
+      // Naive brace-matching to extract the JSON object from the surrounding script content.
+      // (JSON.parse on the raw substring always fails because trailing script content follows.)
       let depth = 0;
       for (let i = start; i < text.length; i++) {
         if (text[i] === "{") depth++;
@@ -439,11 +442,21 @@
     console.log(TAG, `Barbarian loot: ${totalGoods} goods, ${ships} ships needed`);
   }
 
+  // --- Extract current island ID from URL query params ---
+  function getCurrentIslandId() {
+    const params = new URLSearchParams(window.location.search);
+    return params.get("islandId") || params.get("id") || null;
+  }
+
   // --- Init ---
   async function init() {
     if (document.body.id !== "island") return;
+    if (initialized) return;
+    initialized = true;
 
     injectShipsNeeded();
+
+    lastIslandId = getCurrentIslandId();
 
     const island = await extractAndStore();
     if (island && island.cities.length > 0) {
@@ -461,16 +474,30 @@
   // Watch for AJAX navigation to island view
   const obs = new MutationObserver(() => {
     if (document.body.id === "island") {
+      // Detect island-to-island navigation: body.id stays "island" but the URL changes.
+      // If the island ID in the URL has changed, reset the guard so init() re-runs.
+      const currentId = getCurrentIslandId();
+      if (initialized && currentId && currentId !== lastIslandId) {
+        initialized = false;
+        if (panel) {
+          panel.remove();
+          panel = null;
+        }
+      }
       // Re-init after a short delay for DOM to settle
       setTimeout(() => { scrapeFriends(); init(); }, 500);
-    } else if (panel) {
-      panel.remove();
-      panel = null;
+    } else {
+      initialized = false; // reset guard so init() runs again on next island visit
+      if (panel) {
+        panel.remove();
+        panel = null;
+      }
     }
   });
   obs.observe(document.body, { attributes: true, attributeFilter: ["id"] });
 
-  // Watch for barbarian village content appearing (user clicks barbarian village)
+  // Watch for barbarian village content appearing (user clicks barbarian village).
+  // Intentionally never disconnected — the body.id guard keeps it a no-op off island view.
   let barbTimer = null;
   const barbObs = new MutationObserver(() => {
     if (document.body.id !== "island") return;

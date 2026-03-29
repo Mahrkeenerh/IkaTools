@@ -116,14 +116,23 @@
     for (const newIsland of IkUtils.parseTilesFromDOM()) {
       const key = `${newIsland.x}:${newIsland.y}`;
       const old = existing.get(key);
-      // Preserve existing overlay flags (set by scanner from game data)
-      if (old) {
-        newIsland.military = old.military || false;
-        newIsland.war = old.war || false;
-        newIsland.barbarian = old.barbarian || false;
-      }
-      if (!old || old.cities !== newIsland.cities || old.owner !== newIsland.owner) {
+      if (!old) {
         existing.set(key, newIsland);
+        changed = true;
+      } else if (old.cities !== newIsland.cities || old.owner !== newIsland.owner) {
+        // Merge: new data wins for cities/owner, but keep existing richer scanner
+        // fields (wonder, tradegood, military, war, barbarian, etc.) when the new
+        // data doesn't carry them (undefined or falsy-zero for numeric fields).
+        const merged = Object.assign({}, old);
+        for (const [k, v] of Object.entries(newIsland)) {
+          if (v !== undefined && v !== null && v !== "") {
+            // For numeric scanner fields that default to 0, only overwrite when
+            // the old entry has no value (undefined/null) — keeps scanner data.
+            if ((k === "wonder" || k === "tradegood") && old[k]) continue;
+            merged[k] = v;
+          }
+        }
+        existing.set(key, merged);
         changed = true;
       }
     }
@@ -426,12 +435,15 @@
   }
 
   // Poll map1 screen position via getBoundingClientRect — always accurate
+  let scrollIntervalId = null;
+  let mergeIntervalId = null;
+
   function watchWorldmapScroll() {
     let lastX = null, lastY = null;
     let lastBase = null;
 
-    setInterval(() => {
-      if (!container || container.style.display === "none") return;
+    scrollIntervalId = setInterval(() => {
+      if (!container || !document.body.contains(container) || container.style.display === "none") return;
       if (!isWorldMapView()) return;
 
       const anchor = document.querySelector(".islandTile[title]");
@@ -451,8 +463,8 @@
     }, 33); // ~30fps
 
     // Merge tiles less frequently
-    setInterval(() => {
-      if (!container || container.style.display === "none") return;
+    mergeIntervalId = setInterval(() => {
+      if (!container || !document.body.contains(container) || container.style.display === "none") return;
       if (!isWorldMapView() || !currentMapData) return;
       readAndMergeTiles();
     }, 3000);
@@ -465,8 +477,9 @@
   function showOrHide() {
     if (isWorldMapView()) {
       loadAndShow();
-    } else if (container) {
-      container.style.display = "none";
+    } else {
+      if (container) container.style.display = "none";
+      stopZeros();
     }
   }
 
@@ -487,7 +500,11 @@
   function startZeros() {
     cleanZeros();
     if (!zerosObserver) {
-      zerosObserver = new MutationObserver(cleanZeros);
+      let zerosDebounce = null;
+      zerosObserver = new MutationObserver(() => {
+        clearTimeout(zerosDebounce);
+        zerosDebounce = setTimeout(cleanZeros, 150);
+      });
       zerosObserver.observe(document.body, { childList: true, subtree: true });
     }
   }

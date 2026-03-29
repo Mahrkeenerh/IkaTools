@@ -2,16 +2,16 @@
 
 let offscreenReady = false;
 let readyResolve = null;
+let readyPromise = new Promise((resolve) => { readyResolve = resolve; });
 
 function waitForReady() {
   if (offscreenReady) return Promise.resolve();
-  return new Promise((resolve) => {
-    readyResolve = resolve;
-  });
+  return readyPromise;
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "offscreen-ready") {
+    if (!sender.url || !sender.url.endsWith("offscreen.html")) return;
     offscreenReady = true;
     if (readyResolve) readyResolve();
     return;
@@ -58,7 +58,7 @@ async function ensureOffscreen() {
     }
   }
   offscreenReady = false;
-  readyResolve = null;
+  readyPromise = new Promise((resolve) => { readyResolve = resolve; });
   await chrome.offscreen.createDocument({
     url: "offscreen.html",
     reasons: ["WORKERS"],

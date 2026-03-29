@@ -1,6 +1,8 @@
 // Auto-launch pirate missions when user is idle
 (() => {
-  const P = "[AutoPirate]";
+  // Only run on game pages (s1-en.ikariam...), not forum/lobby
+  if (!/^s\d+/.test(location.hostname)) return;
+  const P = "[AP]";
   const NAVIGATE_COOLDOWN = 10000;
   const MISSION_DURATIONS = [150, 450]; // tier 1 = 2m30s, tier 2 = 7m30s
 
@@ -8,6 +10,14 @@
   let convertEnabled = false;
   let pirateCityId = null;
   let idleTimeout = 5000;
+
+  // --- Session counters (for logging) ---
+  let sessionRaids = 0;
+  let sessionT1 = 0;
+  let sessionT2 = 0;
+  let sessionBreakCount = 0;
+  let sessionBreakMs = 0;
+  let sessionConverts = 0;
 
   // --- Tunable timing parameters (randomized per-user, stored in chrome.storage) ---
   let cfg = {
@@ -47,11 +57,86 @@
   let postBreakRaids = 0; // raids remaining in post-break re-engagement
   let tempo = 0; // AR(1) latent speed variable (adds momentum to delays)
   let raidsSinceLastConvert = 0; // resets on break and after convert
+  let raidInProgress = false;
 
   function fmt(ms) {
     const s = Math.round(ms / 1000);
     if (s < 60) return s + "s";
-    return Math.floor(s / 60) + "m " + (s % 60) + "s";
+    return Math.floor(s / 60) + "m" + (s % 60) + "s";
+  }
+
+  function ts() {
+    const d = new Date();
+    return d.getHours().toString().padStart(2, "0") + ":" +
+      d.getMinutes().toString().padStart(2, "0") + ":" +
+      d.getSeconds().toString().padStart(2, "0");
+  }
+
+  function fmtTime(date) {
+    return date.getHours().toString().padStart(2, "0") + ":" +
+      date.getMinutes().toString().padStart(2, "0");
+  }
+
+  function sessionStats() {
+    const elapsed = (Date.now() - sessionStartTime) / 3600000;
+    const rate = elapsed > 0.01 ? (sessionRaids / elapsed).toFixed(1) : "0";
+    return sessionRaids + " raids (" + sessionT1 + "×T1 " + sessionT2 + "×T2), " +
+      rate + "/h, " + sessionBreakCount + " breaks (" + fmt(sessionBreakMs) + "), " +
+      sessionConverts + " converts";
+  }
+
+  function saveState() {
+    chrome.storage.local.set({
+      pirateState: {
+        sessionStartTime, sessionRaids, sessionT1, sessionT2,
+        sessionBreakCount, sessionBreakMs, sessionConverts,
+        streakCount, raidsSinceLastConvert, nextActionTime,
+        forceBreakNext, lastMissionWasT2, tempo,
+        distractionRaids, distractionMu, postBreakRaids,
+        lastSaveTime: Date.now(),
+      }
+    });
+  }
+
+  function restoreState(s) {
+    if (!s || !s.sessionStartTime || !s.lastSaveTime) return;
+
+    const now = Date.now();
+    const isNewDay = new Date(now).toDateString() !== new Date(s.sessionStartTime).toDateString();
+    const gap = now - s.lastSaveTime;
+    const isLongGap = gap > 45 * 60 * 1000; // 45min = longer than any break
+
+    // New calendar day — full reset (user expects fresh daily stats)
+    if (isNewDay) return;
+
+    // Restore daily session counters
+    sessionStartTime = s.sessionStartTime;
+    sessionRaids = s.sessionRaids || 0;
+    sessionT1 = s.sessionT1 || 0;
+    sessionT2 = s.sessionT2 || 0;
+    sessionBreakCount = s.sessionBreakCount || 0;
+    sessionBreakMs = s.sessionBreakMs || 0;
+    sessionConverts = s.sessionConverts || 0;
+
+    if (isLongGap) {
+      // Long gap — a natural break happened offline, reset tactical state
+      streakCount = 0;
+      raidsSinceLastConvert = 0;
+      nextActionTime = 0;
+      console.log(P, ts(), "Restored counters, reset streak (gap " + fmt(gap) + ")");
+    } else {
+      // Quick reload — preserve everything
+      streakCount = s.streakCount || 0;
+      raidsSinceLastConvert = s.raidsSinceLastConvert || 0;
+      nextActionTime = s.nextActionTime || 0;
+      forceBreakNext = !!s.forceBreakNext;
+      lastMissionWasT2 = !!s.lastMissionWasT2;
+      tempo = s.tempo || 0;
+      distractionRaids = s.distractionRaids || 0;
+      distractionMu = s.distractionMu || 0;
+      postBreakRaids = s.postBreakRaids || 0;
+      console.log(P, ts(), "Restored full state (gap " + fmt(gap) + ")");
+    }
   }
 
   // --- Idle detection ---
@@ -59,7 +144,7 @@
     if (!windowFocused || document.hidden) return;
     lastActivity = Date.now();
     if (inControl) {
-      console.log(P, "User active, handing back");
+      console.log(P, ts(), "User active, releasing |", sessionStats());
       handBack();
     }
   }
@@ -68,16 +153,11 @@
     document.addEventListener(e, onActivity, { passive: true, capture: true })
   );
   document.addEventListener("visibilitychange", () => {
-    console.log(P, "Visibility:", document.hidden ? "hidden" : "visible");
     if (!document.hidden) onActivity();
   });
-  window.addEventListener("blur", () => {
-    windowFocused = false;
-    console.log(P, "Window blur");
-  });
+  window.addEventListener("blur", () => { windowFocused = false; });
   window.addEventListener("focus", () => {
     windowFocused = true;
-    console.log(P, "Window focus");
     onActivity();
   });
 
@@ -85,6 +165,8 @@
     inControl = false;
     // Preserve nextActionTime so remaining delay survives user interruptions
     lastNavigateTime = 0;
+    convertTimers.forEach((id) => clearTimeout(id));
+    convertTimers = [];
   }
 
   function isIdle() {
@@ -162,14 +244,15 @@
       const breakD = Math.min(lognormal(breakMu, 0.4), (cfg.breakMax + 5) * 60);
       const d = Math.max(breakD, (dynBreakMin - 2) * 60) * 1000;
 
-      console.log(P, "Break after", streakCount, "raids (" + (wasForced ? "T2-forced" : "hazard") + "):", fmt(d));
+      sessionBreakCount++;
+      sessionBreakMs += d;
+      console.log(P, ts(), "Break " + fmt(d) + " after " + streakCount + " raids (" + (wasForced ? "T2-forced" : "hazard") + "), until " + fmtTime(new Date(Date.now() + d)) + " |", sessionStats());
       streakCount = 0;
       raidsSinceLastConvert = 0;
 
       // Post-break re-engagement: probability-based, 1-3 faster raids
       if (Math.random() < 0.70) {
         postBreakRaids = 1 + Math.floor(Math.random() * 3);
-        console.log(P, "Post-break re-engagement for", postBreakRaids, "raids");
       }
       return d;
     }
@@ -184,7 +267,6 @@
       if (Math.random() < distractRoll) {
         distractionMu = 0.5 + Math.random() * 1.0;
         distractionRaids = 2 + Math.floor(Math.random() * 4);
-        console.log(P, "Distracted: mu+" + distractionMu.toFixed(1) + " for", distractionRaids, "raids");
       }
     }
     if (distractionRaids > 0) distractionRaids--;
@@ -204,7 +286,6 @@
     const softCap = (20 + Math.random() * 10) * 60;
     const delaySec = Math.min(lognormal(mu, sigma), softCap);
     const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000;
-    console.log(P, "Delay:", fmt(d), "(mu=" + mu.toFixed(1) + ", tempo=" + tempo.toFixed(2) + ", streak=" + streakCount + ", haz=" + getBreakHazard().toFixed(2) + ")");
     return d;
   }
 
@@ -214,6 +295,15 @@
   }
 
   // --- Auto-convert: pirate points → crew strength ---
+  let convertTimers = [];
+  function scheduleConvert(fn, ms) {
+    const id = setTimeout(() => {
+      convertTimers = convertTimers.filter((t) => t !== id);
+      fn();
+    }, ms);
+    convertTimers.push(id);
+  }
+
   function getConvertChance() {
     // High after break (90%), decays exponentially over raids
     return 0.9 * Math.exp(-0.4 * raidsSinceLastConvert);
@@ -221,24 +311,14 @@
 
   function tryConvert() {
     if (!convertEnabled) return;
-    if (!inControl || !isIdle() || !pirateCityId) {
-      console.log(P, "Convert: skipped (inControl=" + inControl + ", idle=" + isIdle() + ", city=" + pirateCityId + ")");
-      return;
-    }
+    if (!inControl || !isIdle() || !pirateCityId) return;
     const chance = getConvertChance();
-    const roll = Math.random();
-    console.log(P, "Convert roll: " + roll.toFixed(3) + " vs " + chance.toFixed(3) + " (raidsSince=" + raidsSinceLastConvert + ")");
-    if (roll >= chance) {
-      console.log(P, "Convert: skipped (roll failed)");
-      return;
-    }
+    if (Math.random() >= chance) return;
 
     // Schedule convert with 2-6s delay (player switches tab after launching raid)
     const delay = (2 + Math.random() * 4) * 1000;
-    console.log(P, "Will convert in", fmt(delay));
-    setTimeout(() => {
+    scheduleConvert(() => {
       if (!inControl || !isIdle() || !convertEnabled) return;
-      console.log(P, "Navigating to Crew tab for convert");
       navigate("?view=pirateFortress&activeTab=tabCrew&cityId=" + pirateCityId + "&position=17");
       waitForConvertForm();
     }, delay);
@@ -256,57 +336,42 @@
   }
 
   function checkConvertDom() {
-    if (document.getElementById("ongoingConversion")) {
-      console.log(P, "Convert: ongoing conversion detected, skipping");
-      return true;
-    }
+    if (document.getElementById("ongoingConversion")) return true;
     const form = document.getElementById("CPToCrewForm");
     if (form) {
-      console.log(P, "Convert: form found, will submit after delay");
       submitConvert();
       return true;
     }
-    console.log(P, "Convert: DOM not ready yet, waiting...");
     return false;
   }
 
   function submitConvert() {
     // Wait 1-3s, click slider max (via bridge), then wait and click submit
     const fillDelay = (1 + Math.random() * 2) * 1000;
-    console.log(P, "Convert: clicking max in", fmt(fillDelay));
-    setTimeout(() => {
-      if (!inControl || !isIdle()) {
-        console.log(P, "Convert: aborted (lost control or not idle)");
-        return;
-      }
+    scheduleConvert(() => {
+      if (!inControl || !isIdle()) return;
       if (!document.getElementById("CPToCrewForm")) {
-        console.log(P, "Convert: aborted (form disappeared)");
+        console.log(P, ts(), "Convert: form gone, aborted");
         return;
       }
       // Click slider max via bridge (page context handles slider JS)
       IkUtils.ensureBridge();
       window.dispatchEvent(new CustomEvent("ik-convert-crew"));
-      console.log(P, "Convert: slider max clicked, waiting for submit to enable");
 
       // Wait 0.5-1.5s for game JS to update slider + enable submit button
       const submitDelay = (500 + Math.random() * 1000);
-      setTimeout(() => {
-        if (!inControl || !isIdle()) {
-          console.log(P, "Convert: aborted before submit");
-          return;
-        }
+      scheduleConvert(() => {
+        if (!inControl || !isIdle()) return;
         const submitBtn = document.getElementById("CPToCrewSubmit");
-        if (!submitBtn) {
-          console.log(P, "Convert: submit button not found");
-          return;
-        }
-        if (submitBtn.classList.contains("button_disabled")) {
-          console.log(P, "Convert: submit still disabled, aborting");
+        if (!submitBtn || submitBtn.classList.contains("button_disabled")) {
+          console.log(P, ts(), "Convert: submit disabled/missing");
           return;
         }
         submitBtn.click();
         raidsSinceLastConvert = 0;
-        console.log(P, "Convert: SUBMITTED via button click");
+        sessionConverts++;
+        saveState();
+        console.log(P, ts(), "Converted");
       }, submitDelay);
     }, fillDelay);
   }
@@ -314,24 +379,17 @@
   // --- Main loop ---
   function tryPirate() {
     try {
+      if (raidInProgress) return;
       if (!enabled || !pirateCityId) return;
 
-      if (!isIdle()) {
-        const idleIn = idleTimeout - (Date.now() - lastActivity);
-        console.log(P, "Not idle — hidden=" + document.hidden + ", focused=" + windowFocused + ", idleIn=" + fmt(Math.max(0, idleIn)));
-        return;
-      }
+      if (!isIdle()) return;
 
-      if (!isInActiveHours()) {
-        console.log(P, "Outside active hours");
-        return;
-      }
+      if (!isInActiveHours()) return;
 
       if (Date.now() < nextActionTime) return;
 
       if (!inControl) {
         const idleDuration = Date.now() - lastActivity;
-        console.log(P, "Taking control — idle", fmt(idleDuration));
         inControl = true;
 
         // Long interruption: decay transient states
@@ -341,8 +399,8 @@
           forceBreakNext = false;
           postBreakRaids = 0;
           tempo = 0;
-          console.log(P, "Long interruption — cleared transient states");
         }
+        console.log(P, ts(), "Idle " + fmt(idleDuration) + ", taking control");
       }
 
       // Daily sleep jitter re-roll
@@ -352,29 +410,22 @@
         sleepJitterDate = today;
       }
 
-      if (document.querySelector("#cinema_c")) {
-        console.log(P, "Theater open, skipping");
-        return;
-      }
+      if (document.querySelector("#cinema_c")) return;
 
       if (document.querySelector("img.captchaImage")) {
-        console.log(P, "Captcha present, waiting for solver");
+        console.log(P, ts(), "Captcha — waiting");
         return;
       }
 
       // Close any open building/view panel (port, shipyard, etc.) that blocks fortress navigation
       const openView = document.querySelector(".templateView:not(#pirateFortress_c) .close");
       if (openView && !document.querySelector("#pirateCaptureBox")) {
-        console.log(P, "Building panel open, closing");
         openView.click();
         return;
       }
 
       // Mission still running — crew is out, just wait
-      if (document.querySelector("#pirateCaptureBox .red_box")) {
-        console.log(P, "Mission still running, waiting");
-        return;
-      }
+      if (document.querySelector("#pirateCaptureBox .red_box")) return;
 
       const captureBtns = document.querySelectorAll("#pirateCaptureBox a.button.capture");
       if (captureBtns.length > 0) {
@@ -392,15 +443,27 @@
         const captureBtn = captureBtns[tier];
         const href = captureBtn.getAttribute("href");
         const duration = MISSION_DURATIONS[tier] || MISSION_DURATIONS[0];
-        console.log(P, "Launching tier", tier + 1, "capture (t2p=" + t2Prob.toFixed(2) + ", brk=" + getBreakHazard().toFixed(2) + ")");
+        raidInProgress = true;
         navigate(href);
         const delay = randomDelay();
         const total = duration * 1000 + delay;
         nextActionTime = Date.now() + total;
         lastNavigateTime = 0;
-        console.log(P, "Tier " + (tier + 1) + " next in", fmt(total), "(mission", fmt(duration * 1000), "+ delay", fmt(delay) + ")" + (forceBreakNext ? " [break queued]" : ""));
+        sessionRaids++;
+        if (tier === 0) sessionT1++; else sessionT2++;
+        const tierLabel = tier === 0 ? "T1" : "T2";
+        const until = fmtTime(new Date(Date.now() + total));
+        const extra = (convertEnabled ? " →convert" : "") + (forceBreakNext ? " [brk queued]" : "");
+        console.log(P, ts(), "#" + sessionRaids + " " + tierLabel + " → " + fmt(total) + " until " + until + " (streak:" + streakCount + " haz:" + getBreakHazard().toFixed(2) + ")" + extra);
         raidsSinceLastConvert++;
-        tryConvert();
+        saveState();
+        // Safety net: clear raidInProgress after 30s in case normal flow fails
+        setTimeout(() => { raidInProgress = false; }, 30000);
+        // Delay convert start so raid AJAX can complete before we navigate away
+        scheduleConvert(() => {
+          raidInProgress = false;
+          tryConvert();
+        }, 3000 + Math.random() * 1000);
         return;
       }
 
@@ -408,11 +471,9 @@
         lastNavigateTime = Date.now();
         const bodyId = document.body.id;
         const onPirateCity = bodyId === "city" && location.search.includes("cityId=" + pirateCityId);
-        console.log(P, "State: body#" + bodyId + ", onPirateCity=" + onPirateCity);
 
         if (bodyId === "city" && onPirateCity) {
           // Right city, open fortress
-          console.log(P, "Opening fortress (BootyQuest tab)");
           navigate("?view=pirateFortress&activeTab=tabBootyQuest&cityId=" + pirateCityId + "&position=17");
           // Watch for capture button to appear after AJAX
           const obs = new MutationObserver(() => {
@@ -423,21 +484,13 @@
           });
           obs.observe(document.body, { childList: true, subtree: true });
           setTimeout(() => obs.disconnect(), 5000);
-        } else if (bodyId === "city") {
-          // Wrong city — switch via game's city change form
-          console.log(P, "Switching to pirate city", pirateCityId);
-          IkUtils.ensureBridge();
-          window.dispatchEvent(new CustomEvent("ik-switch-city", { detail: { cityId: pirateCityId } }));
         } else {
-          // Not on city view (island, world map, etc.) — navigate directly
-          console.log(P, "Not on city view (body#" + bodyId + "), navigating to pirate city");
+          // Wrong city or not on city view — navigate directly via AJAX
           navigate("?view=city&cityId=" + pirateCityId);
         }
-      } else {
-        console.log(P, "No capture btn, nav cooldown", fmt(NAVIGATE_COOLDOWN - (Date.now() - lastNavigateTime)));
       }
     } catch (e) {
-      console.error(P, "Error:", e);
+      console.error(P, ts(), "Error:", e);
     }
   }
 
@@ -452,9 +505,8 @@
 
   function start() {
     if (checkTimer) return; // guard: don't reset state if already running
-    if (!sessionStartTime || sessionStartTime === 0) sessionStartTime = Date.now();
     scheduleNext();
-    console.log(P, "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + "-" + cfg.sleepEnd);
+    console.log(P, ts(), "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + ":00-" + cfg.sleepEnd + ":00, mu=" + cfg.baseMu + ", σ=" + cfg.baseSigma);
   }
 
   function resetSession() {
@@ -467,12 +519,21 @@
     postBreakRaids = 0;
     tempo = 0;
     raidsSinceLastConvert = 0;
+    sessionRaids = 0;
+    sessionT1 = 0;
+    sessionT2 = 0;
+    sessionBreakCount = 0;
+    sessionBreakMs = 0;
+    sessionConverts = 0;
+    chrome.storage.local.remove("pirateState");
   }
 
   function stop() {
     if (checkTimer) { clearTimeout(checkTimer); checkTimer = null; }
+    convertTimers.forEach((id) => clearTimeout(id));
+    convertTimers = [];
     handBack();
-    console.log(P, "Stopped");
+    console.log(P, ts(), "Stopped |", sessionStats());
   }
 
   // --- Pirate toggle in game header bar ---
@@ -508,6 +569,13 @@
       updateStyle();
     });
 
+    chrome.storage.onChanged.addListener((changes) => {
+      if (changes.pirateEnabled) {
+        active = !!changes.pirateEnabled.newValue;
+        updateStyle();
+      }
+    });
+
     li.appendChild(link);
     li.style.marginLeft = "20px";
     toolbar.appendChild(li);
@@ -538,7 +606,7 @@
 
   // --- Storage ---
   const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", "pirateCityId", "pirateIdleTimeout",
-    ...Object.values(CFG_KEYS).map((k) => k.storage)];
+    "pirateState", ...Object.values(CFG_KEYS).map((k) => k.storage)];
 
   chrome.storage.local.get(allStorageKeys, (data) => {
     enabled = !!data.pirateEnabled;
@@ -556,13 +624,10 @@
         toSave[def.storage] = cfg[key];
       }
     }
-    if (Object.keys(toSave).length > 0) {
-      chrome.storage.local.set(toSave);
-      console.log(P, "Initialized random timing params:", toSave);
-    }
+    if (Object.keys(toSave).length > 0) chrome.storage.local.set(toSave);
 
-    resetSession();
-    console.log(P, "Config loaded — enabled=" + enabled + ", city=" + pirateCityId + ", cfg=", JSON.stringify(cfg));
+    restoreState(data.pirateState);
+    console.log(P, ts(), "Loaded — enabled=" + enabled + ", convert=" + convertEnabled + ", city=" + pirateCityId + " |", sessionStats());
     if (enabled && pirateCityId) start();
     injectPirateToggle();
   });
@@ -571,16 +636,15 @@
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "popup-heartbeat") {
       lastPopupHeartbeat = Date.now();
-      console.log(P, "Popup heartbeat");
     }
     if (msg.type === "pirate-toggle") {
       enabled = msg.enabled;
-      console.log(P, "Toggle:", enabled);
+      console.log(P, ts(), "Toggle:", enabled);
       if (enabled && pirateCityId) start(); else stop();
     }
     if (msg.type === "pirate-convert-toggle") {
       convertEnabled = msg.enabled;
-      console.log(P, "Convert toggle:", convertEnabled);
+      console.log(P, ts(), "Convert:", convertEnabled);
     }
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;
@@ -597,7 +661,6 @@
         sleepJitter = (Math.random() - 0.5) * 20;
       }
       chrome.storage.local.set(save);
-      console.log(P, "Config updated — city=" + pirateCityId + ", cfg=", JSON.stringify(cfg));
     }
   });
 
@@ -605,12 +668,12 @@
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.pirateEnabled) {
       enabled = !!changes.pirateEnabled.newValue;
-      console.log(P, "Storage toggle:", enabled);
+      console.log(P, ts(), "Toggle:", enabled);
       if (enabled && pirateCityId) start(); else stop();
     }
     if (changes.pirateConvertEnabled) {
       convertEnabled = !!changes.pirateConvertEnabled.newValue;
-      console.log(P, "Convert storage toggle:", convertEnabled);
+      console.log(P, ts(), "Convert:", convertEnabled);
     }
   });
 
@@ -618,8 +681,11 @@
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "get-cities") {
       const cities = [];
+      let responded = false;
+      let fallbackTimer = null;
       const handler = (e) => {
         window.removeEventListener("ik-cities-data", handler);
+        clearTimeout(fallbackTimer);
         const data = e.detail || {};
         for (const key of Object.keys(data)) {
           if (key === "additionalInfo" || key === "selectedCity") continue;
@@ -628,13 +694,13 @@
             cities.push({ id: c.id, name: c.name, coords: c.coords || "" });
           }
         }
-        sendResponse({ cities });
+        if (!responded) { responded = true; sendResponse({ cities }); }
       };
       window.addEventListener("ik-cities-data", handler);
       window.dispatchEvent(new CustomEvent("ik-read-cities"));
-      setTimeout(() => {
+      fallbackTimer = setTimeout(() => {
         window.removeEventListener("ik-cities-data", handler);
-        if (cities.length === 0) sendResponse({ cities: [] });
+        if (!responded) { responded = true; sendResponse({ cities: [] }); }
       }, 2000);
       return true;
     }

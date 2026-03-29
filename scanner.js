@@ -1,7 +1,6 @@
 // World map scanner — uses the game's own coordinate navigator to jump around
 // and reads tiles from the live DOM after each jump.
 (() => {
-  const DELAY_AFTER_JUMP = 1500; // ms to wait for AJAX + render
   const DELAY_BETWEEN = 300; // extra breathing room
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -112,7 +111,12 @@
     });
   }
 
+  let scanning = false;
+
   async function scanWorldMap(port) {
+    if (scanning) return;
+    scanning = true;
+    try {
     const worldName = IkUtils.getWorldName() || "Unknown";
     const allIslands = new Map();
     const scannedCenters = new Set();
@@ -156,7 +160,11 @@
     async function jumpAndRead(cx, cy, phase) {
       if (aborted) return null;
       const key = `${cx}:${cy}`;
-      if (scannedCenters.has(key)) return null;
+      if (scannedCenters.has(key)) {
+        requestsDone++;
+        progress(phase);
+        return null;
+      }
       scannedCenters.add(key);
 
       try {
@@ -291,9 +299,9 @@
     totalEstimate = requestsDone + fillCenters.length;
     progress("fill");
 
-    for (const [cx, cy] of fillCenters) {
+    for (const [fx, fy] of fillCenters) {
       if (aborted) return;
-      await jumpAndRead(cx, cy, "fill");
+      await jumpAndRead(fx, fy, "fill");
     }
 
     if (!aborted) {
@@ -311,6 +319,9 @@
         worldName,
         islands: Array.from(allIslands.values()),
       });
+    }
+    } finally {
+      scanning = false;
     }
   }
 

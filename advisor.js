@@ -208,13 +208,13 @@
   function parseElInt(html, elId) {
     const text = extractElText(html, elId);
     if (!text) return null;
-    return parseInt(text.replace(/\s/g, "").replace(",", "."), 10) || 0;
+    return parseInt(text.replace(/\s/g, "").replace(/,/g, ""), 10) || 0;
   }
 
   function parseElFloat(html, elId) {
     const text = extractElText(html, elId);
     if (!text) return null;
-    return parseFloat(text.replace(/\s/g, "").replace(",", ".")) || 0;
+    return parseFloat(text.replace(/\s/g, "").replace(/,/g, ".")) || 0;
   }
 
   // Parse town hall page for worker/population data (regex-based, works with escaped HTML)
@@ -238,6 +238,93 @@
       happiness: parseElInt(html, "js_TownHallHappinessLargeValue"),
       netGold: parseElInt(html, "js_TownHallIncomeGoldValue"),
     };
+  }
+
+  // Parse safehouse page for spy capacity and active missions using DOMParser.
+  function parseSafehouse(html) {
+    const viewHtml = extractChangeViewHtml(html);
+    let doc;
+    if (viewHtml) {
+      doc = new DOMParser().parseFromString(viewHtml, "text/html");
+    } else {
+      doc = new DOMParser().parseFromString(html, "text/html");
+    }
+
+    const result = {
+      canTrain: 0,
+      waiting: 0,
+      defense: 0,
+      inUse: 0,
+      missions: [],
+    };
+
+    // Parse stats from .spy_stats_content
+    const statsContent = doc.querySelector(".spy_stats_content");
+    if (statsContent) {
+      const boldEl = statsContent.querySelector("b");
+      if (boldEl) {
+        const m = boldEl.textContent.match(/(\d+)/);
+        if (m) result.canTrain = parseInt(m[1], 10);
+      }
+      const items = statsContent.querySelectorAll("ul.disc-list li");
+      if (items.length >= 1) {
+        const m = items[0].textContent.match(/(\d+)/);
+        if (m) result.waiting = parseInt(m[1], 10);
+      }
+      if (items.length >= 2) {
+        const m = items[1].textContent.match(/(\d+)/);
+        if (m) result.defense = parseInt(m[1], 10);
+      }
+      if (items.length >= 3) {
+        const m = items[2].textContent.match(/(\d+)/);
+        if (m) result.inUse = parseInt(m[1], 10);
+      }
+    }
+
+    // Parse missions from .spyinfo blocks
+    const spyInfos = doc.querySelectorAll(".spyinfo");
+    for (const info of spyInfos) {
+      const mission = {};
+
+      const userLink = info.querySelector("li.user a");
+      if (userLink) {
+        mission.targetPlayer = userLink.textContent.trim();
+        const href = userLink.getAttribute("href") || "";
+        const avatarMatch = href.match(/avatarId=(\d+)/);
+        if (avatarMatch) mission.targetAvatarId = parseInt(avatarMatch[1], 10);
+      }
+
+      const cityLink = info.querySelector("li.city a");
+      if (cityLink) {
+        const title = cityLink.getAttribute("title") || "";
+        const text = cityLink.textContent.trim();
+        const coordMatch = text.match(/\((\d+:\d+)\)/);
+        mission.targetCoords = coordMatch ? coordMatch[0] : "";
+        mission.targetCity = title || text.replace(/\s*\(\d+:\d+\)/, "").trim();
+        const href = cityLink.getAttribute("href") || "";
+        const cityIdMatch = href.match(/cityId=(\d+)/);
+        if (cityIdMatch) mission.targetCityId = parseInt(cityIdMatch[1], 10);
+      }
+
+      // Spies deployed: li without .user, .city, .status classes
+      const lis = info.querySelectorAll("ul > li");
+      for (const li of lis) {
+        if (!li.classList.contains("user") && !li.classList.contains("city")
+            && !li.classList.contains("status")) {
+          const m = li.textContent.match(/(\d+)/);
+          if (m) mission.spiesDeployed = parseInt(m[1], 10);
+        }
+      }
+
+      const statusEl = info.querySelector("li.status");
+      if (statusEl) mission.status = statusEl.textContent.trim();
+
+      result.missions.push(mission);
+    }
+
+    console.log(P, "Safehouse parse —", result.canTrain, "capacity,",
+      result.missions.length, "missions,", result.defense, "defense,", result.inUse, "in use");
+    return result;
   }
 
   // Parse warehouse page for safe/lootable resource data (regex-based)
@@ -456,6 +543,150 @@
     return { units };
   }
 
+  // Navigate to military advisor via bridge, wait for DOM to populate, parse movements.
+  // The fleet movements table is rendered client-side by game JS, so we can't fetch() it.
+  function fetchMilitaryMovementsFromDOM() {
+    return new Promise((resolve) => {
+      IkUtils.ensureBridge();
+
+      // Navigate to the military advisor view
+      window.dispatchEvent(new CustomEvent("ik-ajax-call", {
+        detail: { url: "?view=militaryAdvisor&activeTab=tab_militaryAdvisor" },
+      }));
+
+      let resolved = false;
+      function tryParse() {
+        const tableDiv = document.getElementById("js_MilitaryMovementsFleetMovementsTable");
+        if (!tableDiv) return false;
+        const table = tableDiv.querySelector("table");
+        if (!table) return false;
+        // Table exists and has rows — parse from live DOM
+        if (resolved) return true;
+        resolved = true;
+        const movements = parseMilitaryMovementsFromDoc(table);
+        // Close the advisor panel
+        window.dispatchEvent(new CustomEvent("ik-close-popup"));
+        resolve(movements);
+        return true;
+      }
+
+      // Check immediately, then observe for DOM changes
+      if (tryParse()) return;
+      const obs = new MutationObserver(() => {
+        if (tryParse()) obs.disconnect();
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+      // Timeout after 8s
+      setTimeout(() => {
+        obs.disconnect();
+        if (!resolved) {
+          resolved = true;
+          console.warn(P, "Military movements DOM timeout — table not found");
+          window.dispatchEvent(new CustomEvent("ik-close-popup"));
+          resolve([]);
+        }
+      }, 8000);
+    });
+  }
+
+  // Parse military movements from a live DOM table element (not from HTML string).
+  function parseMilitaryMovementsFromDoc(table) {
+    const movements = [];
+    const rows = table.querySelectorAll("tbody tr");
+    for (const row of rows) {
+      if (row.querySelector("th")) continue;
+      const tds = row.querySelectorAll("td");
+      if (tds.length < 8) continue;
+
+      // Mission type from icon class
+      const missionIcon = tds[0].querySelector(".mission_icon");
+      const missionType = missionIcon
+        ? [...missionIcon.classList].find((c) => c !== "mission_icon") || "unknown"
+        : "unknown";
+
+      // Arrival time
+      const timeSpans = tds[1].querySelectorAll("span");
+      let arrivalTime = "";
+      let countdown = "";
+      for (const sp of timeSpans) {
+        const title = sp.getAttribute("title");
+        if (title && /\d{2}:\d{2}:\d{2}/.test(sp.textContent.trim())) {
+          arrivalTime = sp.textContent.trim();
+        }
+        if (title && /\d+[mhs]/.test(sp.textContent.trim())) {
+          countdown = sp.textContent.trim();
+        }
+      }
+      if (!countdown && timeSpans.length > 0) countdown = timeSpans[0].textContent.trim();
+
+      // Units & resources from expandable detail panel
+      const units = [];
+      const resources = [];
+      const detailDiv = row.querySelector(".infoTip");
+      if (detailDiv) {
+        for (const icon of detailDiv.querySelectorAll(".unit_detail_icon")) {
+          const title = icon.getAttribute("title") || "0";
+          const count = parseInt(title.replace(/\s/g, ""), 10) || 0;
+          const cls = icon.className;
+          if (cls.includes("resource_icon")) {
+            const resMatch = cls.match(/resource_icon\s+(\w+)/);
+            resources.push({ type: resMatch ? resMatch[1] : "unknown", amount: count });
+          } else if (cls.includes("ship_")) {
+            const shipMatch = cls.match(/ship_(\w+)/);
+            units.push({ type: "ship", name: shipMatch ? shipMatch[1] : "ship", count });
+          } else {
+            const unitMatch = cls.match(/icon40 bold center (\w+)/);
+            const unitName = unitMatch ? unitMatch[1] : "unknown";
+            units.push({ type: "unit", name: unitName, count });
+          }
+        }
+      }
+
+      // Origin city
+      const sourceCell = row.querySelector("td.source") || tds[5];
+      const sourceLink = sourceCell?.querySelector("a");
+      const sourcePlayer = sourceCell?.querySelector("span");
+      const origin = {
+        city: sourceLink?.getAttribute("title") || sourceLink?.textContent.trim() || "",
+        player: sourcePlayer?.getAttribute("title") || sourcePlayer?.textContent.replace(/[()]/g, "").trim() || "",
+        cityId: null,
+      };
+      const originHref = sourceLink?.getAttribute("href") || "";
+      const originCityMatch = originHref.match(/cityId=(\d+)/);
+      if (originCityMatch) origin.cityId = parseInt(originCityMatch[1], 10);
+
+      // Direction arrow
+      const arrowCell = row.querySelector("td.mission");
+      const arrowTitle = arrowCell?.getAttribute("title") || "";
+      const isReturning = arrowCell?.className.includes("arrow_left") || false;
+
+      // Target
+      const targetCell = row.querySelector("td.target") || tds[7];
+      const targetLink = targetCell?.querySelector("a");
+      const targetPlayer = targetCell?.querySelector("span");
+      const target = {
+        city: targetLink?.getAttribute("title") || targetLink?.textContent.trim() || "",
+        player: targetPlayer?.getAttribute("title") || targetPlayer?.textContent.replace(/[()]/g, "").trim() || "",
+      };
+
+      movements.push({
+        missionType,
+        missionLabel: arrowTitle,
+        isReturning,
+        countdown,
+        arrivalTime,
+        units,
+        resources,
+        origin,
+        target,
+      });
+    }
+
+    console.log(P, "Military movements —", movements.length, "active",
+      movements.map((m) => m.missionType + (m.isReturning ? "↩" : "→")).join(", ") || "(none)");
+    return movements;
+  }
+
   // Get city list from bridge
   function getCities() {
     return new Promise((resolve) => {
@@ -493,7 +724,7 @@
     chrome.runtime.sendMessage({ type: "advisor-progress", current, total, phase }).catch(() => {});
   }
 
-  // Main collection function — mode: "basic" | "army" | "trading" | "full"
+  // Main collection function — mode: "basic" | "workers" | "storage" | "army" | "trading" | "full"
   async function collectData(mode) {
     console.log(P, "Getting city list... mode:", mode);
     const cities = await getCities();
@@ -502,10 +733,23 @@
     }
     console.log(P, "Found", cities.length, "cities");
 
+    // Extract world name and avatarId for history persistence
+    const world = IkUtils.getWorldName() || "";
+    let avatarId = "";
+    document.querySelectorAll("script").forEach((script) => {
+      const m = script.textContent.match(/avatarId:\s*'(\d+)'/);
+      if (m) avatarId = m[1];
+    });
+
     const wantDetails = mode === "full";
+    const wantWorkers = mode === "workers" || mode === "full";
+    const wantStorage = mode === "storage" || mode === "full";
     const wantArmy = mode === "army" || mode === "full";
     const wantTrading = mode === "trading" || mode === "full";
-    const phases = 1 + (mode !== "basic" ? 1 : 0) + (wantTrading ? 1 : 0);
+    const wantSpy = mode === "spy" || mode === "full";
+    const wantMovements = wantArmy || wantTrading;
+    const needsPhase2 = mode !== "basic" && mode !== "storage";
+    const phases = 1 + (needsPhase2 ? 1 : 0) + (wantStorage && !needsPhase2 ? 1 : 0) + (wantTrading ? 1 : 0);
     const total = cities.length * phases;
     let completed = 0;
 
@@ -528,20 +772,18 @@
         const cityData = extractCityData(cityHtmls[i]);
         if (!cityData) return null;
         const buildingData = parseBuildingData(cityData.bgData);
-        return { city, buildingData, headerData: cityData.headerData, ownerName: cityData.bgData?.ownerName || "", townHall: null, warehouse: null, military: { units: [] }, boPos: null };
+        return { city, buildingData, headerData: cityData.headerData, ownerName: cityData.bgData?.ownerName || "", townHall: null, warehouse: null, military: { units: [] }, boPos: null, safehouse: null, safehouseLevel: null };
       });
-    } else {
-      const phaseLabel = wantArmy && !wantDetails ? "Fetching military..." : "Fetching details...";
-      console.log(P, "Phase 2:", phaseLabel);
+    } else if (mode === "storage") {
+      // Storage: basic + warehouse fetch only
+      console.log(P, "Phase 2: fetching warehouses...");
       results = await Promise.all(
         cities.map(async (city, i) => {
           try {
             const cityData = extractCityData(cityHtmls[i]);
             if (!cityData) return null;
-
             const buildingData = parseBuildingData(cityData.bgData);
 
-            // Find warehouse and branchOffice positions from bgData.position
             let whPos = null;
             let boPos = null;
             const positions = cityData.bgData?.position;
@@ -554,20 +796,76 @@
               }
             }
 
+            const whHtml = whPos !== null
+              ? await fetchPage("view=warehouse&cityId=" + city.id + "&position=" + whPos)
+              : null;
+
+            completed++;
+            sendProgress(completed, total, "Fetching warehouses...");
+
+            return {
+              city,
+              buildingData,
+              headerData: cityData.headerData,
+              ownerName: cityData.bgData?.ownerName || "",
+              townHall: null,
+              warehouse: whHtml ? parseWarehouse(whHtml) : null,
+              military: { units: [] },
+              boPos,
+              safehouse: null,
+              safehouseLevel: null,
+            };
+          } catch (e) {
+            console.error(P, "Error fetching warehouse for", city.name, e);
+            completed++;
+            sendProgress(completed, total, "Fetching warehouses...");
+            return null;
+          }
+        })
+      );
+    } else {
+      const phaseLabel = wantArmy && !wantDetails ? "Fetching military..." : "Fetching details...";
+      console.log(P, "Phase 2:", phaseLabel);
+      results = await Promise.all(
+        cities.map(async (city, i) => {
+          try {
+            const cityData = extractCityData(cityHtmls[i]);
+            if (!cityData) return null;
+
+            const buildingData = parseBuildingData(cityData.bgData);
+
+            // Find warehouse, branchOffice, and safehouse positions from bgData.position
+            let whPos = null;
+            let boPos = null;
+            let shPos = null;
+            const positions = cityData.bgData?.position;
+            if (Array.isArray(positions)) {
+              for (let j = 0; j < positions.length; j++) {
+                const b = positions[j]?.building;
+                if (!b) continue;
+                if (whPos === null && b.includes("warehouse")) whPos = j;
+                if (boPos === null && b.includes("branchOffice")) boPos = j;
+                if (shPos === null && b.includes("safehouse")) shPos = j;
+              }
+            }
+
             // Fetch extra views based on mode
             const fetches = [
-              wantDetails
+              wantDetails || wantWorkers
                 ? fetchPage("view=townHall&cityId=" + city.id)
                 : Promise.resolve(null),
-              wantDetails && whPos !== null
+              (wantDetails || wantStorage) && whPos !== null
                 ? fetchPage("view=warehouse&cityId=" + city.id + "&position=" + whPos)
                 : Promise.resolve(null),
               wantArmy
                 ? fetchPage("view=cityMilitary&activeTab=tabUnits&cityId=" + city.id)
                 : Promise.resolve(null),
+              wantSpy && shPos !== null
+                ? fetchPage("view=safehouse&cityId=" + city.id + "&position=" + shPos)
+                : Promise.resolve(null),
             ];
 
-            const [thHtml, whHtml, milHtml] = await Promise.all(fetches);
+            const [thHtml, whHtml, milHtml, shHtml] = await Promise.all(fetches);
 
             completed++;
             sendProgress(completed, total, phaseLabel);
@@ -581,6 +879,8 @@
               warehouse: whHtml ? parseWarehouse(whHtml) : null,
               military: milHtml ? parseMilitary(milHtml) : { units: [] },
               boPos,
+              safehouse: shHtml ? parseSafehouse(shHtml) : null,
+              safehouseLevel: shPos !== null ? (positions[shPos]?.level || 0) : null,
             };
           } catch (e) {
             console.error(P, "Error fetching", city.name, e);
@@ -639,6 +939,18 @@
       );
     }
 
+    // Fetch military movements (global, not per-city) — one request to militaryAdvisor
+    let militaryMovements = [];
+    if (wantMovements) {
+      console.log(P, "Fetching military movements...");
+      sendProgress(completed, total, "Fetching movements...");
+      try {
+        militaryMovements = await fetchMilitaryMovementsFromDOM();
+      } catch (e) {
+        console.error(P, "Error fetching military movements:", e);
+      }
+    }
+
     // Global economy values — same from every city, extract once
     const firstHd = results.find((r) => r?.headerData)?.headerData || {};
     const global = {
@@ -652,7 +964,10 @@
     const reportData = {
       timestamp: new Date().toISOString(),
       mode,
+      world,
+      avatarId,
       global,
+      militaryMovements,
       cities: results.map((r) => {
         if (!r) return null;
         const b = r.buildingData || {};
@@ -713,7 +1028,7 @@
           woodPerHour: Math.round((hd.resourceProduction || 0) * 3600),
           tradegoodPerHour: Math.round((hd.tradegoodProduction || 0) * 3600),
           producedTradegood: hd.producedTradegood || null,
-          winePerHour: -(hd.wineSpendings || 0),
+          winePerHour: -Math.round((hd.wineSpendings || 0) * 3600),
           citizens: cr.citizens ?? 0,
           population: cr.population ?? 0,
           transporters: {
@@ -739,6 +1054,11 @@
           military: mil,
           // Trading
           trading: r.trading || [],
+          // Spy
+          spy: r.safehouse ? {
+            ...r.safehouse,
+            safehouseLevel: r.safehouseLevel,
+          } : null,
         };
       }).filter(Boolean),
     };
@@ -752,7 +1072,14 @@
       const mode = msg.mode || "full";
       collectData(mode)
         .then((data) => {
-          chrome.storage.local.set({ advisorReportData: data }, () => {
+          chrome.storage.local.set({ advisorReportData: data }, async () => {
+            if ((data.mode === "trading" || data.mode === "full") && typeof TradeHistory !== "undefined") {
+              try {
+                await TradeHistory.persistSnapshot(data);
+              } catch (e) {
+                console.error(P, "Failed to persist trade history:", e);
+              }
+            }
             chrome.runtime.sendMessage({ type: "open-advisor-report" });
             sendResponse({ success: true });
           });

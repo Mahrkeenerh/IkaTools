@@ -51,8 +51,8 @@ globalThis.MapRender = (() => {
 
   // Ownership colors
   const OWNER_COLORS = {
-    own: "#00FF88",       // bright green
-    ally: "#42A5F5",      // blue
+    own: "#64B5F6",       // blue
+    ally: "#00FF88",      // green
     occupied: "#FF9800",  // orange
     war: "#F44336",       // red
     "": DIM,              // no owner info
@@ -159,7 +159,10 @@ globalThis.MapRender = (() => {
     const layer = LAYERS[layerKey] || LAYERS.population;
     const dimEmpty = !!opts.dimEmpty;
 
-    if (islands.length === 0) return { width: 0, height: 0, pxMin: 0, pyMin: 0, tileW: tw, tileH: th };
+    if (islands.length === 0) {
+      ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+      return { width: 0, height: 0, pxMin: 0, pyMin: 0, tileW: tw, tileH: th };
+    }
 
     // Pixel bounds
     let pxMin = Infinity, pxMax = -Infinity, pyMin = Infinity, pyMax = -Infinity;

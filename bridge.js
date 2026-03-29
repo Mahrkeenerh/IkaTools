@@ -1,58 +1,6 @@
 // Runs in PAGE context (not content script isolated world).
 // Injected as an external <script src> to bypass CSP.
 // Listens for custom events from the content script and calls game functions.
-window.addEventListener("ik-jump", (e) => {
-  const x = e.detail.x;
-  const y = e.detail.y;
-  const xInput = document.getElementById("inputXCoord");
-  const yInput = document.getElementById("inputYCoord");
-  if (xInput) xInput.value = x;
-  if (yInput) yInput.value = y;
-  try {
-    ikariam.getMapNavigation().jumpToCoord();
-  } catch (err) {
-    console.error("[IkBridge] jumpToCoord failed:", err);
-  }
-});
-
-// Close popup via game API
-window.addEventListener("ik-close-popup", () => {
-  try { ikariam.closePopup(); } catch (e) {}
-});
-
-// General-purpose AJAX navigation (calls game's ajaxHandlerCall)
-window.addEventListener("ik-ajax-call", (e) => {
-  try { ajaxHandlerCall(e.detail.url); } catch (err) {
-    console.error("[IkBridge] ajaxHandlerCall failed:", err);
-  }
-});
-
-// Switch current city via the game's city change form
-window.addEventListener("ik-switch-city", (e) => {
-  try {
-    var cityId = e.detail.cityId;
-    var form = document.getElementById("changeCityForm");
-    if (form) {
-      document.getElementById("js_cityIdOnChange").value = cityId;
-      ajaxHandlerCallFromForm(form);
-    }
-  } catch (err) {
-    console.error("[IkBridge] switchCity failed:", err);
-  }
-});
-
-// Convert pirate points to crew: click slider max, then click submit
-window.addEventListener("ik-convert-crew", () => {
-  try {
-    var maxBtn = document.getElementById("CPToCrewSliderMax");
-    if (maxBtn) {
-      maxBtn.click();
-      console.log("[IkBridge] convertCrew: clicked slider max");
-    }
-  } catch (err) {
-    console.error("[IkBridge] convertCrew failed:", err);
-  }
-});
 
 // Read city list from game data for the popup city selector
 window.addEventListener("ik-read-cities", () => {
@@ -100,3 +48,47 @@ window.addEventListener("ik-read-game-data", () => {
   } catch (e) { /* not available */ }
   window.dispatchEvent(new CustomEvent("ik-game-data", { detail: result }));
 });
+
+// Convert pirate points to crew: click slider max, then confirm via response event
+window.addEventListener("ik-convert-crew", () => {
+  try {
+    const maxBtn = document.getElementById("CPToCrewSliderMax");
+    if (maxBtn) {
+      maxBtn.click();
+      console.log("[IkBridge] convertCrew: clicked slider max");
+    }
+  } catch (err) {
+    console.error("[IkBridge] convertCrew failed:", err);
+  }
+});
+
+// Guard: handlers below require ajaxHandlerCall — skip on non-game pages (forum, lobby, etc.)
+if (typeof ajaxHandlerCall === "function") {
+
+window.addEventListener("ik-jump", (e) => {
+  const x = e.detail.x;
+  const y = e.detail.y;
+  const xInput = document.getElementById("inputXCoord");
+  const yInput = document.getElementById("inputYCoord");
+  if (xInput) xInput.value = x;
+  if (yInput) yInput.value = y;
+  try {
+    ikariam.getMapNavigation().jumpToCoord();
+  } catch (err) {
+    console.error("[IkBridge] jumpToCoord failed:", err);
+  }
+});
+
+// Close popup via game API
+window.addEventListener("ik-close-popup", () => {
+  try { ikariam.closePopup(); } catch (e) {}
+});
+
+// General-purpose AJAX navigation (calls game's ajaxHandlerCall)
+window.addEventListener("ik-ajax-call", (e) => {
+  try { ajaxHandlerCall(e.detail.url); } catch (err) {
+    console.error("[IkBridge] ajaxHandlerCall failed:", err);
+  }
+});
+
+} // end ajaxHandlerCall guard

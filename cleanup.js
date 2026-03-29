@@ -2,9 +2,11 @@
 (() => {
   let enabled = true;
   let observer = null;
-
   function cleanup() {
     if (!enabled) return;
+    // Disconnect observer during cleanup to prevent feedback loop
+    // (removing elements triggers mutations which triggers cleanup again)
+    if (observer) observer.disconnect();
 
     const shop = document.getElementById("cityFlyingShopContainer");
     if (shop) shop.remove();
@@ -36,9 +38,14 @@
     document.querySelectorAll(".cityLocation.buildplace.premium").forEach(el => el.remove());
 
     // Hide instead of remove — game timers keep referencing hidden fields inside these
+    // "bohů" = Czech for "gods" (ambrosia/premium timer label) — NOTE: language-dependent,
+    // also matches English "gods" and the happyHour class as a fallback
     document.querySelectorAll(".btnIngameCountdown").forEach(el => {
-      if (el.textContent.includes("bohů") || el.classList.contains("happyHour")) el.style.display = "none";
+      if (el.textContent.includes("bohů") || el.textContent.includes("gods") || el.classList.contains("happyHour")) el.style.display = "none";
     });
+
+    // Reconnect observer after cleanup
+    if (observer) observer.observe(document.body, { childList: true, subtree: true });
   }
 
   function start() {

@@ -44,7 +44,7 @@ body {
 .tab-btn:hover { color: #c8cdd8; }
 .tab-btn.active { color: #5ca0f2; border-bottom-color: #5ca0f2; }
 
-.content { padding: 24px; max-width: 1400px; margin: 0 auto; }
+.content { padding: 24px; }
 
 .report-panel { display: none; }
 .report-panel.active { display: block; }
@@ -173,11 +173,11 @@ body {
 .rate { font-size: 12px; }
 td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-left: 4px; }
 
-th.res-wood, td.res-wood { color: #b08850 !important; }
-th.res-wine, td.res-wine { color: #c06080 !important; }
-th.res-marble, td.res-marble { color: #a0b0c0 !important; }
-th.res-crystal, td.res-crystal { color: #60b0d0 !important; }
-th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
+.res-wood, th.res-wood, td.res-wood { color: #b08850 !important; }
+.res-wine, th.res-wine, td.res-wine { color: #c06080 !important; }
+.res-marble, th.res-marble, td.res-marble { color: #a0b0c0 !important; }
+.res-crystal, th.res-crystal, td.res-crystal { color: #60b0d0 !important; }
+.res-sulfur, th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
 
 .trade-section-header {
   display: flex; align-items: center; gap: 8px;
@@ -189,6 +189,125 @@ th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
 }
 .trade-type-buy { background: rgba(96, 176, 208, 0.15); color: #60b0d0; border: 1px solid rgba(96, 176, 208, 0.3); }
 .trade-type-sell { background: rgba(111, 206, 140, 0.15); color: #6fce8c; border: 1px solid rgba(111, 206, 140, 0.3); }
+
+.spy-badge {
+  display: inline-block; font-size: 10px; font-weight: 600;
+  padding: 2px 8px; border-radius: 3px;
+}
+.spy-badge-alert { background: rgba(224, 96, 96, 0.15); color: #e06060; border: 1px solid rgba(224, 96, 96, 0.3); }
+.spy-badge-active { background: rgba(92, 160, 242, 0.15); color: #5ca0f2; border: 1px solid rgba(92, 160, 242, 0.3); }
+.spy-badge-idle { background: rgba(85, 85, 85, 0.15); color: #888; border: 1px solid rgba(85, 85, 85, 0.3); }
+
+/* Trade History — Resource row: 4 columns */
+.res-row {
+  margin-bottom: 28px; padding-bottom: 20px;
+  border-bottom: 1px solid #2a3040;
+}
+.res-row:last-child { border-bottom: none; }
+.res-row-header {
+  font-size: 18px; font-weight: 700; padding: 4px 0 12px;
+  text-align: center; text-transform: uppercase; letter-spacing: 1px;
+}
+.res-row-sides {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 24px;
+  align-items: start;
+}
+.res-side { min-width: 0; }
+.res-side-title {
+  font-size: 13px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; margin-bottom: 8px; padding-bottom: 6px;
+  border-bottom: 1px solid #2a3040;
+}
+.res-side-cols {
+  display: grid; grid-template-columns: 35fr 65fr; gap: 12px;
+  align-items: start;
+}
+.res-side-cols > div { min-width: 0; }
+@media (max-width: 1200px) {
+  .res-row-sides { grid-template-columns: 1fr; }
+}
+@media (max-width: 800px) {
+  .res-side-cols { grid-template-columns: 1fr; }
+}
+
+/* Trade History — Controls */
+.history-controls {
+  display: flex; align-items: center; gap: 14px;
+  margin-bottom: 16px; flex-wrap: wrap;
+}
+.history-toggle {
+  font-size: 11px; color: #8890a0; cursor: pointer;
+  display: flex; align-items: center; gap: 4px;
+}
+.history-toggle input { accent-color: #5ca0f2; }
+.timeframe-btns { display: flex; gap: 0; }
+.tf-btn {
+  padding: 4px 12px; font-size: 11px; border: 1px solid #2a3040;
+  background: #1e2535; color: #8890a0; cursor: pointer;
+}
+.tf-btn:first-child { border-radius: 4px 0 0 4px; }
+.tf-btn:last-child { border-radius: 0 4px 4px 0; }
+.tf-btn + .tf-btn { border-left: none; }
+.tf-btn.active { background: #2a3550; color: #e0e4ec; border-color: #5ca0f2; }
+
+/* Trade History — Charts */
+.chart-section { margin-bottom: 24px; }
+.chart-panel-label {
+  font-size: 11px; font-weight: 600; text-transform: uppercase;
+  letter-spacing: 0.5px; color: #8890a0; margin-bottom: 6px;
+}
+.chart-wrap {
+  background: #141824; border: 1px solid #2a3040; border-radius: 8px;
+  padding: 12px; position: relative; margin-bottom: 10px;
+  overflow: hidden;
+}
+.chart-wrap canvas { width: 100%; display: block; }
+.chart-tooltip {
+  display: none; position: absolute; background: #1e2535;
+  border: 1px solid #3a5a8a; border-radius: 6px; padding: 8px 12px;
+  font-size: 11px; color: #c8cdd8; pointer-events: none;
+  z-index: 10; white-space: nowrap;
+}
+.chart-disclaimer {
+  font-size: 10px; color: #556; margin-top: 4px; font-style: italic;
+}
+
+/* Trade History — Summary cards */
+.history-summary {
+  display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+  gap: 10px; margin-bottom: 16px;
+}
+.hs-card {
+  padding: 10px 14px; background: #141824;
+  border: 1px solid #2a3040; border-radius: 8px;
+}
+.hs-card .hs-label { font-size: 10px; color: #667; text-transform: uppercase; letter-spacing: 0.3px; }
+.hs-card .hs-value { font-size: 16px; font-weight: 600; color: #e0e4ec; margin-top: 2px; }
+.hs-card .hs-sub { font-size: 11px; color: #778; margin-top: 2px; }
+
+/* Trade History — Concentration bar */
+.concentration-bar {
+  display: flex; gap: 20px; margin-bottom: 16px;
+  font-size: 11px; color: #8890a0;
+}
+.concentration-bar span { white-space: nowrap; }
+
+/* Trade History — Offer badges */
+.offer-badge {
+  display: inline-block; font-size: 9px; font-weight: 600;
+  padding: 1px 5px; border-radius: 3px; margin-left: 4px;
+  vertical-align: middle;
+}
+.badge-cheap { background: rgba(111, 206, 140, 0.12); color: #6fce8c; border: 1px solid rgba(111, 206, 140, 0.3); }
+.badge-expensive { background: rgba(224, 96, 96, 0.12); color: #e06060; border: 1px solid rgba(224, 96, 96, 0.3); }
+.badge-thin { background: rgba(208, 176, 64, 0.12); color: #d0b040; border: 1px solid rgba(208, 176, 64, 0.3); }
+.badge-new { background: rgba(92, 160, 242, 0.12); color: #5ca0f2; border: 1px solid rgba(92, 160, 242, 0.3); }
+
+/* Trade History — Collapse toggle */
+.collapse-toggle {
+  cursor: pointer; font-size: 12px; color: #5ca0f2;
+  background: none; border: none; padding: 0;
+}
 </style>
 </head>
 <body>
@@ -209,6 +328,7 @@ th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
   <button class="tab-btn" data-tab="panel-army">Army</button>
   <button class="tab-btn" data-tab="panel-storage">Storage</button>
   <button class="tab-btn" data-tab="panel-trading">Trading</button>
+  <button class="tab-btn" data-tab="panel-spy">Spy</button>
 </div>
 
 <div class="content">
@@ -244,15 +364,15 @@ th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
         <thead><tr>
           <th>City</th>
           <th class="right res-wood">Wood</th>
-          <th class="right res-wood">/h</th>
+          <th class="res-wood">/h</th>
           <th class="right res-wine">Wine</th>
-          <th class="right res-wine">/h</th>
+          <th class="res-wine">/h</th>
           <th class="right res-marble">Marble</th>
-          <th class="right res-marble">/h</th>
+          <th class="res-marble">/h</th>
           <th class="right res-crystal">Crystal</th>
-          <th class="right res-crystal">/h</th>
+          <th class="res-crystal">/h</th>
           <th class="right res-sulfur">Sulfur</th>
-          <th class="right res-sulfur">/h</th>
+          <th class="res-sulfur">/h</th>
         </tr></thead>
         <tbody id="economy-body"></tbody>
         <tfoot id="economy-foot"></tfoot>
@@ -313,7 +433,7 @@ th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
   <!-- Storage -->
   <div id="panel-storage" class="report-panel">
     <div class="panel-title">Storage — Safe &amp; Lootable Resources</div>
-    <div class="section-subtitle">Total stock with <span class="val-pos">safe</span> and <span class="val-neg">lootable</span> amounts.</div>
+    <div class="section-subtitle">Total stock — <span class="val-pos">(+safe room)</span> or <span class="val-neg">(lootable)</span> if overflowing.</div>
     <div class="table-wrap">
       <table class="report-table">
         <thead><tr>
@@ -326,6 +446,7 @@ th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
           <th class="right res-sulfur">Sulfur</th>
         </tr></thead>
         <tbody id="storage-body"></tbody>
+        <tfoot id="storage-foot"></tfoot>
       </table>
     </div>
   </div>
@@ -337,8 +458,17 @@ th.res-sulfur, td.res-sulfur { color: #d0b040 !important; }
     <div id="trading-container"></div>
   </div>
 
+  <!-- Spy -->
+  <div id="panel-spy" class="report-panel">
+    <div class="panel-title">Spy — Safehouse &amp; Missions</div>
+    <div class="section-subtitle">Spy capacity per city and active espionage missions.</div>
+    <div id="spy-container"></div>
+  </div>
+
 </div>
 
+<script src="tradehistory.js"></script>
+<script src="tradechart.js"></script>
 <script src="report.js"></script>
 </body>
 </html>
