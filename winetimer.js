@@ -2,10 +2,7 @@
 (() => {
   const TAG = "[IkTools:WineTimer]";
 
-  function parseNum(text) {
-    if (!text) return 0;
-    return parseInt(text.replace(/[\s,.]/g, ""), 10) || 0;
-  }
+  const parseNum = (text) => IkUtils.parseNum(text);
 
   function getWineData() {
     const stock = parseNum(document.getElementById("js_GlobalMenu_wine")?.textContent);

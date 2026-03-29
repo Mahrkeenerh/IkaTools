@@ -687,41 +687,19 @@
     return movements;
   }
 
-  // Get city list from bridge
-  function getCities() {
-    return new Promise((resolve) => {
-      let resolved = false;
-      const handler = (e) => {
-        window.removeEventListener("ik-cities-data", handler);
-        if (resolved) return;
-        resolved = true;
-        const data = e.detail || {};
-        const cities = [];
-        for (const key of Object.keys(data)) {
-          if (key === "additionalInfo" || key === "selectedCity") continue;
-          const c = data[key];
-          if (c && c.id && c.name) {
-            cities.push({ id: c.id, name: c.name, coords: c.coords || "" });
-          }
-        }
-        resolve(cities);
-      };
-      window.addEventListener("ik-cities-data", handler);
-      IkUtils.ensureBridge();
-      window.dispatchEvent(new CustomEvent("ik-read-cities"));
-      setTimeout(() => {
-        if (!resolved) {
-          resolved = true;
-          window.removeEventListener("ik-cities-data", handler);
-          resolve([]);
-        }
-      }, 3000);
-    });
-  }
+  // Get city list from bridge (delegates to IkUtils.getCities)
+  const getCities = () => IkUtils.getCities();
 
-  // Send progress update to popup
+  // Active port for sending progress updates to popup (set when advisor runs)
+  let progressPort = null;
+
+  // Send progress update to popup via port (falls back to no-op if no port)
   function sendProgress(current, total, phase) {
-    chrome.runtime.sendMessage({ type: "advisor-progress", current, total, phase }).catch(() => {});
+    if (progressPort) {
+      try {
+        progressPort.postMessage({ type: "advisor-progress", current, total, phase });
+      } catch (e) { /* port may be disconnected */ }
+    }
   }
 
   // Main collection function — mode: "basic" | "workers" | "storage" | "army" | "trading" | "full"
@@ -1067,12 +1045,23 @@
     return reportData;
   }
 
-  chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-    if (msg.type === "generate-advisor-report") {
+  // Port-based advisor connection — popup connects via chrome.tabs.connect({ name: "advisor" })
+  chrome.runtime.onConnect.addListener((port) => {
+    if (port.name !== "advisor") return;
+    progressPort = port;
+
+    port.onDisconnect.addListener(() => {
+      progressPort = null;
+    });
+
+    port.onMessage.addListener((msg) => {
+      if (msg.action !== "start-advisor") return;
       const mode = msg.mode || "full";
       collectData(mode)
         .then((data) => {
-          chrome.storage.local.set({ advisorReportData: data }, async () => {
+          // Store under world-scoped key; also keep legacy global key for back-compat
+          const worldKey = "advisorReportData_" + (data.world || "unknown");
+          chrome.storage.local.set({ [worldKey]: data, advisorReportData: data }, async () => {
             if ((data.mode === "trading" || data.mode === "full") && typeof TradeHistory !== "undefined") {
               try {
                 await TradeHistory.persistSnapshot(data);
@@ -1080,15 +1069,18 @@
                 console.error(P, "Failed to persist trade history:", e);
               }
             }
-            chrome.runtime.sendMessage({ type: "open-advisor-report" });
-            sendResponse({ success: true });
+            try {
+              port.postMessage({ type: "advisor-done" });
+            } catch (e) { /* port may be disconnected */ }
+            chrome.runtime.sendMessage({ type: "open-advisor-report", worldName: data.world || "" });
           });
         })
         .catch((err) => {
           console.error(P, err);
-          sendResponse({ error: err.message });
+          try {
+            port.postMessage({ type: "advisor-error", message: err.message });
+          } catch (e) { /* port may be disconnected */ }
         });
-      return true;
-    }
+    });
   });
 })();

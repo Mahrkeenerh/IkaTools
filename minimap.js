@@ -107,47 +107,62 @@
   function readAndMergeTiles() {
     if (!currentMapData || !currentMapData.islands) return false;
 
-    const existing = new Map();
-    for (const isl of currentMapData.islands) {
-      existing.set(`${isl.x}:${isl.y}`, isl);
-    }
-    let changed = false;
+    const newTiles = IkUtils.parseTilesFromDOM();
+    if (newTiles.length === 0) return false;
 
-    for (const newIsland of IkUtils.parseTilesFromDOM()) {
-      const key = `${newIsland.x}:${newIsland.y}`;
-      const old = existing.get(key);
-      if (!old) {
-        existing.set(key, newIsland);
-        changed = true;
-      } else if (old.cities !== newIsland.cities || old.owner !== newIsland.owner) {
-        // Merge: new data wins for cities/owner, but keep existing richer scanner
-        // fields (wonder, tradegood, military, war, barbarian, etc.) when the new
-        // data doesn't carry them (undefined or falsy-zero for numeric fields).
-        const merged = Object.assign({}, old);
-        for (const [k, v] of Object.entries(newIsland)) {
-          if (v !== undefined && v !== null && v !== "") {
-            // For numeric scanner fields that default to 0, only overwrite when
-            // the old entry has no value (undefined/null) — keeps scanner data.
-            if ((k === "wonder" || k === "tradegood") && old[k]) continue;
-            merged[k] = v;
-          }
-        }
-        existing.set(key, merged);
-        changed = true;
+    const worldName = IkUtils.getWorldName();
+    if (!worldName) return false;
+
+    // Skip writes while scanner is running to avoid storage races
+    chrome.storage.local.get(["scanInProgress", "map_" + worldName], (data) => {
+      if (data.scanInProgress) return;
+
+      // Atomic re-read: merge against the latest stored value, not our potentially
+      // stale in-memory copy, so concurrent writes from other tabs don't get lost.
+      const storedData = data["map_" + worldName];
+      const baseIslands = (storedData && storedData.islands) ? storedData.islands : currentMapData.islands;
+
+      const existing = new Map();
+      for (const isl of baseIslands) {
+        existing.set(`${isl.x}:${isl.y}`, isl);
       }
-    }
+      let changed = false;
 
-    if (changed) {
-      currentMapData.islands = Array.from(existing.values());
-      cachedBaseMap = null; // invalidate cache
-      const worldName = IkUtils.getWorldName();
-      if (worldName) {
+      for (const newIsland of newTiles) {
+        const key = `${newIsland.x}:${newIsland.y}`;
+        const old = existing.get(key);
+        if (!old) {
+          existing.set(key, newIsland);
+          changed = true;
+        } else if (old.cities !== newIsland.cities || old.owner !== newIsland.owner) {
+          // Merge: new data wins for cities/owner, but keep existing richer scanner
+          // fields (wonder, tradegood, military, war, barbarian, etc.) when the new
+          // data doesn't carry them (undefined or falsy-zero for numeric fields).
+          const merged = Object.assign({}, old);
+          for (const [k, v] of Object.entries(newIsland)) {
+            if (v !== undefined && v !== null && v !== "") {
+              // For numeric scanner fields that default to 0, only overwrite when
+              // the old entry has no value (undefined/null) — keeps scanner data.
+              if ((k === "wonder" || k === "tradegood") && old[k]) continue;
+              merged[k] = v;
+            }
+          }
+          existing.set(key, merged);
+          changed = true;
+        }
+      }
+
+      if (changed) {
+        currentMapData.islands = Array.from(existing.values());
+        cachedBaseMap = null; // invalidate cache
         chrome.storage.local.set({
           ["map_" + worldName]: { ...currentMapData, scanDate: new Date().toISOString() },
         });
       }
-    }
-    return changed;
+    });
+
+    // Return true optimistically so callers know tiles were processed
+    return true;
   }
 
   function createOverlay(position) {
@@ -329,16 +344,19 @@
   let allianceColorMap = {};
 
   async function loadAllianceIndex() {
-    const data = await chrome.storage.local.get("allianceIndex");
-    allianceIndex = data.allianceIndex || {};
-    allianceColorMap = IkUtils.buildAllianceColorMap(allianceIndex);
+    const worldName = IkUtils.getWorldName() || "unknown";
+    const scopedKey = "allianceIndex_" + worldName;
+    // Fall back to legacy global key if world-scoped key is empty
+    const data = await chrome.storage.local.get([scopedKey, "allianceIndex"]);
+    allianceIndex = data[scopedKey] || data.allianceIndex || {};
+    allianceColorMap = MapRender.buildAllianceColorMap(allianceIndex);
   }
 
   function rebuildBaseMap() {
     if (!currentMapData || !globalThis.MapRender) return;
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
-    IkUtils.enrichIslandsWithAlliances(islands, allianceIndex, allianceColorMap);
+    MapRender.enrichIslandsWithAlliances(islands, allianceIndex, allianceColorMap);
 
     const tw = Math.max(1, Math.round(3 * minimapScale));
     const th = Math.max(1, Math.round(3 * minimapScale));

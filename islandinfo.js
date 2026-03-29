@@ -1,12 +1,17 @@
 // Island info panel — passive data extraction, sortable player panel, alliance labels
 (() => {
   const TAG = "[IslandInfo]";
-  const STORAGE_PREFIX = "island_";
   const OWN_COLOR = "#64B5F6"; // blue for own cities (matches game)
   const FRIEND_COLOR = "#00FF88"; // green for friends
   let friendIds = new Set();
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
+
+  // World-scoped storage key helpers
+  const worldName = IkUtils.getWorldName() || "unknown";
+  const STORAGE_PREFIX = "island_" + worldName + "_";
+  const KEY_FRIEND_LIST = "friendList_" + worldName;
+  const KEY_ALLIANCE_INDEX = "allianceIndex_" + worldName;
 
   // --- Scrape & cache friends from the sidebar list ---
   async function scrapeFriends() {
@@ -18,17 +23,19 @@
       if (m) scraped[m[1]] = a.textContent.trim();
     }
     // Merge with stored friends (accumulate across pages)
-    const data = await chrome.storage.local.get("friendList");
-    const stored = data.friendList || {};
+    // Fall back to legacy global key if world-scoped key is empty
+    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, "friendList"]);
+    const stored = data[KEY_FRIEND_LIST] || data.friendList || {};
     const merged = { ...stored, ...scraped };
-    await chrome.storage.local.set({ friendList: merged });
+    await chrome.storage.local.set({ [KEY_FRIEND_LIST]: merged });
     friendIds = new Set(Object.keys(merged));
     console.log(TAG, `Friends cached: ${Object.keys(merged).length}`, Object.values(merged).join(", "));
   }
 
   async function loadFriends() {
-    const data = await chrome.storage.local.get("friendList");
-    friendIds = new Set(Object.keys(data.friendList || {}));
+    // Fall back to legacy global key if world-scoped key is empty
+    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, "friendList"]);
+    friendIds = new Set(Object.keys(data[KEY_FRIEND_LIST] || data.friendList || {}));
   }
 
   // --- Extract updateBackgroundData from inline scripts ---
@@ -147,8 +154,9 @@
 
   // --- Alliance index: island coord → alliance counts ---
   async function updateAllianceIndex(island) {
-    const data = await chrome.storage.local.get("allianceIndex");
-    const index = data.allianceIndex || {};
+    // Fall back to legacy global key if world-scoped key is empty
+    const data = await chrome.storage.local.get([KEY_ALLIANCE_INDEX, "allianceIndex"]);
+    const index = data[KEY_ALLIANCE_INDEX] || data.allianceIndex || {};
     const key = `${island.x}:${island.y}`;
 
     // Count cities per alliance on this island
@@ -159,7 +167,7 @@
     }
     index[key] = { counts, total: island.cities.length };
 
-    await chrome.storage.local.set({ allianceIndex: index });
+    await chrome.storage.local.set({ [KEY_ALLIANCE_INDEX]: index });
   }
 
   // Update the world map's island entry with alliance/city data from island view

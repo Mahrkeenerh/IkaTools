@@ -18,7 +18,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
 
   if (msg.type === "open-advisor-report") {
-    chrome.tabs.create({ url: chrome.runtime.getURL("report.html") });
+    const reportUrl = chrome.runtime.getURL("report.html");
+    const url = msg.worldName
+      ? reportUrl + "?world=" + encodeURIComponent(msg.worldName)
+      : reportUrl;
+    chrome.tabs.create({ url });
     return;
   }
 

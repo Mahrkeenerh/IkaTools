@@ -116,6 +116,7 @@
   async function scanWorldMap(port) {
     if (scanning) return;
     scanning = true;
+    chrome.storage.local.set({ scanInProgress: true });
     try {
     const worldName = IkUtils.getWorldName() || "Unknown";
     const allIslands = new Map();
@@ -322,6 +323,7 @@
     }
     } finally {
       scanning = false;
+      chrome.storage.local.remove("scanInProgress");
     }
   }
 

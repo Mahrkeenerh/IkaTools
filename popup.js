@@ -25,6 +25,18 @@
   const cleanupToggle = $("cleanup-toggle");
 
   let ikariamTabId = null;
+  let ikariamWorldName = null; // world name extracted from the active tab URL
+
+  // Extract world name from Ikariam hostname (e.g. "s42-en.ikariam.gameforge.com" → "s42-en")
+  function worldNameFromUrl(url) {
+    try {
+      const host = new URL(url).hostname; // e.g. "s42-en.ikariam.gameforge.com"
+      const idx = host.indexOf(".ikariam");
+      return idx > 0 ? host.substring(0, idx) : null;
+    } catch (e) {
+      return null;
+    }
+  }
 
   // --- Tab switching ---
   document.querySelectorAll(".tab-bar button").forEach((btn) => {
@@ -47,6 +59,7 @@
     if (tab) {
       if (tab.url && tab.url.includes("ikariam.gameforge.com")) {
         ikariamTabId = tab.id;
+        ikariamWorldName = worldNameFromUrl(tab.url);
       }
     }
     if (ikariamTabId) {
@@ -91,14 +104,29 @@
     advisorProgress.style.width = "0%";
     advisorStatusText.textContent = "Starting...";
 
-    chrome.tabs.sendMessage(ikariamTabId, { type: "generate-advisor-report", mode }, (resp) => {
+    const port = chrome.tabs.connect(ikariamTabId, { name: "advisor" });
+    port.postMessage({ action: "start-advisor", mode });
+
+    port.onMessage.addListener((msg) => {
+      if (msg.type === "advisor-progress") {
+        const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
+        advisorProgress.style.width = pct + "%";
+        advisorStatusText.textContent = msg.phase;
+      } else if (msg.type === "advisor-done") {
+        advisorBtns.forEach((b) => b.disabled = false);
+        advisorStatus.style.display = "none";
+        port.disconnect();
+      } else if (msg.type === "advisor-error") {
+        console.error("Advisor report error:", msg.message);
+        advisorBtns.forEach((b) => b.disabled = false);
+        advisorStatus.style.display = "none";
+        port.disconnect();
+      }
+    });
+
+    port.onDisconnect.addListener(() => {
       advisorBtns.forEach((b) => b.disabled = false);
       advisorStatus.style.display = "none";
-      if (chrome.runtime.lastError) {
-        console.error("Advisor report error:", chrome.runtime.lastError.message);
-      } else if (resp?.error) {
-        console.error("Advisor report error:", resp.error);
-      }
     });
   }
 
@@ -109,15 +137,6 @@
   $("advisor-trade-btn").addEventListener("click", () => startAdvisor("trading"));
   $("advisor-spy-btn").addEventListener("click", () => startAdvisor("spy"));
   $("advisor-full-btn").addEventListener("click", () => startAdvisor("full"));
-
-  // Listen for progress updates from advisor.js
-  chrome.runtime.onMessage.addListener((msg) => {
-    if (msg.type === "advisor-progress") {
-      const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
-      advisorProgress.style.width = pct + "%";
-      advisorStatusText.textContent = msg.phase;
-    }
-  });
 
   // --- Scan ---
   scanBtn.addEventListener("click", startScan);
@@ -267,10 +286,12 @@
       return;
     }
 
-    const extraData = await chrome.storage.local.get(["hideZeroCities", "allianceIndex"]);
+    const allianceScopedKey = ikariamWorldName ? "allianceIndex_" + ikariamWorldName : "allianceIndex";
+    const extraData = await chrome.storage.local.get(["hideZeroCities", allianceScopedKey, "allianceIndex"]);
     const dimEmptyActive = !!extraData.hideZeroCities;
-    const allianceIndex = extraData.allianceIndex || {};
-    const allyColorMap = IkUtils.buildAllianceColorMap(allianceIndex);
+    // Use world-scoped key if available, fall back to legacy global key
+    const allianceIndex = extraData[allianceScopedKey] || extraData.allianceIndex || {};
+    const allyColorMap = MapRender.buildAllianceColorMap(allianceIndex);
 
     galleryList.innerHTML = "";
     for (const entry of index) {
@@ -279,7 +300,7 @@
       if (!map) continue;
 
       if (map.islands) {
-        IkUtils.enrichIslandsWithAlliances(map.islands, allianceIndex, allyColorMap);
+        MapRender.enrichIslandsWithAlliances(map.islands, allianceIndex, allyColorMap);
       }
 
       const card = document.createElement("div");
@@ -518,8 +539,10 @@
   };
 
   async function loadPirateState() {
+    const pirateCityScopedKey = ikariamWorldName ? "pirateCityId_" + ikariamWorldName : "pirateCityId";
     const keys = [
-      "pirateEnabled", "pirateConvertEnabled", "pirateCityId", "pirateSleepStart", "pirateSleepEnd",
+      "pirateEnabled", "pirateConvertEnabled", pirateCityScopedKey, "pirateCityId",
+      "pirateSleepStart", "pirateSleepEnd",
       ...PIRATE_ADV.map((a) => a.key),
     ];
     const data = await chrome.storage.local.get(keys);
@@ -527,6 +550,9 @@
     convertToggle.checked = !!data.pirateConvertEnabled;
     pirateStart.value = data.pirateSleepStart ?? 1;
     pirateEnd.value = data.pirateSleepEnd ?? 7;
+
+    // Use world-scoped key if available, fall back to legacy global key
+    const savedCityId = data[pirateCityScopedKey] ?? data.pirateCityId ?? null;
 
     // Load advanced params
     for (const a of PIRATE_ADV) {
@@ -544,7 +570,7 @@
             const opt = document.createElement("option");
             opt.value = c.id;
             opt.textContent = c.name + " " + c.coords;
-            if (c.id === data.pirateCityId) opt.selected = true;
+            if (c.id === savedCityId) opt.selected = true;
             pirateCity.appendChild(opt);
           }
         }
@@ -572,7 +598,7 @@
 
   pirateCity.addEventListener("change", () => {
     const cityId = parseInt(pirateCity.value, 10) || null;
-    chrome.storage.local.set({ pirateCityId: cityId });
+    // Delegate storage write to autopirate.js via message — it writes under the world-scoped key
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", cityId }).catch(() => {});
     }

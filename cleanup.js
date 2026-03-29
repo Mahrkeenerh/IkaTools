@@ -35,8 +35,6 @@
     const ambrosia = document.querySelector("li.ambrosiaNoSpin");
     if (ambrosia) ambrosia.remove();
 
-    document.querySelectorAll(".cityLocation.buildplace.premium").forEach(el => el.remove());
-
     // Hide instead of remove — game timers keep referencing hidden fields inside these
     // "bohů" = Czech for "gods" (ambrosia/premium timer label) — NOTE: language-dependent,
     // also matches English "gods" and the happyHour class as a fallback

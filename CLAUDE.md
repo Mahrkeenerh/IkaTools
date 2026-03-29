@@ -1,6 +1,6 @@
 # Ikariam Tools
 
-Chrome MV3 extension for the Ikariam browser game. Six features: premium UI cleanup, CAPTCHA auto-solver (YOLOv8n/ONNX), world map scanner with minimap overlay, island info panel, auto-finish buildings, auto-pirate missions.
+Chrome MV3 extension for the Ikariam browser game. Features: premium UI cleanup, CAPTCHA auto-solver (YOLOv8n/ONNX), world map scanner with minimap overlay, island info panel, auto-finish buildings, auto-pirate missions, trade history charts, upgrade resource info, wine timer.
 
 ## Tech Stack
 
@@ -32,27 +32,33 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
 - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar
 - `bridge.js` — Page-context script (CSP bypass), 7 event handlers for game function calls
+- `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
+- `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`
+- `upgradeinfo.js` — Injects missing-resource amounts onto building upgrade panels
+- `winetimer.js` — Shows wine stock duration in the resource bar
 - `inference.js` — YOLOv8n pre/postprocessing for CAPTCHA
 - `popup.html` / `popup.js` — Extension popup (scan, gallery with layer thumbnails, settings)
+- `report.html` / `report.js` — Advisor report page: multi-city data summary, trading history charts
 - `offscreen.html` + `src/offscreen.js` — ONNX inference (bundled to dist/)
 - `model/model.onnx` — CAPTCHA solver model (12 MB binary)
 - `dist/` — Build output (WASM binaries, bundled JS) — gitignored, regenerate with `npm run build`
 
 ## Architecture
 
-- **CSP bypass**: `bridge.js` injected as external `<script src="chrome-extension://...">`, listens for 7 CustomEvents (`ik-jump`, `ik-ajax-call`, `ik-switch-city`, `ik-close-popup`, `ik-read-cities`, `ik-read-island-data`, `ik-read-game-data`)
+- **CSP bypass**: `bridge.js` injected as external `<script src="chrome-extension://...">`, listens for 7 CustomEvents (`ik-jump`, `ik-ajax-call`, `ik-close-popup`, `ik-convert-crew`, `ik-read-cities`, `ik-read-island-data`, `ik-read-game-data`)
 - **Scanner**: Dispatches `ik-jump` events → bridge calls `jumpToCoord()`. Diamond-shaped scan pattern with auto-detected stride. Restores position after scan.
 - **Minimap**: Cached base map (rebuilds only on layer/scale/data/dimEmpty change), viewport overlay at ~30fps polling anchor tile `getBoundingClientRect`
 - **Island info**: Parses `updateBackgroundData` JSON from inline `<script>` tags (not bridge), stores per-island in `island_{id}`, enriches world map with alliance data
 - **Auto-pirate**: Polls every 5s when idle, navigates to pirate city via `ik-ajax-call`, opens fortress BootyQuest tab, triggers capture. Popup heartbeat suppresses takeover for 10s. Togglable from game header bar via `chrome.storage.onChanged`
 - **CAPTCHA**: content.js detects → background.js routes → offscreen ONNX inference → fills input
-- **Storage**: `chrome.storage.local` — raw island data per world (`map_${worldName}`), per-island details (`island_{id}`), alliance index (`allianceIndex`), settings
+- **Storage**: `chrome.storage.local` — raw island data per world (`map_${worldName}`), per-island details (`island_{worldName}_{id}`), alliance index (`allianceIndex`), trade history chunks (`tradeHistory_{world}_{avatarId}_{YYYY-MM}`), trade history index (`tradeHistoryIdx_{world}_{avatarId}`), settings/toggles (global, not world-scoped)
+  - Key convention: feature toggles/settings use camelCase with feature prefix (e.g., `pirateEnabled`, `minimapScale`); per-world data uses underscore separator with world name (e.g., `map_{worldName}`, `island_{worldName}_{id}`); settings are global (not world-scoped)
 
 ## Code Style
 
 - 2-space indentation, double quotes, semicolons
 - IIFEs for content scripts (isolated scope)
-- `globalThis.IkUtils` / `globalThis.MapRender` / `globalThis.inference` for shared modules
+- `globalThis.IkUtils` / `globalThis.MapRender` / `globalThis.inference` / `globalThis.TradeHistory` / `globalThis.TradeChart` for shared modules
 - camelCase variables/functions, UPPER_SNAKE_CASE constants
 - Arrow functions for callbacks
 

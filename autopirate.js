@@ -605,13 +605,17 @@
   }
 
   // --- Storage ---
-  const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", "pirateCityId", "pirateIdleTimeout",
-    "pirateState", ...Object.values(CFG_KEYS).map((k) => k.storage)];
+  const worldName = IkUtils.getWorldName() || "unknown";
+  const KEY_PIRATE_CITY = "pirateCityId_" + worldName;
+
+  const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", KEY_PIRATE_CITY, "pirateCityId",
+    "pirateIdleTimeout", "pirateState", ...Object.values(CFG_KEYS).map((k) => k.storage)];
 
   chrome.storage.local.get(allStorageKeys, (data) => {
     enabled = !!data.pirateEnabled;
     convertEnabled = !!data.pirateConvertEnabled;
-    pirateCityId = data.pirateCityId || null;
+    // Fall back to legacy global key if world-scoped key is absent
+    pirateCityId = data[KEY_PIRATE_CITY] ?? data.pirateCityId ?? null;
     if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
 
     // Initialize missing timing params with random values (preserves existing)
@@ -638,9 +642,8 @@
       lastPopupHeartbeat = Date.now();
     }
     if (msg.type === "pirate-toggle") {
-      enabled = msg.enabled;
-      console.log(P, ts(), "Toggle:", enabled);
-      if (enabled && pirateCityId) start(); else stop();
+      // Only write to storage — storage.onChanged is the single source of truth for start/stop
+      chrome.storage.local.set({ pirateEnabled: msg.enabled });
     }
     if (msg.type === "pirate-convert-toggle") {
       convertEnabled = msg.enabled;
@@ -649,7 +652,7 @@
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;
       const save = {};
-      if (msg.cityId !== undefined) save.pirateCityId = msg.cityId;
+      if (msg.cityId !== undefined) save[KEY_PIRATE_CITY] = msg.cityId;
       // Update any cfg params included in the message
       for (const [key, def] of Object.entries(CFG_KEYS)) {
         if (msg[key] !== undefined) {
@@ -680,28 +683,7 @@
   // --- City list request from popup ---
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "get-cities") {
-      const cities = [];
-      let responded = false;
-      let fallbackTimer = null;
-      const handler = (e) => {
-        window.removeEventListener("ik-cities-data", handler);
-        clearTimeout(fallbackTimer);
-        const data = e.detail || {};
-        for (const key of Object.keys(data)) {
-          if (key === "additionalInfo" || key === "selectedCity") continue;
-          const c = data[key];
-          if (c && c.id && c.name) {
-            cities.push({ id: c.id, name: c.name, coords: c.coords || "" });
-          }
-        }
-        if (!responded) { responded = true; sendResponse({ cities }); }
-      };
-      window.addEventListener("ik-cities-data", handler);
-      window.dispatchEvent(new CustomEvent("ik-read-cities"));
-      fallbackTimer = setTimeout(() => {
-        window.removeEventListener("ik-cities-data", handler);
-        if (!responded) { responded = true; sendResponse({ cities: [] }); }
-      }, 2000);
+      IkUtils.getCities().then((cities) => sendResponse({ cities }));
       return true;
     }
   });

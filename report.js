@@ -18,8 +18,14 @@
     });
   });
 
-  chrome.storage.local.get("advisorReportData", (data) => {
-    const report = data.advisorReportData;
+  // Determine storage key — world-scoped if URL param is present, else legacy global
+  const reportWorldParam = new URLSearchParams(location.search).get("world");
+  const reportStorageKey = reportWorldParam
+    ? "advisorReportData_" + reportWorldParam
+    : "advisorReportData";
+
+  chrome.storage.local.get([reportStorageKey, "advisorReportData"], (data) => {
+    const report = data[reportStorageKey] || data.advisorReportData;
     if (!report || !report.cities || report.cities.length === 0) {
       document.querySelector(".content").innerHTML =
         "<div class=\"no-data\"><strong>No report data</strong>Generate a report from the extension popup first.</div>";
@@ -878,7 +884,7 @@
               : Math.max(...seriesData.map((s) => s.max));
             historyStats[res][side] = {
               medians: allMedians,
-              overallMedian: histPctHelper(allMedians, 50),
+              overallMedian: TradeHistory.percentile(allMedians, 50),
               players: allPlayers,
               histBest,
             };
@@ -1257,16 +1263,6 @@
   }
 
   // --- History summary cards for a single resource ---
-
-  function histPctHelper(sorted, p) {
-    if (sorted.length === 0) return 0;
-    if (sorted.length === 1) return sorted[0];
-    const idx = (p / 100) * (sorted.length - 1);
-    const lo = Math.floor(idx);
-    const hi = Math.ceil(idx);
-    if (lo === hi) return sorted[lo];
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-  }
 
   function renderHistorySummaryOneSide(container, snapshots, resIdx, side) {
     container.innerHTML = "";

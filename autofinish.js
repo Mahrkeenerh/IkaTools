@@ -130,6 +130,8 @@
     }
   }
 
+  IkUtils.ensureBridge();
+
   chrome.storage.local.get("autoFinishEnabled", (data) => {
     enabled = data.autoFinishEnabled !== false;
     if (enabled) start();

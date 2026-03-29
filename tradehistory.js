@@ -1,6 +1,4 @@
-(function () {
-  "use strict";
-
+(() => {
   const P = "[TradeHistory]";
   const RETENTION_DAYS = 180;
   const RES_MAP = { wood: 0, wine: 1, marble: 2, crystal: 3, sulfur: 4 };
@@ -241,6 +239,7 @@
     persistSnapshot,
     loadHistory,
     computeStats,
+    percentile,
     RES_MAP,
     RES_NAMES,
     RETENTION_DAYS,

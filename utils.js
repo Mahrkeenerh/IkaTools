@@ -61,45 +61,44 @@ globalThis.IkUtils = (() => {
     return islands;
   }
 
-  // Build alliance color map from allianceIndex storage data
-  function buildAllianceColorMap(allianceIndex) {
-    const allyCounts = {};
-    for (const key of Object.keys(allianceIndex)) {
-      const entry = allianceIndex[key];
-      for (const [tag, count] of Object.entries(entry.counts || {})) {
-        if (tag === "(none)") continue;
-        allyCounts[tag] = (allyCounts[tag] || 0) + count;
-      }
-    }
-    const sorted = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
-    const palette = globalThis.MapRender?.ALLY_PALETTE || [];
-    const colorMap = {};
-    sorted.forEach(([tag], i) => {
-      colorMap[tag] = palette[i % palette.length] || "#888";
+  // Parse a number from game DOM text (strips whitespace, commas, dots used as separators)
+  function parseNum(text) {
+    if (!text) return 0;
+    const m = text.match(/[\d][\d\s,.]*/);
+    return m ? parseInt(m[0].replace(/[\s,.]/g, ""), 10) || 0 : 0;
+  }
+
+  // Get city list from bridge — returns Promise<Array<{id, name, coords}>>
+  function getCities() {
+    return new Promise((resolve) => {
+      ensureBridge();
+      let resolved = false;
+      const handler = (e) => {
+        window.removeEventListener("ik-cities-data", handler);
+        if (resolved) return;
+        resolved = true;
+        const data = e.detail || {};
+        const cities = [];
+        for (const key of Object.keys(data)) {
+          if (key === "additionalInfo" || key === "selectedCity") continue;
+          const c = data[key];
+          if (c && c.id && c.name) {
+            cities.push({ id: c.id, name: c.name, coords: c.coords || "" });
+          }
+        }
+        resolve(cities);
+      };
+      window.addEventListener("ik-cities-data", handler);
+      window.dispatchEvent(new CustomEvent("ik-read-cities"));
+      setTimeout(() => {
+        if (!resolved) {
+          resolved = true;
+          window.removeEventListener("ik-cities-data", handler);
+          resolve([]);
+        }
+      }, 3000);
     });
-    return colorMap;
   }
 
-  // Enrich island array with alliance color/count/tag from index
-  function enrichIslandsWithAlliances(islands, allianceIndex, colorMap) {
-    for (const isl of islands) {
-      const key = `${isl.x}:${isl.y}`;
-      const entry = allianceIndex[key];
-      if (!entry || !entry.counts) {
-        isl._allyColor = null;
-        isl._allyCount = 0;
-        continue;
-      }
-      let maxTag = null, maxCount = 0;
-      for (const [tag, count] of Object.entries(entry.counts)) {
-        if (tag === "(none)") continue;
-        if (count > maxCount) { maxTag = tag; maxCount = count; }
-      }
-      isl._allyColor = maxTag ? (colorMap[maxTag] || "#888") : null;
-      isl._allyCount = maxCount;
-      isl._allyTag = maxTag;
-    }
-  }
-
-  return { ensureBridge, getWorldName, parseTilesFromDOM, buildAllianceColorMap, enrichIslandsWithAlliances };
+  return { ensureBridge, getWorldName, parseTilesFromDOM, parseNum, getCities };
 })();

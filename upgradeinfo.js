@@ -9,10 +9,7 @@
     sulfur: "js_GlobalMenu_sulfur",
   };
 
-  function parseNum(text) {
-    const m = text.match(/[\d][\d\s,.]*/);
-    return m ? parseInt(m[0].replace(/[\s,.]/g, ""), 10) || 0 : 0;
-  }
+  const parseNum = (text) => IkUtils.parseNum(text);
 
   function formatNum(n) {
     return n.toLocaleString("en").replace(/,/g, " ");

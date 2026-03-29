@@ -1,6 +1,4 @@
-(function () {
-  "use strict";
-
+(() => {
   const SIDE_COLORS = {
     ask: {
       line: "#e06060",
@@ -33,17 +31,6 @@
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
     return ctx;
-  }
-
-  // Compute percentile from sorted array
-  function pct(sorted, p) {
-    if (sorted.length === 0) return 0;
-    if (sorted.length === 1) return sorted[0];
-    const idx = (p / 100) * (sorted.length - 1);
-    const lo = Math.floor(idx);
-    const hi = Math.ceil(idx);
-    if (lo === hi) return sorted[lo];
-    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
   }
 
   // Format date for axis labels
@@ -118,9 +105,9 @@
           ts: snap.ts,
           min: prices[0],
           max: prices[prices.length - 1],
-          p25: pct(prices, 25),
-          median: pct(prices, 50),
-          p75: pct(prices, 75),
+          p25: TradeHistory.percentile(prices, 25),
+          median: TradeHistory.percentile(prices, 50),
+          p75: TradeHistory.percentile(prices, 75),
           totalQty,
           uniquePlayers: playerSet.size,
           offers,
@@ -172,9 +159,9 @@
         ts: day.ts,
         min: prices[0],
         max: prices[prices.length - 1],
-        p25: pct(prices, 25),
-        median: pct(prices, 50),
-        p75: pct(prices, 75),
+        p25: TradeHistory.percentile(prices, 25),
+        median: TradeHistory.percentile(prices, 50),
+        p75: TradeHistory.percentile(prices, 75),
         totalQty,
         uniquePlayers: playerSet.size,
         offers: day.offers,
