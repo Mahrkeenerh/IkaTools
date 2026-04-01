@@ -17,6 +17,8 @@ npm run build      # Bundle offscreen.js + copy WASM to dist/
 npm run package    # Build + zip release (ikariam-tools-v{version}.zip)
 ```
 
+When the user asks for a "build", run `npm run package` to produce the release zip — not just `npm run build`.
+
 No dev server — load unpacked extension directly from this directory in `chrome://extensions`.
 
 ## Releasing
