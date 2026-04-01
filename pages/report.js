@@ -873,10 +873,10 @@
     const playerName = (report.global.playerName || "").toLowerCase();
 
     // Load history then render everything
-    renderTradingAsync(report, container, RESOURCES, RES_LABELS, RES_CLASSES, RES_IDX, playerName);
+    renderTradingAsync(report, container, RESOURCES, RES_LABELS, RES_CLASSES, RES_ICONS, RES_IDX, playerName);
   }
 
-  async function renderTradingAsync(report, container, RESOURCES, RES_LABELS, RES_CLASSES, RES_IDX, playerName) {
+  async function renderTradingAsync(report, container, RESOURCES, RES_LABELS, RES_CLASSES, RES_ICONS, RES_IDX, playerName) {
     // Load history (30 days covers both 7d and 30d views)
     let historySnapshots = [];
     if (typeof TradeHistory !== "undefined" && report.world && report.avatarId) {
