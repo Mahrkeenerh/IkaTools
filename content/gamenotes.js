@@ -261,14 +261,13 @@
     const link = document.createElement("a");
     link.textContent = "\uD83D\uDDD2 Notes";
     link.title = "Open notes panel";
-    link.style.cssText = "cursor:pointer;user-select:none;opacity:0.7;";
+    link.style.cssText = "cursor:pointer;user-select:none;color:#572E11;";
 
     link.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
       togglePanel();
-      link.style.opacity = panelVisible ? "1" : "0.7";
-      link.style.color = panelVisible ? "#5ca0f2" : "";
+      link.style.color = panelVisible ? "#5ca0f2" : "#572E11";
     });
 
     li.appendChild(link);
@@ -285,8 +284,7 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Escape" && panelVisible) {
         togglePanel(false);
-        link.style.opacity = "0.7";
-        link.style.color = "";
+        link.style.color = "#572E11";
       }
     });
   }
