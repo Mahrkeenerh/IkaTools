@@ -217,12 +217,33 @@
     return parseFloat(text.replace(/\s/g, "").replace(/,/g, ".")) || 0;
   }
 
+  // Parse "X + Y" overwork format from worker count display.
+  // Returns { normal, overwork } or null if not found.
+  function parseWorkerCount(html, elId) {
+    const text = extractElText(html, elId);
+    if (!text) return null;
+    // Format: "264 + 132" (overworked) or "240" (normal)
+    const m = text.match(/(\d+)\s*\+\s*(\d+)/);
+    if (m) return { normal: parseInt(m[1], 10), overwork: parseInt(m[2], 10) };
+    const n = parseInt(text.replace(/\s/g, ""), 10);
+    return isNaN(n) ? null : { normal: n, overwork: 0 };
+  }
+
   // Parse town hall page for worker/population data (regex-based, works with escaped HTML)
   function parseTownHall(html) {
     const wood = extractInput(html, "inputWood");
     const luxury = extractInput(html, "inputLuxury");
     const scientists = extractInput(html, "inputScientists");
     const priests = extractInput(html, "inputPriests");
+
+    // Overwork: parse "X + Y" display from population graph
+    const woodCount = parseWorkerCount(html, "js_TownHallPopulationGraphResourceWorkerCount");
+    const luxuryCount = parseWorkerCount(html, "js_TownHallPopulationGraphSpecialWorkerCount");
+
+    // Production per hour from town hall display
+    const woodProdPerHour = parseElInt(html, "js_TownHallPopulationGraphWoodProduction");
+    const luxuryProdPerHour = parseElInt(html, "js_TownHallPopulationGraphTradeGoodProduction");
+
     return {
       woodWorkers: wood.assigned,
       woodWorkersMax: wood.max,
@@ -237,6 +258,12 @@
       growthPerHour: parseElFloat(html, "js_TownHallPopulationGrowthValue"),
       happiness: parseElInt(html, "js_TownHallHappinessLargeValue"),
       netGold: parseElInt(html, "js_TownHallIncomeGoldValue"),
+      woodOverwork: woodCount ? woodCount.overwork : 0,
+      woodNormalWorkers: woodCount ? woodCount.normal : null,
+      luxuryOverwork: luxuryCount ? luxuryCount.overwork : 0,
+      luxuryNormalWorkers: luxuryCount ? luxuryCount.normal : null,
+      woodProdPerHour,
+      luxuryProdPerHour,
     };
   }
 
@@ -1006,7 +1033,7 @@
           woodPerHour: Math.round((hd.resourceProduction || 0) * 3600),
           tradegoodPerHour: Math.round((hd.tradegoodProduction || 0) * 3600),
           producedTradegood: hd.producedTradegood || null,
-          winePerHour: -Math.round((hd.wineSpendings || 0) * 3600),
+          winePerHour: -(hd.wineSpendings || 0),
           citizens: cr.citizens ?? 0,
           population: cr.population ?? 0,
           transporters: {
@@ -1026,6 +1053,19 @@
           maxInhabitants: th.maxInhabitants ?? null,
           occupiedSpace: th.occupiedSpace ?? null,
           cityNetGold: th.netGold ?? null,
+          // Overwork data from town hall population graph
+          overmine: th.woodOverwork != null ? {
+            wood: {
+              normalWorkers: th.woodNormalWorkers ?? 0,
+              overwork: th.woodOverwork ?? 0,
+              prodPerHour: th.woodProdPerHour ?? null,
+            },
+            luxury: {
+              normalWorkers: th.luxuryNormalWorkers ?? 0,
+              overwork: th.luxuryOverwork ?? 0,
+              prodPerHour: th.luxuryProdPerHour ?? null,
+            },
+          } : null,
           // Warehouse / storage
           storage,
           // Military

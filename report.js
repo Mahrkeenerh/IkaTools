@@ -53,7 +53,7 @@
         if (!visibleTabs.includes(btn.dataset.tab)) btn.style.display = "none";
       });
       // Default to the second tab (the mode-specific one)
-      const defaultTab = visibleTabs[1] || visibleTabs[0];
+      const defaultTab = report.mode === "basic" ? visibleTabs[0] : visibleTabs[visibleTabs.length - 1];
       document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
       document.querySelectorAll(".report-panel").forEach((p) => p.classList.remove("active"));
       const btn = document.querySelector(`[data-tab="${defaultTab}"]`);
@@ -448,6 +448,20 @@
     const tfoot = $("workers-foot");
 
     let tWood = 0, tLux = 0, tSci = 0, tPri = 0;
+    let tWoodProd = 0, tLuxProd = 0;
+
+    function workerCell(assigned, max, om) {
+      if (om && om.overwork > 0) {
+        const total = om.normalWorkers + om.overwork;
+        return `<td class="right" style="color:#e8a735;">${total} (${om.normalWorkers}+${om.overwork}) / ${max}</td>`;
+      }
+      return `<td class="right">${assigned} / ${max}</td>`;
+    }
+
+    function prodCell(data) {
+      if (!data || data.prodPerHour == null) return '<td class="right">—</td>';
+      return `<td class="right">${fmt(data.prodPerHour)}</td>`;
+    }
 
     for (const city of report.cities) {
       const w = city.workers;
@@ -458,11 +472,17 @@
       tSci += w.scientists.assigned;
       tPri += w.priests.assigned;
 
+      const om = city.overmine || {};
+      if (om.wood?.prodPerHour) tWoodProd += om.wood.prodPerHour;
+      if (om.luxury?.prodPerHour) tLuxProd += om.luxury.prodPerHour;
+
       const tr = document.createElement("tr");
       tr.innerHTML = `
         ${cityNameHtml(city)}
-        <td class="right">${w.wood.assigned} / ${w.wood.max}</td>
-        <td class="right">${w.luxury.assigned} / ${w.luxury.max}</td>
+        ${workerCell(w.wood.assigned, w.wood.max, om.wood)}
+        ${prodCell(om.wood)}
+        ${workerCell(w.luxury.assigned, w.luxury.max, om.luxury)}
+        ${prodCell(om.luxury)}
         <td class="right">${w.scientists.assigned} / ${w.scientists.max}</td>
         <td class="right">${w.priests.assigned} / ${w.priests.max}</td>
         <td class="right">${fmt(city.citizens)}</td>
@@ -478,7 +498,9 @@
     footTr.innerHTML = `
       <td>Total</td>
       <td class="right">${tWood}</td>
+      <td class="right">${fmt(tWoodProd)}</td>
       <td class="right">${tLux}</td>
+      <td class="right">${fmt(tLuxProd)}</td>
       <td class="right">${tSci}</td>
       <td class="right">${tPri}</td>
       <td class="right" colspan="5"></td>

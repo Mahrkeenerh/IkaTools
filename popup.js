@@ -73,6 +73,7 @@
     loadCleanupState();
     loadPirateState();
     loadNotes();
+    if (ikariamTabId) checkScanState();
   });
 
   // --- Log helper ---
@@ -139,11 +140,86 @@
   $("advisor-full-btn").addEventListener("click", () => startAdvisor("full"));
 
   // --- Scan ---
+  const cancelBtn = document.createElement("button");
+  cancelBtn.className = "btn btn-danger btn-sm";
+  cancelBtn.textContent = "Cancel";
+  cancelBtn.style.display = "none";
+  scanBtn.parentElement.appendChild(cancelBtn);
+
+  cancelBtn.addEventListener("click", () => {
+    if (!ikariamTabId) return;
+    chrome.tabs.sendMessage(ikariamTabId, { type: "cancel-scan" }).catch(() => {});
+    cancelBtn.style.display = "none";
+    scanBtn.disabled = false;
+    phaseText.textContent = "Cancelled";
+  });
+
   scanBtn.addEventListener("click", startScan);
+
+  // On popup open, check if a scan is already running or has completed
+  function checkScanState() {
+    chrome.storage.local.get(["scanInProgress", "scanProgress", "scanResult"], (data) => {
+      if (data.scanResult) {
+        // Scan completed while popup was closed — process results
+        const { worldName, islands } = data.scanResult;
+        chrome.storage.local.remove("scanResult");
+        phaseText.textContent = "Rendering...";
+        log(`Scan completed in background: ${islands.length} islands`);
+        finishScan(worldName, islands);
+      } else if (data.scanInProgress && ikariamTabId) {
+        // Scan still running — reconnect for live updates
+        scanBtn.disabled = true;
+        cancelBtn.style.display = "";
+        if (data.scanProgress) {
+          showProgress(data.scanProgress);
+        } else {
+          phaseText.textContent = "Scanning...";
+        }
+        reconnectToScan();
+      }
+    });
+  }
+
+  function showProgress(msg) {
+    const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
+    progressBar.style.width = pct + "%";
+    const label = msg.phase === "probe" ? "Detecting viewport"
+      : msg.phase === "cross" ? "Scanning cross" : "Filling map";
+    phaseText.textContent = label;
+    statusDetail.textContent = `${msg.current}/${msg.total} jumps \u2022 ${msg.found} islands`;
+  }
+
+  function reconnectToScan() {
+    const port = chrome.tabs.connect(ikariamTabId, { name: "map-scan" });
+    port.postMessage({ action: "reconnect-scan" });
+    attachScanPort(port);
+
+    // Also watch storage for progress/completion in case port doesn't deliver
+    const storageListener = (changes) => {
+      if (changes.scanResult?.newValue) {
+        chrome.storage.onChanged.removeListener(storageListener);
+        const { worldName, islands } = changes.scanResult.newValue;
+        chrome.storage.local.remove("scanResult");
+        phaseText.textContent = "Rendering...";
+        log(`Done! ${islands.length} islands total`);
+        cancelBtn.style.display = "none";
+        finishScan(worldName, islands);
+      } else if (changes.scanProgress?.newValue) {
+        showProgress(changes.scanProgress.newValue);
+      } else if (changes.scanInProgress && !changes.scanInProgress.newValue) {
+        // Scan ended (cancelled or error) without result
+        chrome.storage.onChanged.removeListener(storageListener);
+        scanBtn.disabled = false;
+        cancelBtn.style.display = "none";
+      }
+    };
+    chrome.storage.onChanged.addListener(storageListener);
+  }
 
   function startScan() {
     if (!ikariamTabId) return;
     scanBtn.disabled = true;
+    cancelBtn.style.display = "";
     scanLog.innerHTML = "";
     phaseText.textContent = "Connecting...";
     statusDetail.textContent = "";
@@ -152,6 +228,10 @@
     const port = chrome.tabs.connect(ikariamTabId, { name: "map-scan" });
     port.postMessage({ action: "start-scan" });
 
+    attachScanPort(port);
+  }
+
+  function attachScanPort(port) {
     port.onMessage.addListener((msg) => {
       switch (msg.type) {
         case "started":
@@ -167,20 +247,9 @@
           log(`Bounds: X[${msg.mapMinX}..${msg.mapMaxX}] Y[${msg.mapMinY}..${msg.mapMaxY}]`);
           break;
 
-        case "progress": {
-          const pct =
-            msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
-          progressBar.style.width = pct + "%";
-          const label =
-            msg.phase === "probe"
-              ? "Detecting viewport"
-              : msg.phase === "cross"
-                ? "Scanning cross"
-                : "Filling map";
-          phaseText.textContent = label;
-          statusDetail.textContent = `${msg.current}/${msg.total} jumps \u2022 ${msg.found} islands`;
+        case "progress":
+          showProgress(msg);
           break;
-        }
 
         case "log":
           log(msg.message);
@@ -189,6 +258,9 @@
         case "complete":
           phaseText.textContent = "Rendering...";
           log(`Done! ${msg.islands.length} islands total`);
+          cancelBtn.style.display = "none";
+          // Clear the storage result since we got it via port
+          chrome.storage.local.remove("scanResult");
           finishScan(msg.worldName, msg.islands);
           break;
 
@@ -200,30 +272,29 @@
             const base = new URL(tab.url);
             base.search = "?view=worldmap_iso";
             chrome.tabs.update(ikariamTabId, { url: base.href }, () => {
-              // Wait for tab to finish loading, then re-trigger scan
               function onUpdated(tabId, info) {
                 if (tabId === ikariamTabId && info.status === "complete") {
                   chrome.tabs.onUpdated.removeListener(onUpdated);
-                  // Small delay for content scripts to initialize
                   setTimeout(() => startScan(), 500);
                 }
               }
               chrome.tabs.onUpdated.addListener(onUpdated);
             });
           });
-          return; // don't set up onDisconnect below
+          return;
 
         case "error":
           phaseText.textContent = "Error";
           statusDetail.textContent = msg.message;
           log(`ERROR: ${msg.message}`);
           scanBtn.disabled = false;
+          cancelBtn.style.display = "none";
           break;
       }
     });
 
     port.onDisconnect.addListener(() => {
-      scanBtn.disabled = false;
+      // Port disconnect no longer cancels — scan continues in content script
     });
   }
 
@@ -233,6 +304,7 @@
     phaseText.textContent = "Done!";
     progressBar.style.width = "100%";
     scanBtn.disabled = false;
+    cancelBtn.style.display = "none";
     loadGallery();
 
     if (ikariamTabId) {

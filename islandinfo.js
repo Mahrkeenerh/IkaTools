@@ -257,7 +257,13 @@
 
   function renderPanel(island) {
     if (!panel) return;
-    const fmt = (n) => n >= 1000 ? Math.round(n / 1000) + "k" : n || "-";
+    const fmt = (n) => {
+      if (!n) return "-";
+      if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, "") + "G";
+      if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
+      if (n >= 1e3) return Math.round(n / 1e3) + "k";
+      return n;
+    };
 
     // --- Header (always visible) ---
     let html = `

@@ -1,7 +1,7 @@
 // World map scanner — uses the game's own coordinate navigator to jump around
 // and reads tiles from the live DOM after each jump.
 (() => {
-  const DELAY_BETWEEN = 300; // extra breathing room
+  const DELAY_BETWEEN = 350; // extra breathing room
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -31,35 +31,61 @@
     );
   }
 
-  // Wait for tiles to actually update after a jump
-  function waitForTilesUpdate(targetX, targetY, timeoutMs = 500) {
+  // Snapshot current island tile coords (for change detection after jump)
+  function snapshotIslandCoords() {
+    const coords = new Set();
+    document.querySelectorAll(".islandTile").forEach((tile) => {
+      const title = tile.getAttribute("title") || "";
+      const m = title.match(/\[(\d+):(\d+)\]$/);
+      if (m) coords.add(`${m[1]}:${m[2]}`);
+    });
+    return coords;
+  }
+
+  // Wait for tiles to actually update after a jump by detecting DOM changes.
+  // The old proximity-only check could pass on stale tiles when the stride
+  // was close to the proximity threshold, causing the scanner to read duplicate
+  // data from the previous viewport and skip the target area entirely.
+  function waitForTilesUpdate(beforeCoords, targetX, targetY, timeoutMs = 2000) {
     return new Promise((resolve) => {
       const start = Date.now();
 
       function check() {
-        // Check if any visible island tile contains coords near our target
+        let hasNewNearTarget = false;
+        let totalNew = 0;
         const tiles = document.querySelectorAll(".islandTile");
+
         for (const tile of tiles) {
           const title = tile.getAttribute("title") || "";
           const m = title.match(/\[(\d+):(\d+)\]$/);
-          if (m) {
-            const tx = parseInt(m[1], 10);
-            const ty = parseInt(m[2], 10);
-            // If we see tiles near our target, the jump landed
-            if (Math.abs(tx - targetX) < 15 && Math.abs(ty - targetY) < 15) {
-              resolve(true);
-              return;
-            }
+          if (!m) continue;
+          const key = `${m[1]}:${m[2]}`;
+          if (beforeCoords.has(key)) continue; // stale tile, skip
+          totalNew++;
+          const tx = parseInt(m[1], 10);
+          const ty = parseInt(m[2], 10);
+          if (Math.abs(tx - targetX) < 15 && Math.abs(ty - targetY) < 15) {
+            hasNewNearTarget = true;
           }
         }
+
+        // Accept if we see NEW tiles near the target
+        if (hasNewNearTarget) { resolve(true); return; }
+
+        // Accept if all old tiles are gone (jumped to empty ocean)
+        if (beforeCoords.size > 0 && tiles.length === 0) { resolve(true); return; }
+
+        // Accept if the tile set changed substantially (>50% new)
+        if (tiles.length > 0 && totalNew > tiles.length / 2) { resolve(true); return; }
+
         if (Date.now() - start > timeoutMs) {
-          resolve(false); // timed out, read whatever is there
+          resolve(false);
           return;
         }
-        setTimeout(check, 200);
+        setTimeout(check, 150);
       }
       // Give the AJAX a moment to start
-      setTimeout(check, 400);
+      setTimeout(check, 300);
     });
   }
 
@@ -112,21 +138,32 @@
   }
 
   let scanning = false;
+  let activePort = null;
+  let cancelRequested = false;
+
+  // Listen for cancel messages from popup
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "cancel-scan") {
+      cancelRequested = true;
+    }
+  });
 
   async function scanWorldMap(port) {
     if (scanning) return;
     scanning = true;
+    cancelRequested = false;
+    activePort = port;
     chrome.storage.local.set({ scanInProgress: true });
     try {
     const worldName = IkUtils.getWorldName() || "Unknown";
     const allIslands = new Map();
     const scannedCenters = new Set();
-    let aborted = false;
     let requestsDone = 0;
     let totalEstimate = 0;
 
+    // When popup closes, just clear the port reference — don't abort
     port.onDisconnect.addListener(() => {
-      aborted = true;
+      activePort = null;
     });
 
     function addIslands(parsed) {
@@ -140,26 +177,29 @@
     }
 
     function safeSend(msg) {
+      if (!activePort) return;
       try {
-        port.postMessage(msg);
+        activePort.postMessage(msg);
       } catch (e) {
-        // Port disconnected (popup closed)
-        aborted = true;
+        activePort = null;
       }
     }
 
     function progress(phase) {
-      safeSend({
+      const progressData = {
         type: "progress",
         phase,
         current: requestsDone,
         total: totalEstimate,
         found: allIslands.size,
-      });
+      };
+      safeSend(progressData);
+      // Persist progress so popup can pick it up if reopened
+      chrome.storage.local.set({ scanProgress: progressData });
     }
 
     async function jumpAndRead(cx, cy, phase) {
-      if (aborted) return null;
+      if (cancelRequested) return null;
       const key = `${cx}:${cy}`;
       if (scannedCenters.has(key)) {
         requestsDone++;
@@ -169,8 +209,9 @@
       scannedCenters.add(key);
 
       try {
+        const before = snapshotIslandCoords();
         jumpTo(cx, cy);
-        await waitForTilesUpdate(cx, cy);
+        await waitForTilesUpdate(before, cx, cy);
         await sleep(DELAY_BETWEEN);
 
         const result = readCurrentTiles();
@@ -209,8 +250,11 @@
     }
     requestsDone++;
 
-    const strideX = Math.max(1, probe.cols - 3);
-    const strideY = Math.max(1, probe.rows - 3);
+    // Use 75% of viewport as stride — the game renders buffer tiles beyond the
+    // visible area, so the tile grid is wider than the actual data zone.
+    // A fixed overlap of 3 was too thin and left gaps at buffer boundaries.
+    const strideX = Math.max(1, Math.floor(probe.cols * 0.75));
+    const strideY = Math.max(1, Math.floor(probe.rows * 0.75));
 
     safeSend({
       type: "stride-detected",
@@ -229,38 +273,38 @@
     progress("cross");
 
     const centerResult = await jumpAndRead(50, 50, "cross");
-    if (aborted) return;
+    if (cancelRequested) return;
 
     // Scan right (+X)
     for (let x = 50 + strideX; x <= 120; x += strideX) {
-      if (aborted) return;
+      if (cancelRequested) return;
       const r = await jumpAndRead(x, 50, "cross");
       if (!r || r.islands.length === 0) break;
       tipRight = x;
     }
     // Scan left (-X)
     for (let x = 50 - strideX; x >= -20; x -= strideX) {
-      if (aborted) return;
+      if (cancelRequested) return;
       const r = await jumpAndRead(x, 50, "cross");
       if (!r || r.islands.length === 0) break;
       tipLeft = x;
     }
     // Scan down (+Y)
     for (let y = 50 + strideY; y <= 120; y += strideY) {
-      if (aborted) return;
+      if (cancelRequested) return;
       const r = await jumpAndRead(50, y, "cross");
       if (!r || r.islands.length === 0) break;
       tipDown = y;
     }
     // Scan up (-Y)
     for (let y = 50 - strideY; y >= -20; y -= strideY) {
-      if (aborted) return;
+      if (cancelRequested) return;
       const r = await jumpAndRead(50, y, "cross");
       if (!r || r.islands.length === 0) break;
       tipUp = y;
     }
 
-    if (aborted) return;
+    if (cancelRequested) return;
 
     // Diamond center and radii (in grid coords)
     const cx = (tipLeft + tipRight) / 2;
@@ -301,11 +345,11 @@
     progress("fill");
 
     for (const [fx, fy] of fillCenters) {
-      if (aborted) return;
+      if (cancelRequested) return;
       await jumpAndRead(fx, fy, "fill");
     }
 
-    if (!aborted) {
+    if (!cancelRequested) {
       // Request game-side overlay data (military, war, barbarian)
       await enrichWithGameData(allIslands);
 
@@ -315,15 +359,23 @@
         new CustomEvent("ik-jump", { detail: { x: startX, y: startY } })
       );
 
+      const islands = Array.from(allIslands.values());
+
+      // Save result to storage so popup can process it even if closed during scan
+      await chrome.storage.local.set({
+        scanResult: { worldName, islands },
+      });
+
       safeSend({
         type: "complete",
         worldName,
-        islands: Array.from(allIslands.values()),
+        islands,
       });
     }
     } finally {
       scanning = false;
-      chrome.storage.local.remove("scanInProgress");
+      activePort = null;
+      chrome.storage.local.remove(["scanInProgress", "scanProgress"]);
     }
   }
 
@@ -332,6 +384,12 @@
     port.onMessage.addListener((msg) => {
       if (msg.action === "start-scan") {
         scanWorldMap(port);
+      } else if (msg.action === "reconnect-scan" && scanning) {
+        // Popup reopened while scan is running — attach port for live updates
+        activePort = port;
+        port.onDisconnect.addListener(() => {
+          if (activePort === port) activePort = null;
+        });
       }
     });
   });
