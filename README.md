@@ -6,19 +6,10 @@ Chrome extension for the Ikariam browser game. Adds quality-of-life features, au
 
 ## Features
 
-- **Premium cleanup** — Removes shop, ambrosia fountain, premium trader, and ad clutter
-- **CAPTCHA auto-solver** — YOLOv8n/ONNX model solves piracy CAPTCHAs automatically
-- **World map scanner** — Scans the entire world map and renders layer overlays (population, ownership, alliances, tradegoods, wonders, military, piracy, helios)
-- **Minimap overlay** — In-game minimap with viewport tracking and click-to-navigate
-- **Island info panel** — Sortable player panel on island views with alliance labels and friend highlighting
-- **Auto-finish buildings** — Instantly completes construction when under 4m 55s (free finish)
-- **Auto-pirate missions** — Launches raids automatically with human-like timing patterns
-- **Auto-convert crew** — Converts pirate points to crew strength between raids
-- **Advisor reports** — Multi-city data summaries (economy, buildings, workers, army, storage, trading, spy)
-- **Trade history charts** — Tracks and visualizes trading data over time with IQR/sparkline charts
-- **Upgrade info** — Shows missing resource amounts on building upgrade panels
-- **Wine timer** — Displays wine stock duration in the resource bar
-- **In-game notes** — Notes panel accessible from the game toolbar
+- **Cleaner UI** — Removes shop, ambrosia, and ad clutter
+- **Map tools** — World map scanner with overlay layers, minimap, and island/player info
+- **Piracy automation** — Automated raids with CAPTCHA solving and crew conversion
+- **City & data tools** — Advisor reports, trade tracking, auto-finish buildings, and more
 
 ## Installation
 
