@@ -32,8 +32,7 @@
     const fountain = document.getElementById("cityAmbrosiaFountain");
     if (fountain) fountain.remove();
 
-    const ambrosia = document.querySelector("li.ambrosiaNoSpin");
-    if (ambrosia) ambrosia.remove();
+    document.querySelectorAll("li.ambrosia, li.ambrosiaNoSpin").forEach(el => el.remove());
 
     // Hide instead of remove — game timers keep referencing hidden fields inside these
     // "bohů" = Czech for "gods" (ambrosia/premium timer label) — NOTE: language-dependent,
