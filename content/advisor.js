@@ -16,10 +16,18 @@
     const open = html[i];
     const close = open === "{" ? "}" : "]";
     let depth = 0;
+    let inString = false;
     const objStart = i;
     for (; i < html.length; i++) {
-      if (html[i] === open) depth++;
-      else if (html[i] === close) {
+      const ch = html[i];
+      if (inString) {
+        if (ch === "\\" ) { i++; continue; } // skip escaped char
+        if (ch === '"') inString = false;
+        continue;
+      }
+      if (ch === '"') { inString = true; continue; }
+      if (ch === open) depth++;
+      else if (ch === close) {
         depth--;
         if (depth === 0) {
           try {
@@ -133,20 +141,26 @@
   async function fetchPage(params) {
     const base = location.origin + location.pathname;
     const url = base + "?" + params;
-    const resp = await fetch(url, { credentials: "same-origin" });
+    const resp = await fetch(url, {
+      credentials: "same-origin",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
     return resp.text();
   }
 
   // POST form fetcher — for views that require form submission (e.g. branchOffice search)
   // Adds ajax=1 so the server returns Responder JSON instead of a full page.
   async function fetchPagePost(formData) {
-    const base = location.origin + "/index.php";
+    const base = location.origin + location.pathname;
     const params = new URLSearchParams(formData);
     params.set("ajax", "1");
     const resp = await fetch(base, {
       method: "POST",
       credentials: "same-origin",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        "X-Requested-With": "XMLHttpRequest",
+      },
       body: params,
     });
     return resp.text();
@@ -399,29 +413,58 @@
   //   2. A raw JSON array: [["changeView",["viewName","html"]],...]
   //   3. A full HTML page with Responder embedded in a <script> tag
   // In all cases, the dialog HTML is entity-encoded inside the changeView entry.
-  function extractChangeViewFromAjax(text) {
-    // Unwrap dataForJSCallback wrapper if present
-    let raw = text;
-    if (text.includes("dataForJSCallback")) {
-      try {
-        const wrapper = JSON.parse(text);
-        if (wrapper.dataForJSCallback) {
-          raw = JSON.stringify(wrapper.dataForJSCallback);
-        }
-      } catch (e) { /* not valid JSON, keep original */ }
-    }
-
-    // Try to find changeView in the text and extract its HTML
-    const marker = '"changeView"';
-    const idx = raw.indexOf(marker);
-    if (idx === -1) return null;
-    const arr = extractJson(raw, marker);
-    if (!Array.isArray(arr) || arr.length < 2) return null;
-    const encoded = arr[1];
-    if (typeof encoded !== "string") return null;
+  function decodeHtmlEntities(encoded) {
     return encoded
       .replace(/&lt;/g, "<").replace(/&gt;/g, ">")
       .replace(/&amp;/g, "&").replace(/&quot;/g, '"');
+  }
+
+  // Extract all changeView entries from a Responder response.
+  // Returns array of { viewName, html } sorted: main views first, sidebar views last.
+  function extractAllChangeViews(text) {
+    const results = [];
+
+    // Try full JSON parse first
+    try {
+      let entries;
+      const parsed = JSON.parse(text);
+      if (Array.isArray(parsed)) {
+        entries = parsed;
+      } else if (parsed && Array.isArray(parsed.dataForJSCallback)) {
+        entries = parsed.dataForJSCallback;
+      }
+      if (entries) {
+        for (const entry of entries) {
+          if (Array.isArray(entry) && entry[0] === "changeView" && Array.isArray(entry[1])) {
+            const viewName = entry[1][0] || "";
+            const encoded = entry[1][1];
+            if (typeof encoded !== "string") continue;
+            results.push({ viewName, html: decodeHtmlEntities(encoded) });
+          }
+        }
+        return results;
+      }
+    } catch (e) { /* not valid JSON — fall through to text search */ }
+
+    // Fallback: text-based extraction (finds first changeView only)
+    const marker = '"changeView"';
+    const idx = text.indexOf(marker);
+    if (idx === -1) return results;
+    const arr = extractJson(text, marker);
+    if (!Array.isArray(arr) || arr.length < 2) return results;
+    const encoded = arr[1];
+    if (typeof encoded === "string") {
+      results.push({ viewName: arr[0] || "", html: decodeHtmlEntities(encoded) });
+    }
+    return results;
+  }
+
+  function extractChangeViewFromAjax(text) {
+    const views = extractAllChangeViews(text);
+    if (views.length === 0) return null;
+    // Prefer non-sidebar changeView (main content)
+    const main = views.find((v) => !v.viewName.startsWith("sidebar"));
+    return (main || views[0]).html;
   }
 
   // Parse branchOffice page for trade offers using DOMParser.
@@ -1144,7 +1187,7 @@
     const sep = document.createElement("a");
     sep.textContent = "\uD83D\uDCCA";
     sep.title = "Advisor reports";
-    sep.style.cssText = "cursor:default;user-select:none;opacity:0.7;margin:0 2px 0 0;";
+    sep.style.cssText = "cursor:default;user-select:none;margin:0 2px 0 0;color:#572E11;";
     li.appendChild(sep);
 
     // Individual mode buttons
@@ -1153,13 +1196,13 @@
       btn.textContent = label;
       btn.className = "ik-advisor-btn";
       btn.dataset.mode = mode;
-      btn.style.cssText = "cursor:pointer;user-select:none;opacity:0.6;font-size:11px;margin:0 6px;";
+      btn.style.cssText = "cursor:pointer;user-select:none;font-size:11px;margin:0 6px;color:#572E11;";
       if (mode === "full") {
         btn.style.color = "#e06060";
         btn.title = "Many requests \u2014 fetches everything";
       }
-      btn.addEventListener("mouseenter", () => { if (!advisorRunning) btn.style.opacity = "1"; });
-      btn.addEventListener("mouseleave", () => { if (!advisorRunning) btn.style.opacity = "0.6"; });
+      btn.addEventListener("mouseenter", () => { if (!advisorRunning) btn.style.color = mode === "full" ? "#ff4444" : "#7D5937"; });
+      btn.addEventListener("mouseleave", () => { if (!advisorRunning) btn.style.color = mode === "full" ? "#e06060" : "#572E11"; });
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1171,7 +1214,7 @@
     // Reserved progress bar space (always takes up space, text invisible when idle)
     const progressEl = document.createElement("span");
     progressEl.id = "ik-advisor-progress";
-    progressEl.style.cssText = "display:inline-block;width:16ch;margin:0 2px;font-family:monospace;font-size:11px;line-height:24px;color:#8890a0;letter-spacing:-1px;visibility:hidden;vertical-align:top;white-space:nowrap;";
+    progressEl.style.cssText = "display:inline-block;width:16ch;margin:0 2px;font-family:monospace;font-size:11px;line-height:24px;color:#7D5937;letter-spacing:-1px;visibility:hidden;vertical-align:top;white-space:nowrap;";
     progressEl.textContent = "\u2591".repeat(BAR_WIDTH) + " 0%";
     li.appendChild(progressEl);
 
@@ -1200,7 +1243,7 @@
 
   function setAdvisorButtonsDisabled(disabled) {
     document.querySelectorAll(".ik-advisor-btn").forEach((btn) => {
-      btn.style.opacity = disabled ? "0.3" : "0.6";
+      btn.style.opacity = disabled ? "0.3" : "";
       btn.style.pointerEvents = disabled ? "none" : "";
     });
   }
