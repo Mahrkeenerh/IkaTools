@@ -65,6 +65,15 @@
     return Math.floor(s / 60) + "m" + (s % 60) + "s";
   }
 
+  // --- Stats reporting for popup ---
+  let lastReportedStats = "";
+  function reportStats() {
+    const stats = sessionStats();
+    if (stats === lastReportedStats) return;
+    lastReportedStats = stats;
+    chrome.storage.local.set({ pirateStatus: { stats, ts: Date.now() } });
+  }
+
   function ts() {
     const d = new Date();
     return d.getHours().toString().padStart(2, "0") + ":" +
@@ -238,6 +247,9 @@
 
       sessionBreakCount++;
       sessionBreakMs += d;
+      // deadline is approximate — actual nextActionTime includes mission duration,
+      // but break is the dominant component and gets refined on next poll
+      reportStats();
       streakCount = 0;
       raidsSinceLastConvert = 0;
 
@@ -363,14 +375,17 @@
   // --- Main loop ---
   function tryPirate() {
     try {
-      if (raidInProgress) return;
-      if (!enabled || !pirateCityId) return;
+      if (raidInProgress) { reportStats(); return; }
+      if (!enabled || !pirateCityId) {
+        if (enabled && !pirateCityId) reportStats();
+        return;
+      }
 
-      if (!isIdle()) return;
+      if (!isIdle()) { reportStats(); return; }
 
-      if (!isInActiveHours()) return;
+      if (!isInActiveHours()) { reportStats(); return; }
 
-      if (Date.now() < nextActionTime) return;
+      if (Date.now() < nextActionTime) { reportStats(); return; }
 
       if (!inControl) {
         const idleDuration = Date.now() - lastActivity;
@@ -426,6 +441,7 @@
         const href = captureBtn.getAttribute("href");
         const duration = MISSION_DURATIONS[tier] || MISSION_DURATIONS[0];
         raidInProgress = true;
+        reportStats();
         navigate(href);
         const delay = randomDelay();
         const total = duration * 1000 + delay;
@@ -445,6 +461,7 @@
         return;
       }
 
+      reportStats();
       if (Date.now() - lastNavigateTime > NAVIGATE_COOLDOWN) {
         lastNavigateTime = Date.now();
         const bodyId = document.body.id;
@@ -484,6 +501,7 @@
   function start() {
     if (checkTimer) return; // guard: don't reset state if already running
     scheduleNext();
+    reportStats();
     console.log(P, ts(), "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + ":00-" + cfg.sleepEnd + ":00, mu=" + cfg.baseMu + ", σ=" + cfg.baseSigma);
   }
 
@@ -511,6 +529,7 @@
     convertTimers.forEach((id) => clearTimeout(id));
     convertTimers = [];
     handBack();
+    reportStats();
     console.log(P, ts(), "Stopped |", sessionStats());
   }
 
@@ -662,7 +681,7 @@
       IkUtils.getCities().then((cities) => {
         // Persist per-world so popup can show them without an active game tab
         if (cities.length > 0) chrome.storage.local.set({ [KEY_PIRATE_CITIES]: cities });
-        sendResponse({ cities });
+        sendResponse({ cities, worldName });
       });
       return true;
     }

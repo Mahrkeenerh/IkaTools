@@ -386,6 +386,7 @@ body {
   <h1>Ikariam Tools</h1>
   <div class="tab-bar">
     <button class="active" data-tab="maps">Maps</button>
+    <button data-tab="pirate">Pirate</button>
     <button data-tab="notes">Notes</button>
     <button data-tab="settings">Settings</button>
   </div>
@@ -408,57 +409,9 @@ body {
   <div id="gallery-list" class="gallery-grid"></div>
 </div>
 
-<div id="notes-panel" class="panel">
-  <div class="notes-container">
-    <div class="notes-sidebar">
-      <div class="notes-sidebar-header">
-        <span>Notes</span>
-        <button id="note-add-btn" title="New note">+</button>
-      </div>
-      <div id="notes-list"></div>
-    </div>
-    <div id="note-content-area" class="note-content" style="display:none;">
-      <div class="note-content-header">
-        <input type="text" id="note-title" placeholder="Note title">
-        <button class="btn btn-danger btn-sm" id="note-delete-btn">Delete</button>
-      </div>
-      <textarea id="note-editor" placeholder="Write your note here..."></textarea>
-    </div>
-    <div id="notes-empty" class="notes-empty">No notes yet. Click + to create one.</div>
-  </div>
-</div>
+<div id="pirate-panel" class="panel">
+  <div id="pirate-stats-bar" style="padding:8px 12px;margin-bottom:12px;background:var(--bg-panel);border-radius:6px;font-size:12px;color:var(--text-muted);line-height:1.6"></div>
 
-<div id="settings-panel" class="panel">
-  <div class="setting-row">
-    <label class="toggle">
-      <input type="checkbox" id="cleanup-toggle">
-      <span class="slider"></span>
-    </label>
-    <div class="setting-label">
-      <span>Remove premium clutter</span>
-      <span class="setting-desc">Hides shop, ambrosia fountain, premium trader, ads</span>
-    </div>
-  </div>
-  <div class="setting-row">
-    <label class="toggle">
-      <input type="checkbox" id="hide-game-notes-toggle">
-      <span class="slider"></span>
-    </label>
-    <div class="setting-label">
-      <span>Hide game notes</span>
-      <span class="setting-desc">Removes the game's built-in notes button from the top bar</span>
-    </div>
-  </div>
-  <div class="setting-row">
-    <label class="toggle">
-      <input type="checkbox" id="autofinish-toggle">
-      <span class="slider"></span>
-    </label>
-    <div class="setting-label">
-      <span>Auto-finish buildings</span>
-      <span class="setting-desc">Instantly completes buildings when under 4m 55s (free)</span>
-    </div>
-  </div>
   <div class="setting-row">
     <label class="toggle">
       <input type="checkbox" id="pirate-toggle">
@@ -466,7 +419,17 @@ body {
     </label>
     <div class="setting-label">
       <span>Auto pirate missions</span>
-      <span class="setting-desc">Launches tier 1 raids when idle &amp; window unfocused</span>
+      <span class="setting-desc">Launches raids when idle &amp; window unfocused</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="convert-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Auto convert to crew</span>
+      <span class="setting-desc">Converts pirate points to crew strength between raids</span>
     </div>
   </div>
   <div class="setting-row" id="pirate-config" style="flex-wrap: wrap; gap: 8px;">
@@ -535,14 +498,57 @@ body {
     </div>
     <div id="pirate-expected" style="display:none;width:100%;padding:8px 10px;margin-top:4px;background:#0d1018;border-radius:5px;font-size:11px;color:#8890a0;line-height:1.7;font-family:monospace"></div>
   </div>
+</div>
+
+<div id="notes-panel" class="panel">
+  <div class="notes-container">
+    <div class="notes-sidebar">
+      <div class="notes-sidebar-header">
+        <span>Notes</span>
+        <button id="note-add-btn" title="New note">+</button>
+      </div>
+      <div id="notes-list"></div>
+    </div>
+    <div id="note-content-area" class="note-content" style="display:none;">
+      <div class="note-content-header">
+        <input type="text" id="note-title" placeholder="Note title">
+        <button class="btn btn-danger btn-sm" id="note-delete-btn">Delete</button>
+      </div>
+      <textarea id="note-editor" placeholder="Write your note here..."></textarea>
+    </div>
+    <div id="notes-empty" class="notes-empty">No notes yet. Click + to create one.</div>
+  </div>
+</div>
+
+<div id="settings-panel" class="panel">
   <div class="setting-row">
     <label class="toggle">
-      <input type="checkbox" id="convert-toggle">
+      <input type="checkbox" id="cleanup-toggle">
       <span class="slider"></span>
     </label>
     <div class="setting-label">
-      <span>Auto convert to crew</span>
-      <span class="setting-desc">Converts pirate points to crew strength between raids</span>
+      <span>Remove premium clutter</span>
+      <span class="setting-desc">Hides shop, ambrosia fountain, premium trader, ads</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="hide-game-notes-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Hide game notes</span>
+      <span class="setting-desc">Removes the game's built-in notes button from the top bar</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="autofinish-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Auto-finish buildings</span>
+      <span class="setting-desc">Instantly completes buildings when under 4m 55s (free)</span>
     </div>
   </div>
   <div class="setting-row">

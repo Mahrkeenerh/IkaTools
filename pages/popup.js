@@ -528,6 +528,21 @@
   const pirateCity = $("pirate-city");
   const pirateStart = $("pirate-start");
   const pirateEnd = $("pirate-end");
+  const pirateStatsBar = $("pirate-stats-bar");
+
+  function renderPirateStats(ps) {
+    if (!ps || !ps.stats) {
+      pirateStatsBar.textContent = "No session data yet.";
+      return;
+    }
+    pirateStatsBar.textContent = ps.stats;
+  }
+
+  // Load initial stats and listen for changes
+  chrome.storage.local.get("pirateStatus", (data) => renderPirateStats(data.pirateStatus));
+  chrome.storage.onChanged.addListener((changes) => {
+    if (changes.pirateStatus) renderPirateStats(changes.pirateStatus.newValue);
+  });
 
   // Advanced timing param IDs and their storage keys
   const PIRATE_ADV = [
@@ -556,13 +571,34 @@
     pirateBackToBack: "backToBackChance",
   };
 
+  // World name as known by the content script (page-title-based, e.g. "Svět Eurydike")
+  // This is the canonical name used for all pirate storage keys.
+  let pirateWorldName = null;
+
   async function loadPirateState() {
-    const pirateCityScopedKey = ikariamWorldName ? "pirateCityId_" + ikariamWorldName : "pirateCityId";
+    // First try to get the canonical world name and city list from content script
+    let cities = [];
+    if (ikariamTabId) {
+      try {
+        const resp = await chrome.tabs.sendMessage(ikariamTabId, { type: "get-cities" });
+        if (resp) {
+          cities = resp.cities || [];
+          if (resp.worldName) pirateWorldName = resp.worldName;
+        }
+      } catch (e) {
+        // Content script not available
+      }
+    }
+
+    // Build the scoped key using the content script's world name (canonical)
+    const pirateCityScopedKey = pirateWorldName ? "pirateCityId_" + pirateWorldName : null;
     const keys = [
-      "pirateEnabled", "pirateConvertEnabled", pirateCityScopedKey, "pirateCityId",
+      "pirateEnabled", "pirateConvertEnabled", "pirateCityId",
       "pirateSleepStart", "pirateSleepEnd",
       ...PIRATE_ADV.map((a) => a.key),
     ];
+    if (pirateCityScopedKey) keys.push(pirateCityScopedKey);
+
     const data = await chrome.storage.local.get(keys);
     pirateToggle.checked = !!data.pirateEnabled;
     convertToggle.checked = !!data.pirateConvertEnabled;
@@ -570,7 +606,7 @@
     pirateEnd.value = data.pirateSleepEnd ?? 7;
 
     // Use world-scoped key if available, fall back to legacy global key
-    const savedCityId = data[pirateCityScopedKey] ?? data.pirateCityId ?? null;
+    const savedCityId = (pirateCityScopedKey && data[pirateCityScopedKey]) ?? data.pirateCityId ?? null;
 
     // Load advanced params
     for (const a of PIRATE_ADV) {
@@ -578,22 +614,15 @@
       if (el && data[a.key] != null) el.value = data[a.key];
     }
 
-    // Load city list from content script
-    if (ikariamTabId) {
-      try {
-        const resp = await chrome.tabs.sendMessage(ikariamTabId, { type: "get-cities" });
-        if (resp && resp.cities) {
-          pirateCity.innerHTML = '<option value="">-- select --</option>';
-          for (const c of resp.cities) {
-            const opt = document.createElement("option");
-            opt.value = c.id;
-            opt.textContent = c.name + " " + c.coords;
-            if (c.id === savedCityId) opt.selected = true;
-            pirateCity.appendChild(opt);
-          }
-        }
-      } catch (e) {
-        // Content script not available
+    // Populate city dropdown
+    if (cities.length > 0) {
+      pirateCity.innerHTML = '<option value="">-- select --</option>';
+      for (const c of cities) {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = c.name + " " + c.coords;
+        if (c.id === savedCityId) opt.selected = true;
+        pirateCity.appendChild(opt);
       }
     }
   }
@@ -616,7 +645,11 @@
 
   pirateCity.addEventListener("change", () => {
     const cityId = parseInt(pirateCity.value, 10) || null;
-    // Delegate storage write to autopirate.js via message — it writes under the world-scoped key
+    // Save directly to storage with canonical world-scoped key
+    if (pirateWorldName) {
+      chrome.storage.local.set({ ["pirateCityId_" + pirateWorldName]: cityId });
+    }
+    // Also notify content script so it picks up the change immediately
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-config", cityId }).catch(() => {});
     }
