@@ -83,7 +83,7 @@ globalThis.IkUtils = (() => {
           if (key === "additionalInfo" || key === "selectedCity") continue;
           const c = data[key];
           if (c && c.id && c.name) {
-            cities.push({ id: c.id, name: c.name, coords: c.coords || "" });
+            cities.push({ id: c.id, name: c.name, coords: c.coords || "", relationship: c.relationship || "" });
           }
         }
         resolve(cities);

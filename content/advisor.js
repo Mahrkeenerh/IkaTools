@@ -545,6 +545,30 @@
     return offers;
   }
 
+  // Unit group classification by ID
+  const UNIT_GROUPS = {
+    s303: "Infantry", s315: "Infantry", s302: "Infantry", s319: "Infantry", s308: "Infantry",
+    s301: "Infantry", s313: "Infantry", s304: "Infantry",
+    s307: "Siege & Support", s306: "Siege & Support", s305: "Siege & Support",
+    s312: "Siege & Support", s309: "Siege & Support",
+    s310: "Siege & Support", s311: "Siege & Support",
+    s211: "Warships", s210: "Warships", s216: "Warships", s213: "Warships",
+    s214: "Warships", s215: "Warships", s217: "Warships", s212: "Warships",
+    s218: "Naval Support", s219: "Naval Support", s220: "Naval Support",
+  };
+
+  // CSS class name → unit ID (for relatedCities .armybutton / .fleetbutton parsing)
+  const UNIT_CLASS_TO_ID = {
+    phalanx: "s303", spearman: "s315", swordsman: "s302", slinger: "s301",
+    archer: "s313", marksman: "s304", ram: "s307", catapult: "s306",
+    cook: "s310", medic: "s311", steamgiant: "s308", mortar: "s305",
+    gyrocopter: "s312", bombardier: "s309",
+    ship_flamethrower: "s211", ship_ram: "s210", ship_ballista: "s213",
+    ship_catapult: "s214", ship_rocketship: "s217", ship_steamboat: "s216",
+    ship_mortar: "s215", ship_submarine: "s212", ship_paddlespeedship: "s218",
+    ship_ballooncarrier: "s219", ship_tender: "s220",
+  };
+
   // Parse cityMilitary page for unit counts using DOMParser.
   // Dialog HTML is inside the Responder's changeView entry (JSON-escaped).
   // Extract it, unescape via JSON.parse, then parse clean HTML with DOMParser.
@@ -563,18 +587,6 @@
       doc = new DOMParser().parseFromString(viewHtml, "text/html");
       tables = doc.querySelectorAll("table.militaryList");
     }
-
-    // Unit group classification by ID
-    const UNIT_GROUPS = {
-      s303: "Infantry", s315: "Infantry", s302: "Infantry", s319: "Infantry", s308: "Infantry",
-      s301: "Infantry", s313: "Infantry", s304: "Infantry",
-      s307: "Siege & Support", s306: "Siege & Support", s305: "Siege & Support",
-      s312: "Siege & Support", s309: "Siege & Support",
-      s310: "Siege & Support", s311: "Siege & Support",
-      s211: "Warships", s210: "Warships", s216: "Warships", s213: "Warships",
-      s214: "Warships", s215: "Warships", s217: "Warships", s212: "Warships",
-      s218: "Naval Support", s219: "Naval Support", s220: "Naval Support",
-    };
 
     for (const table of tables) {
       // Headers: <div class="army s303"> or <div class="fleet s211"> with tooltip child
@@ -608,6 +620,119 @@
     }
 
     return { units };
+  }
+
+  // Parse relatedCities page for deployed unit counts.
+  // Only extracts "own units" section (first table with rowAction column).
+  function parseRelatedCitiesMilitary(html) {
+    const units = [];
+
+    // Try all changeView entries (main content may have tables, sidebar may not)
+    const views = extractAllChangeViews(html);
+    let tables = null;
+    for (const view of views) {
+      const doc = new DOMParser().parseFromString(view.html, "text/html");
+      const t = doc.querySelectorAll("table.table01");
+      if (t.length > 0) { tables = t; break; }
+    }
+    // Fallback: try parsing the raw HTML directly
+    if (!tables || tables.length === 0) {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      tables = doc.querySelectorAll("table.table01");
+    }
+    if (!tables || tables.length === 0) return { units };
+
+    // First table with rowAction column = our deployed units
+    for (const table of tables) {
+      if (!table.querySelector("th.rowAction")) continue;
+      const buttons = table.querySelectorAll(".armybutton, .fleetbutton");
+      for (const btn of buttons) {
+        const name = btn.getAttribute("title") || "";
+        const count = parseInt(btn.textContent.trim(), 10) || 0;
+        if (count === 0) continue;
+
+        // Find unit ID from CSS class
+        const classes = btn.className.split(/\s+/);
+        let id = null;
+        let type = "unit";
+        for (const cls of classes) {
+          if (cls === "armybutton" || cls === "fleetbutton") {
+            if (cls === "fleetbutton") type = "ship";
+            continue;
+          }
+          if (UNIT_CLASS_TO_ID[cls]) {
+            id = UNIT_CLASS_TO_ID[cls];
+            if (cls.startsWith("ship_")) type = "ship";
+            break;
+          }
+        }
+
+        const group = id ? (UNIT_GROUPS[id] || (type === "ship" ? "Warships" : "Infantry")) : "Infantry";
+        units.push({ type, id, name, group, count });
+      }
+      break; // Only first table (own units)
+    }
+
+    return { units };
+  }
+
+  function parseTrainingQueue(html) {
+    let doc = new DOMParser().parseFromString(html, "text/html");
+    let list = doc.getElementById("unitConstructionList");
+    if (!list) {
+      const viewHtml = extractChangeViewFromAjax(html) || extractChangeViewHtml(html);
+      if (!viewHtml) return [];
+      doc = new DOMParser().parseFromString(viewHtml, "text/html");
+      list = doc.getElementById("unitConstructionList");
+    }
+    if (!list) return [];
+
+    const queue = [];
+    const blocks = list.querySelectorAll(".unitConstructionBlock");
+
+    for (let i = 0; i < blocks.length; i++) {
+      const block = blocks[i];
+      const active = i === 0 && !!block.querySelector(".running");
+
+      let enddate = null;
+      const script = block.querySelector("script");
+      if (script) {
+        const m = script.textContent.match(/enddate:\s*'(\d+)'/);
+        if (m) enddate = parseInt(m[1], 10);
+      }
+      // Active entry: estimate enddate from countdown text (e.g. "2m 36s", "1h 30m")
+      if (!enddate && active) {
+        const cdEl = block.querySelector("#unitBuildCountDown");
+        if (cdEl) {
+          const txt = cdEl.textContent.trim();
+          const hM = txt.match(/(\d+)h/);
+          const mM = txt.match(/(\d+)m/);
+          const sM = txt.match(/(\d+)s/);
+          const secs = (hM ? parseInt(hM[1], 10) * 3600 : 0) + (mM ? parseInt(mM[1], 10) * 60 : 0) + (sM ? parseInt(sM[1], 10) : 0);
+          if (secs > 0) enddate = Math.floor(Date.now() / 1000) + secs;
+        }
+      }
+
+      const wrappers = block.querySelectorAll(".army_wrapper");
+      for (const wrapper of wrappers) {
+        const name = wrapper.getAttribute("title") || "";
+        const armyDiv = wrapper.querySelector("div[class*=' s']");
+        let id = null;
+        let type = "unit";
+        if (armyDiv) {
+          const idMatch = armyDiv.className.match(/s(\d+)/);
+          if (idMatch) id = "s" + idMatch[1];
+          if (armyDiv.className.includes("fleet")) type = "ship";
+        }
+        const countEl = wrapper.querySelector(".unitcounttextlabel");
+        const count = countEl ? parseInt(countEl.textContent.trim(), 10) || 0 : 0;
+        if (count > 0) {
+          queue.push({ position: i + 1, active, id, name, count, type, enddate });
+        }
+      }
+    }
+
+    return queue;
   }
 
   // Navigate to military advisor via bridge, wait for DOM to populate, parse movements.
@@ -876,6 +1001,8 @@
             let whPos = null;
             let boPos = null;
             let shPos = null;
+            let bkPos = null;
+            let syPos = null;
             const positions = cityData.bgData?.position;
             if (Array.isArray(positions)) {
               for (let j = 0; j < positions.length; j++) {
@@ -884,26 +1011,39 @@
                 if (whPos === null && b.includes("warehouse")) whPos = j;
                 if (boPos === null && b.includes("branchOffice")) boPos = j;
                 if (shPos === null && b.includes("safehouse")) shPos = j;
+                if (bkPos === null && b.includes("barracks")) bkPos = j;
+                if (syPos === null && b.includes("shipyard")) syPos = j;
               }
             }
 
+            // Skip most fetches for deployed (non-own) cities
+            const isDeployed = city.relationship === "deployedCities";
+
             // Fetch extra views based on mode
             const fetches = [
-              wantDetails || wantWorkers
+              !isDeployed && (wantDetails || wantWorkers)
                 ? fetchPage("view=townHall&cityId=" + city.id)
                 : Promise.resolve(null),
-              (wantDetails || wantStorage) && whPos !== null
+              !isDeployed && (wantDetails || wantStorage) && whPos !== null
                 ? fetchPage("view=warehouse&cityId=" + city.id + "&position=" + whPos)
                 : Promise.resolve(null),
               wantArmy
-                ? fetchPage("view=cityMilitary&activeTab=tabUnits&cityId=" + city.id)
+                ? fetchPage(isDeployed
+                    ? "view=relatedCities&activeTab=tabUnits&cityId=" + city.id
+                    : "view=cityMilitary&activeTab=tabUnits&cityId=" + city.id)
                 : Promise.resolve(null),
-              wantSpy && shPos !== null
+              !isDeployed && wantSpy && shPos !== null
                 ? fetchPage("view=safehouse&cityId=" + city.id + "&position=" + shPos)
+                : Promise.resolve(null),
+              !isDeployed && wantArmy && bkPos !== null
+                ? fetchPage("view=barracks&cityId=" + city.id + "&position=" + bkPos)
+                : Promise.resolve(null),
+              !isDeployed && wantArmy && syPos !== null
+                ? fetchPage("view=shipyard&cityId=" + city.id + "&position=" + syPos)
                 : Promise.resolve(null),
             ];
 
-            const [thHtml, whHtml, milHtml, shHtml] = await Promise.all(fetches);
+            const [thHtml, whHtml, milHtml, shHtml, bkHtml, syHtml] = await Promise.all(fetches);
 
             completed++;
             sendProgress(completed, total, phaseLabel);
@@ -915,10 +1055,16 @@
               ownerName: cityData.bgData?.ownerName || "",
               townHall: thHtml ? parseTownHall(thHtml) : null,
               warehouse: whHtml ? parseWarehouse(whHtml) : null,
-              military: milHtml ? parseMilitary(milHtml) : { units: [] },
+              military: milHtml
+                ? (isDeployed ? parseRelatedCitiesMilitary(milHtml) : parseMilitary(milHtml))
+                : { units: [] },
               boPos,
               safehouse: shHtml ? parseSafehouse(shHtml) : null,
               safehouseLevel: shPos !== null ? (positions[shPos]?.level || 0) : null,
+              trainingQueue: [
+                ...(bkHtml ? parseTrainingQueue(bkHtml) : []),
+                ...(syHtml ? parseTrainingQueue(syHtml) : []),
+              ],
             };
           } catch (e) {
             console.error(P, "Error fetching", city.name, e);
@@ -1040,6 +1186,7 @@
           id: r.city.id,
           name: r.city.name,
           coords: r.city.coords,
+          relationship: r.city.relationship || "ownCity",
           isCapital: b.isCapital || false,
           islandName: b.islandName || "",
           buildings: b.buildings || [],
@@ -1100,6 +1247,7 @@
           storage,
           // Military
           military: mil,
+          trainingQueue: r.trainingQueue || [],
           // Trading
           trading: r.trading || [],
           // Spy

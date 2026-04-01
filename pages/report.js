@@ -163,7 +163,8 @@
 
   function cityNameHtml(city) {
     const cap = city.isCapital ? '<span class="capital-badge">Cap</span>' : "";
-    return `<td class="city-name">${city.name}${cap}</td>`;
+    const deployed = city.relationship === "deployedCities" ? ' class="city-name deployed-city"' : ' class="city-name"';
+    return `<td${deployed}>${city.name}${cap}</td>`;
   }
 
   // Economy resource cell: stock right-aligned, rate left-aligned in sub-column
@@ -516,6 +517,9 @@
     // Active movements with units — shown first
     renderMilitaryMovements(report, container);
 
+    // Training queues — shown after movements
+    renderTrainingQueues(report, container);
+
     // Collect all units grouped
     const groupUnits = {}; // group -> [unitName, ...]
     const seen = {}; // group -> Set
@@ -608,6 +612,67 @@
       wrap.appendChild(table);
       container.appendChild(wrap);
     }
+  }
+
+  function renderTrainingQueues(report, container) {
+    const allQueue = report.cities.flatMap((c) =>
+      (c.trainingQueue || []).map((q) => ({ ...q, cityName: c.name }))
+    );
+    if (allQueue.length === 0) return;
+
+    const title = document.createElement("div");
+    title.className = "panel-title";
+    title.style.marginTop = "24px";
+    title.textContent = "Training Queues";
+    container.appendChild(title);
+
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    const table = document.createElement("table");
+    table.className = "report-table";
+
+    const thead = document.createElement("thead");
+    const headTr = document.createElement("tr");
+    headTr.innerHTML = "<th>City</th><th>Unit</th><th class=\"right\">Count</th><th>Status</th><th>ETA</th>";
+    thead.appendChild(headTr);
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    allQueue.sort((a, b) => {
+      if (a.active !== b.active) return a.active ? -1 : 1;
+      return (a.enddate || 0) - (b.enddate || 0);
+    });
+
+    for (const q of allQueue) {
+      const tr = document.createElement("tr");
+      const status = q.active
+        ? "<span class=\"val-pos\">Building</span>"
+        : "Queued #" + q.position;
+
+      let eta = "—";
+      if (q.enddate) {
+        const remaining = q.enddate - Math.floor(Date.now() / 1000);
+        if (remaining > 0) {
+          const h = Math.floor(remaining / 3600);
+          const m = Math.floor((remaining % 3600) / 60);
+          eta = h > 0 ? h + "h " + m + "m" : m + "m";
+        } else {
+          eta = "Done";
+        }
+      }
+
+      const typeIcon = q.type === "ship" ? "🚢 " : "";
+      tr.innerHTML =
+        `<td>${q.cityName}</td>` +
+        `<td>${typeIcon}${q.name}</td>` +
+        `<td class="right">${q.count.toLocaleString()}</td>` +
+        `<td>${status}</td>` +
+        `<td>${eta}</td>`;
+      tbody.appendChild(tr);
+    }
+    table.appendChild(tbody);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
   }
 
   function renderMilitaryMovements(report, container) {
