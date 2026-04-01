@@ -11,14 +11,14 @@ function waitForReady() {
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "offscreen-ready") {
-    if (!sender.url || !sender.url.endsWith("offscreen.html")) return;
+    if (!sender.url || !sender.url.endsWith("pages/offscreen.html")) return;
     offscreenReady = true;
     if (readyResolve) readyResolve();
     return;
   }
 
   if (msg.type === "open-advisor-report") {
-    const reportUrl = chrome.runtime.getURL("report.html");
+    const reportUrl = chrome.runtime.getURL("pages/report.html");
     const url = msg.worldName
       ? reportUrl + "?world=" + encodeURIComponent(msg.worldName)
       : reportUrl;
@@ -64,7 +64,7 @@ async function ensureOffscreen() {
   offscreenReady = false;
   readyPromise = new Promise((resolve) => { readyResolve = resolve; });
   await chrome.offscreen.createDocument({
-    url: "offscreen.html",
+    url: "pages/offscreen.html",
     reasons: ["WORKERS"],
     justification: "Run ONNX model inference via WASM",
   });

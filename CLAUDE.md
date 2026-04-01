@@ -21,27 +21,32 @@ No dev server — load unpacked extension directly from this directory in `chrom
 ## Directory Structure
 
 - `manifest.json` — Extension manifest (permissions, content scripts, popup)
-- `utils.js` — Shared utilities (`globalThis.IkUtils`): bridge injection, world name, tile parsing, alliance helpers
 - `background.js` — Service worker, routes messages, manages offscreen document (with ping/recreate)
-- `content.js` — CAPTCHA detection and solving orchestration
-- `cleanup.js` — Premium UI removal (shop, ambrosia, premium trader, ads)
-- `scanner.js` — World map scanning via game's coordinate navigation
-- `minimap.js` — In-game overlay with viewport tracking, click-to-navigate, layer/scale/collapse controls, dim empty islands
-- `maprender.js` — Shared map rendering engine (8 layers including alliances, isometric projection)
-- `islandinfo.js` — Island view: passive data extraction, sortable player panel, alliance labels on cities
-- `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
-- `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar
-- `gamenotes.js` — In-game notes toolbar button with floating panel, syncs with popup notes via chrome.storage
-- `bridge.js` — Page-context script (CSP bypass), 7 event handlers for game function calls
-- `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
-- `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`
-- `upgradeinfo.js` — Injects missing-resource amounts onto building upgrade panels
-- `winetimer.js` — Shows wine stock duration in the resource bar
-- `inference.js` — YOLOv8n pre/postprocessing for CAPTCHA
-- `popup.html` / `popup.js` — Extension popup (scan, gallery with layer thumbnails, settings)
-- `report.html` / `report.js` — Advisor report page: multi-city data summary, trading history charts
-- `offscreen.html` + `src/offscreen.js` — ONNX inference (bundled to dist/)
+- `content/` — Content scripts injected into game pages + shared modules
+  - `utils.js` — Shared utilities (`globalThis.IkUtils`): bridge injection, world name, tile parsing, alliance helpers
+  - `bridge.js` — Page-context script (CSP bypass), 7 event handlers for game function calls
+  - `content.js` — CAPTCHA detection and solving orchestration
+  - `cleanup.js` — Premium UI removal (shop, ambrosia, premium trader, ads)
+  - `scanner.js` — World map scanning via game's coordinate navigation
+  - `minimap.js` — In-game overlay with viewport tracking, click-to-navigate, layer/scale/collapse controls, dim empty islands
+  - `maprender.js` — Shared map rendering engine (8 layers including alliances, isometric projection)
+  - `islandinfo.js` — Island view: passive data extraction, sortable player panel, alliance labels on cities
+  - `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
+  - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar
+  - `gamenotes.js` — In-game notes toolbar button with floating panel, syncs with popup notes via chrome.storage
+  - `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
+  - `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`
+  - `advisor.js` — Advisor toolbar with 7 report modes, data collection, progress bar
+  - `upgradeinfo.js` — Injects missing-resource amounts onto building upgrade panels
+  - `winetimer.js` — Shows wine stock duration in the resource bar
+- `pages/` — Extension UI pages
+  - `popup.html` / `popup.js` — Extension popup (scan, gallery with layer thumbnails, settings)
+  - `report.html` / `report.js` — Advisor report page: multi-city data summary, trading history charts
+  - `offscreen.html` — Offscreen document for ONNX inference
+  - `inference.js` — YOLOv8n pre/postprocessing for CAPTCHA
+- `src/offscreen.js` — ONNX runtime entry point (bundled by esbuild to dist/)
 - `model/model.onnx` — CAPTCHA solver model (12 MB binary)
+- `icons/` — Extension icons and resource images
 - `dist/` — Build output (WASM binaries, bundled JS) — gitignored, regenerate with `npm run build`
 
 ## Architecture

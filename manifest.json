@@ -11,7 +11,7 @@
     "128": "icons/icon128.png"
   },
   "action": {
-    "default_popup": "popup.html",
+    "default_popup": "pages/popup.html",
     "default_title": "Ikariam Tools",
     "default_icon": {
       "16": "icons/icon16.png",
@@ -26,7 +26,7 @@
     {
       "matches": ["*://*.ikariam.gameforge.com/*"],
       "exclude_matches": ["*://forum.ikariam.gameforge.com/*"],
-      "js": ["utils.js", "cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js", "islandinfo.js", "autofinish.js", "autopirate.js", "tradehistory.js", "advisor.js", "upgradeinfo.js", "winetimer.js", "gamenotes.js"],
+      "js": ["content/utils.js", "content/cleanup.js", "content/content.js", "content/maprender.js", "content/scanner.js", "content/minimap.js", "content/islandinfo.js", "content/autofinish.js", "content/autopirate.js", "content/tradehistory.js", "content/advisor.js", "content/upgradeinfo.js", "content/winetimer.js", "content/gamenotes.js"],
       "run_at": "document_idle"
     }
   ],
@@ -35,7 +35,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["model/model.onnx", "dist/*", "bridge.js", "icons/resources/*"],
+      "resources": ["model/model.onnx", "dist/*", "content/bridge.js", "icons/resources/*"],
       "matches": ["*://*.ikariam.gameforge.com/*"],
       "exclude_matches": ["*://forum.ikariam.gameforge.com/*"]
     }
