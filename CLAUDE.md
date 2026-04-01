@@ -31,6 +31,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - `islandinfo.js` — Island view: passive data extraction, sortable player panel, alliance labels on cities
 - `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
 - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar
+- `gamenotes.js` — In-game notes toolbar button with floating panel, syncs with popup notes via chrome.storage
 - `bridge.js` — Page-context script (CSP bypass), 7 event handlers for game function calls
 - `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
 - `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`
@@ -50,6 +51,8 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - **Minimap**: Cached base map (rebuilds only on layer/scale/data/dimEmpty change), viewport overlay at ~30fps polling anchor tile `getBoundingClientRect`
 - **Island info**: Parses `updateBackgroundData` JSON from inline `<script>` tags (not bridge), stores per-island in `island_{id}`, enriches world map with alliance data
 - **Auto-pirate**: Polls every 5s when idle, navigates to pirate city via `ik-ajax-call`, opens fortress BootyQuest tab, triggers capture. Popup heartbeat suppresses takeover for 10s. Togglable from game header bar via `chrome.storage.onChanged`
+- **Advisor toolbar**: Dropdown in `#GF_toolbar` (right of pirate toggle) with 7 report modes. Unicode block progress bar (█░) shows inline during collection. Calls `collectData()` directly (same content script context)
+- **Notes toolbar**: Button in `#GF_toolbar` (left of pirate toggle) opens floating panel with sidebar + editor. Syncs bidirectionally with popup notes via `chrome.storage.onChanged`. "Hide game notes" setting hides `#GF_toolbar li.notes`
 - **CAPTCHA**: content.js detects → background.js routes → offscreen ONNX inference → fills input
 - **Storage**: `chrome.storage.local` — raw island data per world (`map_${worldName}`), per-island details (`island_{worldName}_{id}`), alliance index (`allianceIndex`), trade history chunks (`tradeHistory_{world}_{avatarId}_{YYYY-MM}`), trade history index (`tradeHistoryIdx_{world}_{avatarId}`), settings/toggles (global, not world-scoped)
   - Key convention: feature toggles/settings use camelCase with feature prefix (e.g., `pirateEnabled`, `minimapScale`); per-world data uses underscore separator with world name (e.g., `map_{worldName}`, `island_{worldName}_{id}`); settings are global (not world-scoped)

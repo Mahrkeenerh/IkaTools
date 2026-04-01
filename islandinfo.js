@@ -13,23 +13,96 @@
   const KEY_FRIEND_LIST = "friendList_" + worldName;
   const KEY_ALLIANCE_INDEX = "allianceIndex_" + worldName;
 
+  const KEY_FRIEND_SLOTS = "friendSlots_" + worldName;
+  const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
+  let friendCheckTimer = null;
+
+  // Read visible friend slots (IDs are global: page1=1-6, page2=7-12, etc.)
+  function readFriendSlots() {
+    const container = document.querySelector("#js_viewFriends .friends");
+    if (!container) return null;
+    const snapshot = {}; // slotId -> playerId|null
+    const names = {}; // playerId -> name
+    for (const li of container.querySelectorAll("li[id^='js_friendlistSlot']")) {
+      const slotId = li.id.replace("js_friendlistSlot", "");
+      const a = li.classList.contains("expandable") && li.querySelector(".name a");
+      if (a) {
+        const m = a.href.match(/playerId=(\d+)/);
+        if (m) {
+          snapshot[slotId] = m[1];
+          names[m[1]] = a.textContent.trim();
+        }
+      } else {
+        snapshot[slotId] = null;
+      }
+    }
+    return { snapshot, names };
+  }
+
   // --- Scrape & cache friends from the sidebar list ---
   async function scrapeFriends() {
-    const slots = document.querySelectorAll("#js_viewFriends .friends li.expandable .name a");
-    if (slots.length === 0) return;
-    const scraped = {};
-    for (const a of slots) {
-      const m = a.href.match(/playerId=(\d+)/);
-      if (m) scraped[m[1]] = a.textContent.trim();
-    }
-    // Merge with stored friends (accumulate across pages)
-    // Fall back to legacy global key if world-scoped key is empty
-    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, "friendList"]);
+    const result = readFriendSlots();
+    if (!result || Object.keys(result.names).length === 0) return;
+
+    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, KEY_FRIEND_SLOTS, "friendList"]);
     const stored = data[KEY_FRIEND_LIST] || data.friendList || {};
-    const merged = { ...stored, ...scraped };
-    await chrome.storage.local.set({ [KEY_FRIEND_LIST]: merged });
+    const oldSlots = data[KEY_FRIEND_SLOTS] || {};
+    const merged = { ...stored, ...result.names };
+    // Merge visible slots into full snapshot (page 1 = slots 1-6, page 2 = 7-12, etc.)
+    const allSlots = { ...oldSlots, ...result.snapshot };
+    await chrome.storage.local.set({
+      [KEY_FRIEND_LIST]: merged,
+      [KEY_FRIEND_SLOTS]: allSlots,
+    });
     friendIds = new Set(Object.keys(merged));
-    console.log(TAG, `Friends cached: ${Object.keys(merged).length}`, Object.values(merged).join(", "));
+  }
+
+  // Compare current visible slots against stored snapshot, remove unfriended players
+  async function validateFriends() {
+    const result = readFriendSlots();
+    if (!result) return;
+
+    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, KEY_FRIEND_SLOTS, "friendList"]);
+    const stored = data[KEY_FRIEND_LIST] || data.friendList || {};
+    const oldSlots = data[KEY_FRIEND_SLOTS] || {};
+    let changed = false;
+
+    // Friends don't shift — if a slot was filled and is now empty, that friend was removed
+    for (const [slot, curId] of Object.entries(result.snapshot)) {
+      const oldId = oldSlots[slot];
+      if (oldId && !curId) {
+        delete stored[oldId];
+        changed = true;
+      }
+    }
+
+    // Add any newly visible friends
+    for (const [id, name] of Object.entries(result.names)) {
+      if (!stored[id]) {
+        stored[id] = name;
+        changed = true;
+      }
+    }
+
+    const allSlots = { ...oldSlots, ...result.snapshot };
+    if (changed) {
+      await chrome.storage.local.set({
+        [KEY_FRIEND_LIST]: stored,
+        [KEY_FRIEND_SLOTS]: allSlots,
+      });
+      friendIds = new Set(Object.keys(stored));
+    } else {
+      await chrome.storage.local.set({ [KEY_FRIEND_SLOTS]: allSlots });
+    }
+  }
+
+  // Debounced friend list validation — called when DOM changes
+  function scheduleFriendCheck() {
+    if (friendCheckTimer) return;
+    friendCheckTimer = setTimeout(() => {
+      friendCheckTimer = null;
+      validateFriends();
+    }, FRIEND_CHECK_INTERVAL);
   }
 
   async function loadFriends() {
@@ -76,10 +149,7 @@
     if (document.body.id !== "island") return;
 
     const data = parseBackgroundData();
-    if (!data) {
-      console.log(TAG, "No updateBackgroundData found in scripts");
-      return null;
-    }
+    if (!data) return null;
 
     const scores = data.avatarScores || {};
 
@@ -141,7 +211,6 @@
     // Store
     const key = STORAGE_PREFIX + islandId;
     await chrome.storage.local.set({ [key]: island });
-    console.log(TAG, `Stored island ${island.name} [${island.x}:${island.y}] — ${island.cities.length} cities`);
 
     // Update the alliance index for world map layer
     await updateAllianceIndex(island);
@@ -205,7 +274,6 @@
 
     // Save back
     await chrome.storage.local.set({ [mapEntry.key]: worldMap });
-    console.log(TAG, `Enriched world map [${island.x}:${island.y}] with alliance data`);
   }
 
   // --- Info panel overlay ---
@@ -453,7 +521,6 @@
     } else {
       container.after(div);
     }
-    console.log(TAG, `Barbarian loot: ${totalGoods} goods, ${ships} ships needed`);
   }
 
   // --- Extract current island ID from URL query params ---
@@ -509,6 +576,13 @@
     }
   });
   obs.observe(document.body, { attributes: true, attributeFilter: ["id"] });
+
+  // Watch for friend list changes (unfriend, page scroll, new friend)
+  const friendContainer = document.getElementById("js_viewFriends");
+  if (friendContainer) {
+    const friendObs = new MutationObserver(scheduleFriendCheck);
+    friendObs.observe(friendContainer, { childList: true, subtree: true, attributes: true });
+  }
 
   // Watch for barbarian village content appearing (user clicks barbarian village).
   // Intentionally never disconnected — the body.id guard keeps it a no-op off island view.

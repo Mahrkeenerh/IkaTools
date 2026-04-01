@@ -177,7 +177,6 @@
     idx.lastTs = snapshot.ts;
 
     await storageSet({ [key]: chunk, [idxKey]: idx });
-    console.log(P, "Persisted snapshot:", dedupedOffers.length, "offers,", Object.keys(stats).length, "resources with stats");
 
     // Prune old chunks
     await pruneOldChunks(world, avatarId, idx);
@@ -196,7 +195,6 @@
 
     idx.chunks = idx.chunks.filter((m) => m >= cutoffMonth);
     await storageSet({ [indexKey(world, avatarId)]: idx });
-    console.log(P, "Pruned", toRemove.length, "old chunks");
   }
 
   // Load history snapshots for a given timeframe (in days)

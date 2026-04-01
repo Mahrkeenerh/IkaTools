@@ -53,10 +53,7 @@ window.addEventListener("ik-read-game-data", () => {
 window.addEventListener("ik-convert-crew", () => {
   try {
     const maxBtn = document.getElementById("CPToCrewSliderMax");
-    if (maxBtn) {
-      maxBtn.click();
-      console.log("[IkBridge] convertCrew: clicked slider max");
-    }
+    if (maxBtn) maxBtn.click();
   } catch (err) {
     console.error("[IkBridge] convertCrew failed:", err);
   }

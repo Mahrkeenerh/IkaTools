@@ -63,7 +63,7 @@
 
   // Load initial state
   chrome.storage.local.get("cleanupEnabled", (data) => {
-    enabled = data.cleanupEnabled !== false;
+    enabled = !!data.cleanupEnabled;
     if (enabled) start();
   });
 

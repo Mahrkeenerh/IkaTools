@@ -1,7 +1,5 @@
 // Wine timer — shows how long current city's wine lasts in the resource bar
 (() => {
-  const TAG = "[IkTools:WineTimer]";
-
   const parseNum = (text) => IkUtils.parseNum(text);
 
   function getWineData() {
@@ -37,7 +35,6 @@
       if (!wineSpan) return; // element gone — stop scheduling
       timerEl = createTimerEl();
       wineSpan.parentElement.appendChild(timerEl);
-      console.log(TAG, "Timer injected");
     }
     scheduleNext();
 
@@ -62,10 +59,7 @@
 
   // Wait for the resource bar to exist
   const wineEl = document.getElementById("resources_wine");
-  if (!wineEl) {
-    console.log(TAG, "No wine resource bar found, skipping");
-    return;
-  }
+  if (!wineEl) return;
 
   update();
 
@@ -80,5 +74,4 @@
     }
   });
   observer.observe(wineEl, { childList: true, subtree: true, characterData: true });
-  console.log(TAG, "Initialized");
 })();

@@ -349,14 +349,12 @@
       result.missions.push(mission);
     }
 
-    console.log(P, "Safehouse parse —", result.canTrain, "capacity,",
-      result.missions.length, "missions,", result.defense, "defense,", result.inUse, "in use");
     return result;
   }
 
   // Parse warehouse page for safe/lootable resource data (regex-based)
   function parseWarehouse(html) {
-    return {
+    const result = {
       safeWood: parseElInt(html, "js_secure_wood"),
       safeWine: parseElInt(html, "js_secure_wine"),
       safeMarble: parseElInt(html, "js_secure_marble"),
@@ -370,6 +368,7 @@
       totalSafeCapacity: parseElInt(html, "js_total_safe_capacity"),
       totalStorageCapacity: parseElInt(html, "js_total_storage_capacity"),
     };
+    return result;
   }
 
   // Extract the changeView HTML from the Responder script.
@@ -565,8 +564,6 @@
       }
     }
 
-    console.log(P, "Military parse —", units.length, "unit types",
-      units.filter((u) => u.count > 0).map((u) => u.name + ":" + u.count).join(", ") || "(all zero)");
     return { units };
   }
 
@@ -603,7 +600,7 @@
         if (tryParse()) obs.disconnect();
       });
       obs.observe(document.body, { childList: true, subtree: true });
-      // Timeout after 8s
+      // Timeout after 15s (generous for slow servers)
       setTimeout(() => {
         obs.disconnect();
         if (!resolved) {
@@ -612,7 +609,7 @@
           window.dispatchEvent(new CustomEvent("ik-close-popup"));
           resolve([]);
         }
-      }, 8000);
+      }, 15000);
     });
   }
 
@@ -709,8 +706,6 @@
       });
     }
 
-    console.log(P, "Military movements —", movements.length, "active",
-      movements.map((m) => m.missionType + (m.isReturning ? "↩" : "→")).join(", ") || "(none)");
     return movements;
   }
 
@@ -720,24 +715,22 @@
   // Active port for sending progress updates to popup (set when advisor runs)
   let progressPort = null;
 
-  // Send progress update to popup via port (falls back to no-op if no port)
+  // Send progress update to popup port + toolbar bar
   function sendProgress(current, total, phase) {
     if (progressPort) {
       try {
         progressPort.postMessage({ type: "advisor-progress", current, total, phase });
       } catch (e) { /* port may be disconnected */ }
     }
+    updateToolbarProgress(current, total);
   }
 
   // Main collection function — mode: "basic" | "workers" | "storage" | "army" | "trading" | "full"
   async function collectData(mode) {
-    console.log(P, "Getting city list... mode:", mode);
     const cities = await getCities();
     if (cities.length === 0) {
       throw new Error("No cities found — make sure you are on the Ikariam game page");
     }
-    console.log(P, "Found", cities.length, "cities");
-
     // Extract world name and avatarId for history persistence
     const world = IkUtils.getWorldName() || "";
     let avatarId = "";
@@ -759,7 +752,6 @@
     let completed = 0;
 
     // Phase 1: fetch all city views in parallel
-    console.log(P, "Phase 1: fetching city views...");
     const cityHtmls = await Promise.all(
       cities.map(async (city) => {
         const html = await fetchPage("view=city&cityId=" + city.id);
@@ -780,8 +772,7 @@
         return { city, buildingData, headerData: cityData.headerData, ownerName: cityData.bgData?.ownerName || "", townHall: null, warehouse: null, military: { units: [] }, boPos: null, safehouse: null, safehouseLevel: null };
       });
     } else if (mode === "storage") {
-      // Storage: basic + warehouse fetch only
-      console.log(P, "Phase 2: fetching warehouses...");
+      // Storage: basic + warehouse fetch
       results = await Promise.all(
         cities.map(async (city, i) => {
           try {
@@ -830,7 +821,6 @@
       );
     } else {
       const phaseLabel = wantArmy && !wantDetails ? "Fetching military..." : "Fetching details...";
-      console.log(P, "Phase 2:", phaseLabel);
       results = await Promise.all(
         cities.map(async (city, i) => {
           try {
@@ -903,7 +893,6 @@
       const RES_NAMES = { resource: "wood", "1": "wine", "2": "marble", "3": "crystal", "4": "sulfur" };
       const TYPES = [["444", "buy"], ["333", "sell"]];
 
-      console.log(P, "Phase 3: fetching trading...");
       await Promise.all(
         results.map(async (r) => {
           if (!r || r.boPos == null) {
@@ -937,7 +926,6 @@
           }
           await Promise.all(fetches);
           r.trading = tradingOffers;
-          console.log(P, "Trading for", r.city.name, "—", tradingOffers.length, "offers");
           completed++;
           sendProgress(completed, total, "Fetching trading...");
         })
@@ -947,7 +935,6 @@
     // Fetch military movements (global, not per-city) — one request to militaryAdvisor
     let militaryMovements = [];
     if (wantMovements) {
-      console.log(P, "Fetching military movements...");
       sendProgress(completed, total, "Fetching movements...");
       try {
         militaryMovements = await fetchMilitaryMovementsFromDOM();
@@ -1081,8 +1068,36 @@
       }).filter(Boolean),
     };
 
-    console.log(P, "Report ready:", reportData.cities.length, "cities");
     return reportData;
+  }
+
+  // --- Shared advisor run logic ---
+  let advisorRunning = false;
+
+  async function runAdvisor(mode, onProgress, onDone, onError) {
+    if (advisorRunning) return;
+    advisorRunning = true;
+    try {
+      const data = await collectData(mode);
+      const worldKey = "advisorReportData_" + (data.world || "unknown");
+      await new Promise((resolve) => {
+        chrome.storage.local.set({ [worldKey]: data, advisorReportData: data }, resolve);
+      });
+      if ((data.mode === "trading" || data.mode === "full") && typeof TradeHistory !== "undefined") {
+        try {
+          await TradeHistory.persistSnapshot(data);
+        } catch (e) {
+          console.error(P, "Failed to persist trade history:", e);
+        }
+      }
+      if (onDone) onDone();
+      chrome.runtime.sendMessage({ type: "open-advisor-report", worldName: data.world || "" });
+    } catch (err) {
+      console.error(P, err);
+      if (onError) onError(err);
+    } finally {
+      advisorRunning = false;
+    }
   }
 
   // Port-based advisor connection — popup connects via chrome.tabs.connect({ name: "advisor" })
@@ -1096,31 +1111,118 @@
 
     port.onMessage.addListener((msg) => {
       if (msg.action !== "start-advisor") return;
-      const mode = msg.mode || "full";
-      collectData(mode)
-        .then((data) => {
-          // Store under world-scoped key; also keep legacy global key for back-compat
-          const worldKey = "advisorReportData_" + (data.world || "unknown");
-          chrome.storage.local.set({ [worldKey]: data, advisorReportData: data }, async () => {
-            if ((data.mode === "trading" || data.mode === "full") && typeof TradeHistory !== "undefined") {
-              try {
-                await TradeHistory.persistSnapshot(data);
-              } catch (e) {
-                console.error(P, "Failed to persist trade history:", e);
-              }
-            }
-            try {
-              port.postMessage({ type: "advisor-done" });
-            } catch (e) { /* port may be disconnected */ }
-            chrome.runtime.sendMessage({ type: "open-advisor-report", worldName: data.world || "" });
-          });
-        })
-        .catch((err) => {
-          console.error(P, err);
-          try {
-            port.postMessage({ type: "advisor-error", message: err.message });
-          } catch (e) { /* port may be disconnected */ }
-        });
+      runAdvisor(msg.mode || "full",
+        null,
+        () => { try { port.postMessage({ type: "advisor-done" }); } catch (e) {} },
+        (err) => { try { port.postMessage({ type: "advisor-error", message: err.message }); } catch (e) {} }
+      );
     });
   });
+
+  // --- In-game toolbar: Advisor buttons with progress bar ---
+  const ADVISOR_MODES = [
+    { mode: "basic", label: "Basic" },
+    { mode: "workers", label: "Workers" },
+    { mode: "storage", label: "Storage" },
+    { mode: "army", label: "Army" },
+    { mode: "trading", label: "Trading" },
+    { mode: "spy", label: "Spy" },
+    { mode: "full", label: "Full" },
+  ];
+  const BAR_WIDTH = 10; // characters for progress bar
+
+  function injectAdvisorToolbar() {
+    const toolbar = document.querySelector("#GF_toolbar ul");
+    if (!toolbar || document.getElementById("ik-advisor-buttons")) return;
+
+    // Container li for all advisor buttons
+    const li = document.createElement("li");
+    li.id = "ik-advisor-buttons";
+    li.style.cssText = "margin-left:4px;";
+
+    // Separator label
+    const sep = document.createElement("a");
+    sep.textContent = "\uD83D\uDCCA";
+    sep.title = "Advisor reports";
+    sep.style.cssText = "cursor:default;user-select:none;opacity:0.7;margin:0 2px 0 0;";
+    li.appendChild(sep);
+
+    // Individual mode buttons
+    ADVISOR_MODES.forEach(({ mode, label }) => {
+      const btn = document.createElement("a");
+      btn.textContent = label;
+      btn.className = "ik-advisor-btn";
+      btn.dataset.mode = mode;
+      btn.style.cssText = "cursor:pointer;user-select:none;opacity:0.6;font-size:11px;margin:0 6px;";
+      if (mode === "full") {
+        btn.style.color = "#e06060";
+        btn.title = "Many requests \u2014 fetches everything";
+      }
+      btn.addEventListener("mouseenter", () => { if (!advisorRunning) btn.style.opacity = "1"; });
+      btn.addEventListener("mouseleave", () => { if (!advisorRunning) btn.style.opacity = "0.6"; });
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        startAdvisorFromToolbar(mode);
+      });
+      li.appendChild(btn);
+    });
+
+    // Reserved progress bar space (always takes up space, text invisible when idle)
+    const progressEl = document.createElement("span");
+    progressEl.id = "ik-advisor-progress";
+    progressEl.style.cssText = "display:inline-block;width:16ch;margin:0 2px;font-family:monospace;font-size:11px;line-height:24px;color:#8890a0;letter-spacing:-1px;visibility:hidden;vertical-align:top;white-space:nowrap;";
+    progressEl.textContent = "\u2591".repeat(BAR_WIDTH) + " 0%";
+    li.appendChild(progressEl);
+
+    li.dataset.ikOrder = "3";
+    toolbar.appendChild(li);
+    IkUtils.reorderToolbarItems(toolbar);
+  }
+
+  function updateToolbarProgress(current, total) {
+    const el = document.getElementById("ik-advisor-progress");
+    if (!el) return;
+    const pct = total > 0 ? current / total : 0;
+    const filled = Math.round(pct * BAR_WIDTH);
+    const empty = BAR_WIDTH - filled;
+    el.textContent = "\u2588".repeat(filled) + "\u2591".repeat(empty) + " " + Math.round(pct * 100) + "%";
+    el.style.visibility = "visible";
+  }
+
+  function hideToolbarProgress() {
+    const el = document.getElementById("ik-advisor-progress");
+    if (el) {
+      el.textContent = "\u2591".repeat(BAR_WIDTH) + " 0%";
+      el.style.visibility = "hidden";
+    }
+  }
+
+  function setAdvisorButtonsDisabled(disabled) {
+    document.querySelectorAll(".ik-advisor-btn").forEach((btn) => {
+      btn.style.opacity = disabled ? "0.3" : "0.6";
+      btn.style.pointerEvents = disabled ? "none" : "";
+    });
+  }
+
+  function startAdvisorFromToolbar(mode) {
+    if (advisorRunning) return;
+    updateToolbarProgress(0, 1);
+    setAdvisorButtonsDisabled(true);
+
+    runAdvisor(mode,
+      null,
+      () => {
+        hideToolbarProgress();
+        setAdvisorButtonsDisabled(false);
+      },
+      (err) => {
+        hideToolbarProgress();
+        setAdvisorButtonsDisabled(false);
+        console.error(P, "Advisor error:", err);
+      }
+    );
+  }
+
+  injectAdvisorToolbar();
 })();

@@ -84,61 +84,6 @@
     scanLog.scrollTop = scanLog.scrollHeight;
   }
 
-  // --- Advisor Report ---
-  const advisorBtns = [
-    $("advisor-basic-btn"),
-    $("advisor-workers-btn"),
-    $("advisor-storage-btn"),
-    $("advisor-army-btn"),
-    $("advisor-trade-btn"),
-    $("advisor-spy-btn"),
-    $("advisor-full-btn"),
-  ];
-  const advisorStatus = $("advisor-status");
-  const advisorProgress = $("advisor-progress");
-  const advisorStatusText = $("advisor-status-text");
-
-  function startAdvisor(mode) {
-    if (!ikariamTabId) return;
-    advisorBtns.forEach((b) => b.disabled = true);
-    advisorStatus.style.display = "block";
-    advisorProgress.style.width = "0%";
-    advisorStatusText.textContent = "Starting...";
-
-    const port = chrome.tabs.connect(ikariamTabId, { name: "advisor" });
-    port.postMessage({ action: "start-advisor", mode });
-
-    port.onMessage.addListener((msg) => {
-      if (msg.type === "advisor-progress") {
-        const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
-        advisorProgress.style.width = pct + "%";
-        advisorStatusText.textContent = msg.phase;
-      } else if (msg.type === "advisor-done") {
-        advisorBtns.forEach((b) => b.disabled = false);
-        advisorStatus.style.display = "none";
-        port.disconnect();
-      } else if (msg.type === "advisor-error") {
-        console.error("Advisor report error:", msg.message);
-        advisorBtns.forEach((b) => b.disabled = false);
-        advisorStatus.style.display = "none";
-        port.disconnect();
-      }
-    });
-
-    port.onDisconnect.addListener(() => {
-      advisorBtns.forEach((b) => b.disabled = false);
-      advisorStatus.style.display = "none";
-    });
-  }
-
-  $("advisor-basic-btn").addEventListener("click", () => startAdvisor("basic"));
-  $("advisor-workers-btn").addEventListener("click", () => startAdvisor("workers"));
-  $("advisor-storage-btn").addEventListener("click", () => startAdvisor("storage"));
-  $("advisor-army-btn").addEventListener("click", () => startAdvisor("army"));
-  $("advisor-trade-btn").addEventListener("click", () => startAdvisor("trading"));
-  $("advisor-spy-btn").addEventListener("click", () => startAdvisor("spy"));
-  $("advisor-full-btn").addEventListener("click", () => startAdvisor("full"));
-
   // --- Scan ---
   const cancelBtn = document.createElement("button");
   cancelBtn.className = "btn btn-danger btn-sm";
@@ -443,6 +388,7 @@
       delBtn.textContent = "Delete";
       delBtn.addEventListener("click", (e) => {
         e.stopPropagation();
+        if (!confirm("Delete this saved map? This cannot be undone.")) return;
         deleteMap(entry.key);
       });
       card.appendChild(delBtn);
@@ -565,7 +511,7 @@
   // --- Cleanup toggle ---
   async function loadCleanupState() {
     const data = await chrome.storage.local.get("cleanupEnabled");
-    cleanupToggle.checked = data.cleanupEnabled !== false;
+    cleanupToggle.checked = !!data.cleanupEnabled;
   }
 
   cleanupToggle.addEventListener("change", () => {
@@ -921,6 +867,7 @@
 
   noteDeleteBtn.addEventListener("click", () => {
     if (!activeNoteId) return;
+    if (!confirm("Delete this note? This cannot be undone.")) return;
     const idx = notes.findIndex((n) => n.id === activeNoteId);
     notes.splice(idx, 1);
     saveNotes();
@@ -956,7 +903,7 @@
 
   async function loadAutoFinishState() {
     const data = await chrome.storage.local.get("autoFinishEnabled");
-    autofinishToggle.checked = data.autoFinishEnabled !== false;
+    autofinishToggle.checked = !!data.autoFinishEnabled;
   }
   loadAutoFinishState();
 
@@ -966,5 +913,18 @@
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "autofinish-toggle", enabled }).catch(() => {});
     }
+  });
+
+  // --- Hide game notes toggle ---
+  const hideGameNotesToggle = $("hide-game-notes-toggle");
+
+  async function loadHideGameNotesState() {
+    const data = await chrome.storage.local.get("hideGameNotes");
+    hideGameNotesToggle.checked = !!data.hideGameNotes;
+  }
+  loadHideGameNotesState();
+
+  hideGameNotesToggle.addEventListener("change", () => {
+    chrome.storage.local.set({ hideGameNotes: hideGameNotesToggle.checked });
   });
 })();

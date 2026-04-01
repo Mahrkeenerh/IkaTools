@@ -3,7 +3,7 @@
   // Only run on game pages (s1-en.ikariam...), not forum/lobby
   if (!/^s\d+/.test(location.hostname)) return;
   const P = "[AP]";
-  const NAVIGATE_COOLDOWN = 10000;
+  const NAVIGATE_COOLDOWN = 15000;
   const MISSION_DURATIONS = [150, 450]; // tier 1 = 2m30s, tier 2 = 7m30s
 
   let enabled = false;
@@ -72,11 +72,6 @@
       d.getSeconds().toString().padStart(2, "0");
   }
 
-  function fmtTime(date) {
-    return date.getHours().toString().padStart(2, "0") + ":" +
-      date.getMinutes().toString().padStart(2, "0");
-  }
-
   function sessionStats() {
     const elapsed = (Date.now() - sessionStartTime) / 3600000;
     const rate = elapsed > 0.01 ? (sessionRaids / elapsed).toFixed(1) : "0";
@@ -123,7 +118,6 @@
       streakCount = 0;
       raidsSinceLastConvert = 0;
       nextActionTime = 0;
-      console.log(P, ts(), "Restored counters, reset streak (gap " + fmt(gap) + ")");
     } else {
       // Quick reload — preserve everything
       streakCount = s.streakCount || 0;
@@ -135,7 +129,6 @@
       distractionRaids = s.distractionRaids || 0;
       distractionMu = s.distractionMu || 0;
       postBreakRaids = s.postBreakRaids || 0;
-      console.log(P, ts(), "Restored full state (gap " + fmt(gap) + ")");
     }
   }
 
@@ -144,7 +137,6 @@
     if (!windowFocused || document.hidden) return;
     lastActivity = Date.now();
     if (inControl) {
-      console.log(P, ts(), "User active, releasing |", sessionStats());
       handBack();
     }
   }
@@ -246,7 +238,6 @@
 
       sessionBreakCount++;
       sessionBreakMs += d;
-      console.log(P, ts(), "Break " + fmt(d) + " after " + streakCount + " raids (" + (wasForced ? "T2-forced" : "hazard") + "), until " + fmtTime(new Date(Date.now() + d)) + " |", sessionStats());
       streakCount = 0;
       raidsSinceLastConvert = 0;
 
@@ -332,7 +323,7 @@
       if (checkConvertDom()) obs.disconnect();
     });
     obs.observe(document.body, { childList: true, subtree: true });
-    setTimeout(() => obs.disconnect(), 8000);
+    setTimeout(() => obs.disconnect(), 15000);
   }
 
   function checkConvertDom() {
@@ -350,10 +341,7 @@
     const fillDelay = (1 + Math.random() * 2) * 1000;
     scheduleConvert(() => {
       if (!inControl || !isIdle()) return;
-      if (!document.getElementById("CPToCrewForm")) {
-        console.log(P, ts(), "Convert: form gone, aborted");
-        return;
-      }
+      if (!document.getElementById("CPToCrewForm")) return;
       // Click slider max via bridge (page context handles slider JS)
       IkUtils.ensureBridge();
       window.dispatchEvent(new CustomEvent("ik-convert-crew"));
@@ -363,15 +351,11 @@
       scheduleConvert(() => {
         if (!inControl || !isIdle()) return;
         const submitBtn = document.getElementById("CPToCrewSubmit");
-        if (!submitBtn || submitBtn.classList.contains("button_disabled")) {
-          console.log(P, ts(), "Convert: submit disabled/missing");
-          return;
-        }
+        if (!submitBtn || submitBtn.classList.contains("button_disabled")) return;
         submitBtn.click();
         raidsSinceLastConvert = 0;
         sessionConverts++;
         saveState();
-        console.log(P, ts(), "Converted");
       }, submitDelay);
     }, fillDelay);
   }
@@ -400,7 +384,6 @@
           postBreakRaids = 0;
           tempo = 0;
         }
-        console.log(P, ts(), "Idle " + fmt(idleDuration) + ", taking control");
       }
 
       // Daily sleep jitter re-roll
@@ -413,7 +396,6 @@
       if (document.querySelector("#cinema_c")) return;
 
       if (document.querySelector("img.captchaImage")) {
-        console.log(P, ts(), "Captcha — waiting");
         return;
       }
 
@@ -451,14 +433,10 @@
         lastNavigateTime = 0;
         sessionRaids++;
         if (tier === 0) sessionT1++; else sessionT2++;
-        const tierLabel = tier === 0 ? "T1" : "T2";
-        const until = fmtTime(new Date(Date.now() + total));
-        const extra = (convertEnabled ? " →convert" : "") + (forceBreakNext ? " [brk queued]" : "");
-        console.log(P, ts(), "#" + sessionRaids + " " + tierLabel + " → " + fmt(total) + " until " + until + " (streak:" + streakCount + " haz:" + getBreakHazard().toFixed(2) + ")" + extra);
         raidsSinceLastConvert++;
         saveState();
         // Safety net: clear raidInProgress after 30s in case normal flow fails
-        setTimeout(() => { raidInProgress = false; }, 30000);
+        setTimeout(() => { raidInProgress = false; }, 45000);
         // Delay convert start so raid AJAX can complete before we navigate away
         scheduleConvert(() => {
           raidInProgress = false;
@@ -483,7 +461,7 @@
             }
           });
           obs.observe(document.body, { childList: true, subtree: true });
-          setTimeout(() => obs.disconnect(), 5000);
+          setTimeout(() => obs.disconnect(), 10000);
         } else {
           // Wrong city or not on city view — navigate directly via AJAX
           navigate("?view=city&cityId=" + pirateCityId);
@@ -577,8 +555,9 @@
     });
 
     li.appendChild(link);
-    li.style.marginLeft = "20px";
+    li.dataset.ikOrder = "2";
     toolbar.appendChild(li);
+    IkUtils.reorderToolbarItems(toolbar);
   }
 
   // --- Randomized defaults for new users ---
@@ -631,7 +610,6 @@
     if (Object.keys(toSave).length > 0) chrome.storage.local.set(toSave);
 
     restoreState(data.pirateState);
-    console.log(P, ts(), "Loaded — enabled=" + enabled + ", convert=" + convertEnabled + ", city=" + pirateCityId + " |", sessionStats());
     if (enabled && pirateCityId) start();
     injectPirateToggle();
   });
@@ -647,7 +625,6 @@
     }
     if (msg.type === "pirate-convert-toggle") {
       convertEnabled = msg.enabled;
-      console.log(P, ts(), "Convert:", convertEnabled);
     }
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;
@@ -671,12 +648,10 @@
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.pirateEnabled) {
       enabled = !!changes.pirateEnabled.newValue;
-      console.log(P, ts(), "Toggle:", enabled);
       if (enabled && pirateCityId) start(); else stop();
     }
     if (changes.pirateConvertEnabled) {
       convertEnabled = !!changes.pirateConvertEnabled.newValue;
-      console.log(P, ts(), "Convert:", convertEnabled);
     }
   });
 

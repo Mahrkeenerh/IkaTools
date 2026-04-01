@@ -100,5 +100,19 @@ globalThis.IkUtils = (() => {
     });
   }
 
-  return { ensureBridge, getWorldName, parseTilesFromDOM, parseNum, getCities };
+  // Reorder our custom toolbar items (data-ik-order) so they appear in correct order
+  // and apply margins: first custom item gets 20px gap from game items, rest get 4px
+  function reorderToolbarItems(toolbar) {
+    const items = Array.from(toolbar.querySelectorAll("[data-ik-order]"));
+    if (items.length === 0) return;
+    items.sort((a, b) => parseInt(a.dataset.ikOrder) - parseInt(b.dataset.ikOrder));
+    // Remove and re-append in order
+    items.forEach((item) => item.remove());
+    items.forEach((item, i) => {
+      item.style.marginLeft = i === 0 ? "20px" : "4px";
+      toolbar.appendChild(item);
+    });
+  }
+
+  return { ensureBridge, getWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems };
 })();

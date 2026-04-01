@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Ikariam Tools",
-  "version": "2.3",
+  "version": "1.0",
   "description": "Removes premium UI clutter, auto-solves piracy captchas, and scans world maps",
   "permissions": ["offscreen", "storage", "unlimitedStorage", "activeTab"],
   "icons": {
@@ -26,7 +26,7 @@
     {
       "matches": ["*://*.ikariam.gameforge.com/*"],
       "exclude_matches": ["*://forum.ikariam.gameforge.com/*"],
-      "js": ["utils.js", "cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js", "islandinfo.js", "autofinish.js", "autopirate.js", "tradehistory.js", "advisor.js", "upgradeinfo.js", "winetimer.js"],
+      "js": ["utils.js", "cleanup.js", "content.js", "maprender.js", "scanner.js", "minimap.js", "islandinfo.js", "autofinish.js", "autopirate.js", "tradehistory.js", "advisor.js", "upgradeinfo.js", "winetimer.js", "gamenotes.js"],
       "run_at": "document_idle"
     }
   ],
@@ -35,7 +35,7 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["model/model.onnx", "dist/*", "bridge.js"],
+      "resources": ["model/model.onnx", "dist/*", "bridge.js", "icons/resources/*"],
       "matches": ["*://*.ikariam.gameforge.com/*"],
       "exclude_matches": ["*://forum.ikariam.gameforge.com/*"]
     }

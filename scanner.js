@@ -1,7 +1,7 @@
 // World map scanner — uses the game's own coordinate navigator to jump around
 // and reads tiles from the live DOM after each jump.
 (() => {
-  const DELAY_BETWEEN = 350; // extra breathing room
+
 
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -46,7 +46,7 @@
   // The old proximity-only check could pass on stale tiles when the stride
   // was close to the proximity threshold, causing the scanner to read duplicate
   // data from the previous viewport and skip the target area entirely.
-  function waitForTilesUpdate(beforeCoords, targetX, targetY, timeoutMs = 2000) {
+  function waitForTilesUpdate(beforeCoords, targetX, targetY, timeoutMs = 5000) {
     return new Promise((resolve) => {
       const start = Date.now();
 
@@ -102,7 +102,7 @@
       setTimeout(() => {
         window.removeEventListener("ik-game-data", handler);
         resolve({});
-      }, 2000);
+      }, 5000);
     });
   }
 
@@ -212,8 +212,6 @@
         const before = snapshotIslandCoords();
         jumpTo(cx, cy);
         await waitForTilesUpdate(before, cx, cy);
-        await sleep(DELAY_BETWEEN);
-
         const result = readCurrentTiles();
         addIslands(result.islands);
         requestsDone++;
@@ -269,7 +267,7 @@
     // cardinal directions, stop on first empty.
     let tipRight = 50, tipLeft = 50, tipDown = 50, tipUp = 50;
 
-    totalEstimate = 30;
+    totalEstimate = 42;
     progress("cross");
 
     const centerResult = await jumpAndRead(50, 50, "cross");

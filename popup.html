@@ -3,43 +3,72 @@
 <head>
 <meta charset="utf-8">
 <style>
+:root {
+  --bg-body: #1a1f2e;
+  --bg-panel: #141824;
+  --bg-input: #0d1018;
+  --bg-subtle: #1e2535;
+  --bg-active: #2a3550;
+  --border: #2a3040;
+  --border-subtle: #1e2535;
+  --border-focus: #3a4a6a;
+  --border-hover: #3a5a8a;
+  --text: #c8cdd8;
+  --text-heading: #e0e4ec;
+  --text-muted: #8890a0;
+  --text-dim: #667;
+  --text-dimmer: #556;
+  --text-dimmest: #445;
+  --primary: #2a5fad;
+  --primary-hover: #3570c4;
+  --primary-disabled: #1e2a3e;
+  --accent: #5ca0f2;
+  --success: #6fce8c;
+  --danger: #e06060;
+  --warning: #d0b040;
+  --gold: #f2c85c;
+  --danger-bg: #6b2020;
+  --danger-bg-hover: #8b3030;
+  --scrollbar-thumb: #5c6a85;
+  --scrollbar-hover: #7a8aaa;
+}
 * { box-sizing: border-box; margin: 0; padding: 0; }
 body {
   width: 500px;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
   font-size: 13px;
-  background: #1a1f2e;
-  color: #c8cdd8;
+  background: var(--bg-body);
+  color: var(--text);
   overflow: hidden;
 }
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: #5c6a85; border-radius: 3px; }
-::-webkit-scrollbar-thumb:hover { background: #7a8aaa; }
+::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-hover); }
 
 .header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   padding: 12px 16px;
-  background: #141824;
-  border-bottom: 1px solid #2a3040;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
 }
-.header h1 { font-size: 14px; font-weight: 600; color: #e0e4ec; }
+.header h1 { font-size: 14px; font-weight: 600; color: var(--text-heading); }
 .tab-bar { display: flex; gap: 4px; }
 .tab-bar button {
   padding: 5px 12px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   border-radius: 4px;
   background: transparent;
-  color: #8890a0;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 12px;
 }
 .tab-bar button.active {
-  background: #2a3550;
-  color: #e0e4ec;
-  border-color: #3a4a6a;
+  background: var(--bg-active);
+  color: var(--text-heading);
+  border-color: var(--border-focus);
 }
 
 .panel { display: none; padding: 16px; overflow-y: auto; max-height: 520px; }
@@ -49,15 +78,15 @@ body {
 #scan-status {
   padding: 8px 12px;
   margin-bottom: 12px;
-  background: #141824;
+  background: var(--bg-panel);
   border-radius: 6px;
   font-size: 12px;
-  color: #8890a0;
+  color: var(--text-muted);
 }
 #scan-status .phase { color: #a0b0d0; font-weight: 500; }
 .progress-wrap {
   height: 6px;
-  background: #0d1018;
+  background: var(--bg-input);
   border-radius: 3px;
   margin: 8px 0;
   overflow: hidden;
@@ -65,7 +94,7 @@ body {
 .progress-bar {
   height: 100%;
   width: 0%;
-  background: linear-gradient(90deg, #3a7bd5, #5ca0f2);
+  background: linear-gradient(90deg, #3a7bd5, var(--accent));
   border-radius: 3px;
   transition: width 0.3s ease;
 }
@@ -73,8 +102,8 @@ body {
   margin-top: 10px;
   max-height: 80px;
   overflow-y: auto;
-  font-size: 11px;
-  color: #667;
+  font-size: 12px;
+  color: var(--text-dim);
   font-family: monospace;
 }
 
@@ -88,18 +117,18 @@ body {
   cursor: pointer;
   transition: background 0.15s;
 }
-.btn-primary { background: #2a5fad; color: #fff; }
-.btn-primary:hover { background: #3570c4; }
-.btn-primary:disabled { background: #1e2a3e; color: #556; cursor: default; }
-.btn-danger { background: #6b2020; color: #daa; font-size: 11px; }
-.btn-danger:hover { background: #8b3030; }
-.btn-sm { padding: 4px 10px; font-size: 11px; }
+.btn-primary { background: var(--primary); color: #fff; }
+.btn-primary:hover { background: var(--primary-hover); }
+.btn-primary:disabled { background: var(--primary-disabled); color: var(--text-dimmer); cursor: default; }
+.btn-danger { background: var(--danger-bg); color: #daa; font-size: 12px; }
+.btn-danger:hover { background: var(--danger-bg-hover); }
+.btn-sm { padding: 4px 10px; font-size: 12px; }
 
 /* Controls row */
 .controls-row {
-  margin-top: 14px;
+  margin-top: 16px;
   padding-top: 12px;
-  border-top: 1px solid #2a3040;
+  border-top: 1px solid var(--border);
   display: flex;
   align-items: center;
   gap: 16px;
@@ -111,14 +140,14 @@ body {
   gap: 6px;
   font-size: 12px;
 }
-.control-group label { color: #8890a0; white-space: nowrap; }
+.control-group label { color: var(--text-muted); white-space: nowrap; }
 .control-group input[type="number"] {
   width: 56px;
   padding: 3px 4px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   border-radius: 3px;
-  background: #0d1018;
-  color: #c8cdd8;
+  background: var(--bg-input);
+  color: var(--text);
   font-size: 12px;
   text-align: center;
 }
@@ -132,7 +161,7 @@ body {
 .toggle .slider {
   position: absolute;
   inset: 0;
-  background: #2a3040;
+  background: var(--border);
   border-radius: 10px;
   cursor: pointer;
   transition: background 0.2s;
@@ -144,45 +173,45 @@ body {
   top: 3px;
   width: 14px;
   height: 14px;
-  background: #667;
+  background: var(--text-dim);
   border-radius: 50%;
   transition: transform 0.2s, background 0.2s;
 }
-.toggle input:checked + .slider { background: #2a5fad; }
+.toggle input:checked + .slider { background: var(--primary); }
 .toggle input:checked + .slider::before {
   transform: translateX(16px);
-  background: #e0e4ec;
+  background: var(--text-heading);
 }
 .pos-btns { display: flex; gap: 2px; }
 .pos-btns button {
   padding: 3px 8px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   border-radius: 3px;
   background: transparent;
-  color: #8890a0;
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
 }
 .pos-btns button.active, .scale-btns button.active {
-  background: #2a3550;
-  color: #e0e4ec;
-  border-color: #3a4a6a;
+  background: var(--bg-active);
+  color: var(--text-heading);
+  border-color: var(--border-focus);
 }
 .scale-btns { display: flex; gap: 2px; }
 .scale-btns button {
   padding: 3px 6px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   border-radius: 3px;
   background: transparent;
-  color: #8890a0;
+  color: var(--text-muted);
   cursor: pointer;
-  font-size: 11px;
+  font-size: 12px;
 }
 
 #not-ikariam {
   text-align: center;
   padding: 60px 20px;
-  color: #667;
+  color: var(--text-dim);
 }
 
 /* Settings */
@@ -191,43 +220,43 @@ body {
   align-items: center;
   gap: 12px;
   padding: 10px 0;
-  border-bottom: 1px solid #1e2535;
+  border-bottom: 1px solid var(--border-subtle);
 }
 .setting-row:last-child { border-bottom: none; }
 .setting-label { flex: 1; }
 .setting-label span:first-child {
   display: block;
   font-size: 13px;
-  color: #e0e4ec;
+  color: var(--text-heading);
 }
 .setting-desc {
   display: block;
-  font-size: 11px;
-  color: #667;
+  font-size: 12px;
+  color: var(--text-dim);
   margin-top: 2px;
 }
 
 /* Gallery */
-.gallery-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid #2a3040; }
+.gallery-grid { display: grid; grid-template-columns: 1fr; gap: 12px; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
 .gallery-card {
   position: relative;
   padding: 10px;
-  background: #141824;
+  background: var(--bg-panel);
   border-radius: 8px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   cursor: pointer;
   transition: border-color 0.15s;
 }
-.gallery-card:hover { border-color: #3a5a8a; }
+.gallery-card:hover { border-color: var(--border-hover); }
 .gallery-card .delete-btn {
   position: absolute;
   top: 8px;
   right: 8px;
 }
-.gallery-info h3 { font-size: 14px; color: #e0e4ec; margin-bottom: 4px; }
-.gallery-info .meta { font-size: 11px; color: #778; margin-bottom: 2px; }
+.gallery-info h3 { font-size: 14px; color: var(--text-heading); margin-bottom: 4px; }
+.gallery-info .meta { font-size: 12px; color: #778; margin-bottom: 2px; }
 .gallery-actions { display: flex; gap: 6px; margin-top: 10px; }
-.gallery-empty { text-align: center; padding: 50px 20px; color: #556; }
+.gallery-empty { text-align: center; padding: 50px 20px; color: var(--text-dimmer); }
 .thumb-strip {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -245,14 +274,14 @@ body {
   height: auto;
   background: #0e2040;
   border-radius: 3px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   cursor: pointer;
   image-rendering: pixelated;
   transition: border-color 0.15s;
 }
 .layer-thumb:hover { border-color: #5a8aba; }
 .thumb-label {
-  font-size: 10px;
+  font-size: 12px;
   color: #778;
   text-align: center;
 }
@@ -266,7 +295,7 @@ body {
 .notes-sidebar {
   width: 200px;
   min-width: 200px;
-  border-right: 1px solid #2a3040;
+  border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
 }
@@ -275,19 +304,19 @@ body {
   align-items: center;
   justify-content: space-between;
   padding: 8px 10px;
-  border-bottom: 1px solid #2a3040;
+  border-bottom: 1px solid var(--border);
 }
-.notes-sidebar-header span { font-size: 12px; color: #8890a0; }
+.notes-sidebar-header span { font-size: 12px; color: var(--text-muted); }
 .notes-sidebar-header button {
   padding: 2px 8px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   border-radius: 3px;
   background: transparent;
-  color: #8890a0;
+  color: var(--text-muted);
   cursor: pointer;
   font-size: 14px;
 }
-.notes-sidebar-header button:hover { background: #2a3550; color: #e0e4ec; }
+.notes-sidebar-header button:hover { background: var(--bg-active); color: var(--text-heading); }
 #notes-list {
   flex: 1;
   overflow-y: auto;
@@ -296,14 +325,14 @@ body {
   padding: 8px 10px;
   cursor: pointer;
   font-size: 12px;
-  color: #c8cdd8;
-  border-bottom: 1px solid #1e2535;
+  color: var(--text);
+  border-bottom: 1px solid var(--border-subtle);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }
 .note-item:hover { background: rgba(42, 74, 106, 0.3); }
-.note-item.active { background: #2a3550; color: #e0e4ec; }
+.note-item.active { background: var(--bg-active); color: var(--text-heading); }
 .note-content {
   flex: 1;
   display: flex;
@@ -322,31 +351,31 @@ body {
   border: 1px solid transparent;
   border-radius: 3px;
   background: transparent;
-  color: #e0e4ec;
+  color: var(--text-heading);
   font-size: 14px;
   font-weight: 600;
   font-family: inherit;
 }
-#note-title:focus { border-color: #3a4a6a; background: #0d1018; outline: none; }
+#note-title:focus { border-color: var(--border-focus); background: var(--bg-input); outline: none; }
 #note-editor {
   flex: 1;
   padding: 8px;
-  border: 1px solid #2a3040;
+  border: 1px solid var(--border);
   border-radius: 4px;
-  background: #0d1018;
-  color: #c8cdd8;
+  background: var(--bg-input);
+  color: var(--text);
   font-size: 12px;
   font-family: inherit;
   resize: none;
   outline: none;
 }
-#note-editor:focus { border-color: #3a4a6a; }
+#note-editor:focus { border-color: var(--border-focus); }
 .notes-empty {
   flex: 1;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #556;
+  color: var(--text-dimmer);
   font-size: 12px;
 }
 </style>
@@ -375,19 +404,6 @@ body {
   <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
     <button class="btn btn-primary" id="scan-btn">Scan World Map</button>
   </div>
-  <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:8px;">
-    <button class="btn btn-primary btn-sm" id="advisor-basic-btn">Basic Info</button>
-    <button class="btn btn-primary btn-sm" id="advisor-workers-btn">Workers</button>
-    <button class="btn btn-primary btn-sm" id="advisor-storage-btn">Storage</button>
-    <button class="btn btn-primary btn-sm" id="advisor-army-btn">Army</button>
-    <button class="btn btn-primary btn-sm" id="advisor-trade-btn">Trading</button>
-    <button class="btn btn-primary btn-sm" id="advisor-spy-btn">Spy</button>
-    <button class="btn btn-danger btn-sm" id="advisor-full-btn" title="Many requests — fetches everything">Comprehensive</button>
-  </div>
-  <div id="advisor-status" style="font-size:11px;color:#8890a0;margin-top:6px;display:none;">
-    <div class="progress-wrap"><div class="progress-bar" id="advisor-progress"></div></div>
-    <span id="advisor-status-text"></span>
-  </div>
   <div id="scan-log"></div>
   <div id="gallery-list" class="gallery-grid"></div>
 </div>
@@ -415,7 +431,7 @@ body {
 <div id="settings-panel" class="panel">
   <div class="setting-row">
     <label class="toggle">
-      <input type="checkbox" id="cleanup-toggle" checked>
+      <input type="checkbox" id="cleanup-toggle">
       <span class="slider"></span>
     </label>
     <div class="setting-label">
@@ -425,17 +441,17 @@ body {
   </div>
   <div class="setting-row">
     <label class="toggle">
-      <input type="checkbox" id="hide-zeros-toggle">
+      <input type="checkbox" id="hide-game-notes-toggle">
       <span class="slider"></span>
     </label>
     <div class="setting-label">
-      <span>Dim empty islands</span>
-      <span class="setting-desc">Fades uninhabited islands so populated ones stand out</span>
+      <span>Hide game notes</span>
+      <span class="setting-desc">Removes the game's built-in notes button from the top bar</span>
     </div>
   </div>
   <div class="setting-row">
     <label class="toggle">
-      <input type="checkbox" id="autofinish-toggle" checked>
+      <input type="checkbox" id="autofinish-toggle">
       <span class="slider"></span>
     </label>
     <div class="setting-label">
@@ -565,9 +581,13 @@ body {
     </div>
   </div>
   <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="hide-zeros-toggle">
+      <span class="slider"></span>
+    </label>
     <div class="setting-label">
-      <span>Friend highlighting</span>
-      <span class="setting-desc">Friends are highlighted in green on island views (your cities show in blue). If all 6 friend slots are full, scroll the friend list once so all friends get cached.</span>
+      <span>Dim empty islands</span>
+      <span class="setting-desc">Fades uninhabited islands so populated ones stand out</span>
     </div>
   </div>
 </div>

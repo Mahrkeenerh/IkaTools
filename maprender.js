@@ -51,7 +51,7 @@ globalThis.MapRender = (() => {
 
   // Ownership colors
   const OWNER_COLORS = {
-    own: "#64B5F6",       // blue
+    own: "#FF4EC7",       // hot pink
     ally: "#00FF88",      // green
     occupied: "#FF9800",  // orange
     war: "#F44336",       // red
@@ -67,6 +67,7 @@ globalThis.MapRender = (() => {
     },
     ownership: {
       name: "Ownership",
+      bg: null,
       color: (isl) => {
         if (!isl.owner) return DIM;
         for (const key of ["own", "ally", "war", "occupied"]) {
@@ -181,12 +182,17 @@ globalThis.MapRender = (() => {
     canvas.width = w;
     canvas.height = h;
 
-    // Ocean background
-    const bgGrad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.7);
-    bgGrad.addColorStop(0, "#2670a8");
-    bgGrad.addColorStop(1, OCEAN_BG);
-    ctx.fillStyle = bgGrad;
-    ctx.fillRect(0, 0, w, h);
+    // Ocean background (layers can override with a flat bg color)
+    if (layer.bg) {
+      ctx.fillStyle = layer.bg;
+      ctx.fillRect(0, 0, w, h);
+    } else {
+      const bgGrad = ctx.createRadialGradient(w / 2, h / 2, 0, w / 2, h / 2, w * 0.7);
+      bgGrad.addColorStop(0, "#2670a8");
+      bgGrad.addColorStop(1, OCEAN_BG);
+      ctx.fillStyle = bgGrad;
+      ctx.fillRect(0, 0, w, h);
+    }
 
     // Wave ripples — skip only for tiny thumbnails
     if (tw >= 10) {

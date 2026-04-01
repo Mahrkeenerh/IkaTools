@@ -133,7 +133,7 @@
   IkUtils.ensureBridge();
 
   chrome.storage.local.get("autoFinishEnabled", (data) => {
-    enabled = data.autoFinishEnabled !== false;
+    enabled = !!data.autoFinishEnabled;
     if (enabled) start();
   });
 

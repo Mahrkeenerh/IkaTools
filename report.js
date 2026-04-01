@@ -868,6 +868,7 @@
     const RESOURCES = ["wood", "wine", "marble", "crystal", "sulfur"];
     const RES_LABELS = { wood: "Wood", wine: "Wine", marble: "Marble", crystal: "Crystal", sulfur: "Sulfur" };
     const RES_CLASSES = { wood: "res-wood", wine: "res-wine", marble: "res-marble", crystal: "res-crystal", sulfur: "res-sulfur" };
+    const RES_ICONS = { wood: "icons/resources/wood.png", wine: "icons/resources/wine.png", marble: "icons/resources/marble.png", crystal: "icons/resources/crystal.png", sulfur: "icons/resources/sulfur.png" };
     const RES_IDX = { wood: 0, wine: 1, marble: 2, crystal: 3, sulfur: 4 };
     const playerName = (report.global.playerName || "").toLowerCase();
 
@@ -1021,7 +1022,7 @@
 
       const header = document.createElement("div");
       header.className = "res-row-header " + RES_CLASSES[res];
-      header.textContent = RES_LABELS[res];
+      header.innerHTML = `<img class="res-icon" src="${RES_ICONS[res]}" alt="" style="width:18px;height:18px;vertical-align:-3px;margin-right:6px">${RES_LABELS[res]}`;
       row.appendChild(header);
 
       const sides = document.createElement("div");

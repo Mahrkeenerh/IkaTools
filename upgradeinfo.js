@@ -1,6 +1,5 @@
 // Show missing resource amounts on building upgrade panels
 (() => {
-  const TAG = "[IkTools:UpgradeInfo]";
   const RESOURCE_IDS = {
     wood: "js_GlobalMenu_wood",
     wine: "js_GlobalMenu_wine",
@@ -40,7 +39,6 @@
         span.style.cssText = "display:block; font-size:0.85em; opacity:0.8; line-height:1.2;";
         span.textContent = `(-${formatNum(missing)})`;
         li.appendChild(span);
-        console.log(TAG, `Injected missing for ${type}: -${formatNum(missing)}`);
       }
     }
   }
