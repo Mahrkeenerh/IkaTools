@@ -9,13 +9,13 @@ const outFile = `ikariam-tools-v${version}.zip`;
 // Include only what the extension needs at runtime
 execSync(`zip -r ${outFile} \
   manifest.json \
-  *.js \
-  *.html \
+  background.js \
+  content/ \
+  pages/ \
   icons/ \
   model/model.onnx \
   dist/ \
-  README.md \
-  -x "esbuild.config.mjs" "package.mjs" "node_modules/*" ".git/*" "*.md" "!README.md"`, {
+  README.md`, {
   stdio: "inherit",
 });
 

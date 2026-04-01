@@ -14,9 +14,17 @@ Chrome MV3 extension for the Ikariam browser game. Features: premium UI cleanup,
 ```bash
 npm install        # Install deps (esbuild, onnxruntime-web)
 npm run build      # Bundle offscreen.js + copy WASM to dist/
+npm run package    # Build + zip release (ikariam-tools-v{version}.zip)
 ```
 
 No dev server — load unpacked extension directly from this directory in `chrome://extensions`.
+
+## Releasing
+
+1. Bump `version` in `manifest.json`
+2. Run `npm run package` — builds dist/ and creates `ikariam-tools-v{version}.zip`
+3. Create a GitHub release at https://github.com/Mahrkeenerh/IkaTools/releases/new
+4. Tag: `v{version}`, attach the zip file
 
 ## Directory Structure
 
