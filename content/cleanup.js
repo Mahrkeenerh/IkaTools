@@ -19,6 +19,9 @@
     const trader = document.querySelector('li[onclick*="premiumTrader"]');
     if (trader) trader.remove();
 
+    const resourceShop = document.querySelector('li.resourceShop[onclick*="premiumResourceShop"]');
+    if (resourceShop) resourceShop.remove();
+
     document.querySelectorAll(".footerleft, .footerright").forEach(el => el.remove());
 
     const mapControls = document.getElementById("mapControls");
