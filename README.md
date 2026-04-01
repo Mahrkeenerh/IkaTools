@@ -46,92 +46,138 @@ The extension adds three buttons to the game's top toolbar:
 
 The auto-pirate feature simulates human-like raid timing to avoid detection. Each user gets **randomly generated parameters** on first install — no two users behave the same way.
 
-### How It Works
-
-The system models a human player who launches pirate raids while doing other things (watching videos, browsing, etc.). It simulates:
-
-1. **Raid timing** — Delays between raids follow a log-normal distribution, producing the kind of irregular spacing a real player would have
-2. **Streaks and breaks** — After a random number of raids, the system takes a break (like a player getting up, eating, etc.)
-3. **Distraction periods** — Occasionally enters a "distracted" state with longer delays
-4. **Tier selection** — Chooses between Tier 1 (fast, 2m30s) and Tier 2 (slow, 7m30s) raids with contextual probability
-5. **Session fatigue** — Delays gradually increase over long sessions
-6. **Sleep hours** — Completely stops during configured sleep window
-
-### Parameters Explained
-
-When you open the extension popup's Settings tab and expand the **Advanced** section under auto-pirate, you'll see your randomly assigned parameters. Here's what each one controls:
-
-#### Timing Core
-
-| Parameter | Range | What it does |
-|-----------|-------|--------------|
-| **Mu** | 2.7 - 3.3 | Center of the log-normal delay distribution. Higher = longer average delays between raids. At mu=2.9, the median delay is about 18 seconds; at mu=3.3, it's about 27 seconds. |
-| **Sigma** | 0.8 - 1.2 | Spread of the delay distribution. Higher = more variance (some very short delays, some very long). At sigma=0.8 delays are fairly consistent; at sigma=1.2 they're more erratic. |
-
-The actual delay for each raid is: `exp(mu + sigma * random_normal)` seconds, plus modifiers from fatigue, distraction, tempo, and post-break state.
-
-#### Streak & Break System
-
-| Parameter | Range | What it does |
-|-----------|-------|--------------|
-| **Streak Lo** | 8 - 12 | Minimum raids before a break becomes possible. Below this, the system never takes a break. |
-| **Streak Hi** | 16 - 22 | Raids at which a break becomes near-certain. A sigmoid curve ramps break probability from 0% at Streak Lo to ~100% at Streak Hi. |
-| **Break Min** | 3 - 6 min | Minimum break duration. Actual break length is log-normal distributed between Break Min and Break Max. |
-| **Break Max** | 8 - 14 min | Maximum typical break duration (can occasionally exceed by up to 5 minutes). Longer streaks produce longer breaks. |
-
-The break hazard follows a sigmoid: `1 / (1 + exp(-steepness * (raidCount - midpoint)))` where midpoint = (Lo + Hi) / 2.
-
-#### Tier 2 Selection
-
-Tier 2 raids take 7m30s instead of 2m30s. The system models a player who sometimes picks the longer option:
-
-| Parameter | Range | What it does |
-|-----------|-------|--------------|
-| **T2 Base** | 0.06 - 0.14 | Base probability of choosing T2 early in a streak. |
-| **T2 Ramp** | 0.40 - 0.70 | Maximum additional T2 probability as the streak approaches a break. Models "getting lazy before taking a break." Uses a sigmoid curve peaking around 60% of the way to Streak Hi. |
-| **T2 Dist** | 0.30 - 0.50 | T2 probability during distraction states. Distracted players pick the lazy option more often. |
-| **T2->brk** | 0.15 - 0.30 | Chance that choosing T2 forces an immediate break afterward. Models "player launched a long raid and walked away." |
-| **T2x2** | 0.08 - 0.20 | Chance of allowing two T2 raids in a row. Normally T2 resets to this low chance after a T2 raid. |
-
-#### Distraction
-
-| Parameter | Range | What it does |
-|-----------|-------|--------------|
-| **Distract** | 0.08 - 0.15 | Per-raid chance of entering a "distracted" state. When distracted, delays increase (mu shifts up by 0.5-1.5) and T2 probability jumps to T2 Dist. Lasts 2-5 raids. |
-
-#### Hidden Mechanics (not configurable)
-
-- **AR(1) Tempo**: A latent momentum variable that makes delays slightly autocorrelated — fast raids tend to follow fast raids, slow follows slow
-- **Session fatigue**: Mu increases by up to 0.5 over several hours (saturating exponential)
-- **Post-break re-engagement**: 70% chance of 1-3 faster raids after a break (player is re-focused)
-- **Sleep jitter**: Sleep start/end times vary by +/- 10 minutes daily
-- **Soft cap**: No single delay exceeds 20-30 minutes (random per raid)
-
 ### Understanding Your Settings with AI
 
 Your parameters are randomly generated and the math behind them is complex. Instead of trying to understand each number yourself, you can **ask an AI assistant** (ChatGPT, Claude, etc.) to explain your specific configuration.
 
-Copy your settings from the popup and ask something like:
+Copy this entire **Auto-Pirate System** section (including the code) along with your actual settings from the popup, and paste it into the AI. Then ask something like:
 
-> "Here are my Ikariam auto-pirate settings: Mu=3.1, Sigma=0.9, Streak Lo=10, Streak Hi=18, Break Min=5, Break Max=12, Distract=0.11, T2 Base=0.08, T2 Ramp=0.55, T2 Dist=0.40, T2->brk=0.22, T2x2=0.12. Can you explain what kind of behavior this produces? How many raids per hour? How often will it take breaks?"
+> "Given my settings: Mu=3.1, Sigma=0.9, Streak Lo=10, Streak Hi=18, Break Min=5, Break Max=12, Distract=0.11, T2 Base=0.08, T2 Ramp=0.55, T2 Dist=0.40, T2->brk=0.22, T2x2=0.12 — can you explain what kind of behavior this produces? How many raids per hour? How often will it take breaks?"
 
-The AI can simulate the math and give you a plain-language summary. If you want to adjust something (e.g., "I want longer breaks" or "I want more T2 raids"), ask the AI what parameters to change.
+The AI needs the code and your settings to give an accurate answer. It can simulate the math and give you a plain-language summary. If you want to adjust something (e.g., "I want longer breaks" or "I want more T2 raids"), ask the AI what parameters to change.
 
-## Build
+### How It Works
 
-```bash
-npm install        # Install deps (esbuild, onnxruntime-web)
-npm run build      # Bundle offscreen.js + copy WASM to dist/
+The system simulates a human player launching pirate raids while doing other things. It uses log-normal delays between raids, takes breaks after streaks, occasionally gets "distracted" (longer delays), picks between Tier 1 (2m30s) and Tier 2 (7m30s) raids with contextual probability, accumulates session fatigue, and stops during sleep hours.
+
+Your parameters are visible in the popup's Settings tab under **Advanced**. The code below is the full timing implementation — the delay returned by `randomDelay()` is added on top of the mission duration.
+
+```js
+// --- Random number generators ---
+function randn() {
+  const u = 1 - Math.random();
+  const v = 1 - Math.random();
+  return Math.sqrt(-2.0 * Math.log(u)) * Math.cos(2.0 * Math.PI * v);
+}
+
+function lognormal(mu, sigma) {
+  return Math.exp(mu + sigma * randn());
+}
+
+// --- Break probability: sigmoid that rises with streak count ---
+function getBreakHazard() {
+  if (streakCount < cfg.streakLo) return 0;
+  const midpoint = (cfg.streakLo + cfg.streakHi) / 2;
+  const steepness = 6 / (cfg.streakHi - cfg.streakLo);
+  return 1 / (1 + Math.exp(-steepness * (streakCount - midpoint)));
+}
+
+// --- Tier 2 selection probability: depends on streak, distraction, post-break ---
+function getT2Probability() {
+  if (lastMissionWasT2) return cfg.backToBackChance; // T2x2 param
+
+  let chance = cfg.t2Base;
+
+  // Post-break: lower T2 (player is re-engaged, picks fast option)
+  if (postBreakRaids > 0) return Math.max(chance * 0.3, 0.02);
+
+  // Distraction: flat elevated chance
+  if (distractionRaids > 0) {
+    chance = Math.max(chance, cfg.t2Distract);
+  }
+
+  // Sigmoid ramp: T2 increasingly likely as streak approaches break
+  const progress = Math.min(streakCount / cfg.streakHi, 1.0);
+  const sigmoid = cfg.t2Ramp / (1 + Math.exp(-8 * (progress - 0.6)));
+  chance += sigmoid;
+
+  return chance;
+}
+
+// --- Main delay calculation (called after each raid) ---
+function randomDelay() {
+  streakCount++;
+
+  // --- Break decision: hazard-based OR forced by T2 ---
+  const breakRoll = Math.random() < getBreakHazard();
+  if (breakRoll || forceBreakNext) {
+    forceBreakNext = false;
+
+    // Longer streak = longer break
+    const streakFactor = Math.min(streakCount / cfg.streakHi, 1.0);
+    const dynBreakMin = cfg.breakMin + streakFactor * 2;
+    const breakMu = Math.log((dynBreakMin + cfg.breakMax) / 2 * 60);
+    const breakD = Math.min(lognormal(breakMu, 0.4), (cfg.breakMax + 5) * 60);
+    const d = Math.max(breakD, (dynBreakMin - 2) * 60) * 1000;
+
+    streakCount = 0;
+
+    // Post-break re-engagement: 70% chance of 1-3 faster raids
+    if (Math.random() < 0.70) {
+      postBreakRaids = 1 + Math.floor(Math.random() * 3);
+    }
+    return d;
+  }
+
+  // --- Post-break state: slightly faster, less distracted ---
+  if (postBreakRaids > 0) postBreakRaids--;
+
+  // --- Distraction state ---
+  if (distractionRaids <= 0) {
+    distractionMu = 0;
+    const distractRoll = postBreakRaids > 0
+      ? cfg.distractChance * 0.3
+      : cfg.distractChance;
+    if (Math.random() < distractRoll) {
+      distractionMu = 0.5 + Math.random() * 1.0; // mu shifts up by 0.5-1.5
+      distractionRaids = 2 + Math.floor(Math.random() * 4); // lasts 2-5 raids
+    }
+  }
+  if (distractionRaids > 0) distractionRaids--;
+
+  // --- AR(1) tempo: momentum in delays (fast follows fast, slow follows slow) ---
+  tempo = 0.6 * tempo + 0.15 * randn();
+
+  // --- Session fatigue: mu increases up to 0.5 over hours ---
+  const sessionHours = (Date.now() - sessionStartTime) / 3600000;
+  const fatigueMu = 0.5 * (1 - Math.exp(-0.3 * sessionHours));
+
+  // --- Post-break speed boost ---
+  const postBreakMu = postBreakRaids > 0 ? -0.3 : 0;
+
+  // --- Final delay ---
+  const mu = cfg.baseMu + distractionMu + fatigueMu + postBreakMu + tempo;
+  const sigma = cfg.baseSigma;
+  const softCap = (20 + Math.random() * 10) * 60; // 20-30 min max
+  const delaySec = Math.min(lognormal(mu, sigma), softCap);
+  const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000; // min 3-5s
+  return d;
+}
 ```
 
-The `dist/` folder is required for the CAPTCHA solver. The rest of the extension loads directly from source files.
+**Tier selection** happens before `randomDelay()` is called:
 
-## Tech Stack
+```js
+const t2Prob = getT2Probability();
+if (captureBtns.length > 1 && Math.random() < t2Prob) tier = 1;
 
-- Vanilla JavaScript (ES2021+, no TypeScript, no frameworks)
-- Chrome Extension Manifest V3
-- ONNX Runtime Web (CAPTCHA inference via offscreen document)
-- esbuild (bundles offscreen script + WASM)
+lastMissionWasT2 = (tier === 1);
+if (lastMissionWasT2 && Math.random() < cfg.forceBreakChance) { // T2->brk param
+  forceBreakNext = true;
+}
+```
+
+**Sleep jitter**: sleep start/end times shift by ±10 minutes, re-rolled daily.
 
 ## License
 

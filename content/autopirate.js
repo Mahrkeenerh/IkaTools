@@ -656,9 +656,14 @@
   });
 
   // --- City list request from popup ---
+  const KEY_PIRATE_CITIES = "pirateCities_" + worldName;
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === "get-cities") {
-      IkUtils.getCities().then((cities) => sendResponse({ cities }));
+      IkUtils.getCities().then((cities) => {
+        // Persist per-world so popup can show them without an active game tab
+        if (cities.length > 0) chrome.storage.local.set({ [KEY_PIRATE_CITIES]: cities });
+        sendResponse({ cities });
+      });
       return true;
     }
   });
