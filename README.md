@@ -27,7 +27,7 @@ Chrome extension for the Ikariam browser game. Adds quality-of-life features, au
 3. Open `chrome://extensions` in Chrome
 4. Enable **Developer mode** (toggle in the top right corner)
 5. Click **Load unpacked** and select the unzipped folder
-6. Navigate to any Ikariam game page — the extension activates automatically
+6. Refresh any open Ikariam game pages (or open a new one) — the extension activates automatically
 
 To update, download the new zip, replace the folder contents, and click the reload button on `chrome://extensions`.
 
