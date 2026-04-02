@@ -108,13 +108,19 @@ body {
 .report-table tbody tr:hover td { background: rgba(42, 53, 80, 0.4); }
 .report-table tbody tr:nth-child(even) td { background: rgba(20, 24, 36, 0.5); }
 .report-table tbody tr:nth-child(even):hover td { background: rgba(42, 53, 80, 0.4); }
+.report-table tr.group-divider td {
+  padding: 4px 12px; font-size: 11px; font-weight: 600; color: var(--text-muted);
+  text-transform: uppercase; letter-spacing: 0.5px; border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+}
+.report-table tr.group-divider:hover td { background: var(--bg-panel); }
 .report-table tfoot td {
   padding: 9px 12px; background: var(--bg-panel); color: #a0b8e0;
   font-weight: 600; border-top: 1px solid var(--border);
 }
 
 .city-name { font-weight: 600; color: var(--text-heading); }
-.deployed-city { color: #00FF88; }
+.deployed-city, .report-table th.deployed-city { color: #00FF88; }
 .capital-badge {
   display: inline-block; font-size: 9px; font-weight: 600;
   color: var(--gold); background: rgba(242, 200, 92, 0.12);
@@ -347,7 +353,7 @@ td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-le
 <body>
 
 <div class="page-header">
-  <h1>City Advisor Report</h1>
+  <h1><img src="../icons/icon32.png" alt="" style="width:20px;height:20px;vertical-align:middle;margin-right:8px">City Advisor Report</h1>
   <div class="header-meta">
     Generated: <span id="report-timestamp">—</span>
   </div>

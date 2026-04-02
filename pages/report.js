@@ -39,11 +39,11 @@
     // Determine which tabs to show based on report mode
     const MODE_TABS = {
       basic: ["panel-overview", "panel-economy", "panel-builder", "panel-buildings"],
-      workers: ["panel-overview", "panel-economy", "panel-workers"],
-      storage: ["panel-overview", "panel-economy", "panel-storage"],
-      army: ["panel-overview", "panel-economy", "panel-army"],
-      trading: ["panel-overview", "panel-economy", "panel-trading"],
-      spy: ["panel-overview", "panel-economy", "panel-spy"],
+      workers: ["panel-overview", "panel-economy", "panel-builder", "panel-buildings", "panel-workers"],
+      storage: ["panel-overview", "panel-economy", "panel-builder", "panel-buildings", "panel-storage"],
+      army: ["panel-overview", "panel-economy", "panel-builder", "panel-buildings", "panel-army"],
+      trading: ["panel-overview", "panel-economy", "panel-builder", "panel-buildings", "panel-trading"],
+      spy: ["panel-overview", "panel-economy", "panel-builder", "panel-buildings", "panel-spy"],
       full: null, // show all
     };
     const visibleTabs = MODE_TABS[report.mode] || null;
@@ -195,12 +195,13 @@
   function renderSummary(report) {
     const container = $("summary-cards");
     const cities = report.cities;
+    const ownCities = cities.filter((c) => c.relationship !== "deployedCities");
     const g = report.global;
 
     const netGold = g.income + g.upkeep + g.scientistsUpkeep;
 
     let totalPop = 0, totalCitizens = 0, totalWineCons = 0, totalWineProd = 0, totalWoodPerHour = 0;
-    for (const c of cities) {
+    for (const c of ownCities) {
       totalPop += c.population || 0;
       totalCitizens += c.citizens || 0;
       totalWineCons += c.winePerHour || 0;
@@ -209,7 +210,7 @@
     }
     const totalWineNet = totalWineProd + totalWineCons; // consumption is negative
 
-    const constructing = cities.filter((c) => c.construction).length;
+    const constructing = ownCities.filter((c) => c.construction).length;
 
     const cards = [
       { label: "Gold", value: fmt(g.gold), sub: fmtSigned(Math.round(netGold)) + "/h net" +
@@ -220,8 +221,8 @@
       { label: "Net Gold / h", value: fmtSigned(Math.round(netGold)), sub: "income + upkeep + sci" },
       { label: "Population", value: fmt(totalPop), sub: fmt(totalCitizens) + " citizens" },
       { label: "Wood / h", value: fmtSigned(totalWoodPerHour), sub: "total production" },
-      { label: "Wine / h", value: fmtSigned(Math.round(totalWineNet)), sub: `<span class="val-pos">+${Math.round(totalWineProd)}</span> <span class="val-neg">${Math.round(totalWineCons)}</span>` },
-      { label: "Cities", value: cities.length, sub: constructing + " building" },
+      { label: "Wine / h", value: fmtSigned(Math.round(totalWineNet)), sub: `<span class="val-pos">+${Math.round(totalWineProd)}</span> <span class="val-neg">${totalWineCons ? Math.round(totalWineCons) : "-0"}</span>` },
+      { label: "Cities", value: ownCities.length, sub: constructing + " building" },
     ];
 
     for (const card of cards) {
@@ -300,11 +301,14 @@
     const tbody = $("economy-body");
     const tfoot = $("economy-foot");
 
+    // Exclude deployed (allied) cities — we don't have their resource data
+    const ownCities = report.cities.filter((c) => c.relationship !== "deployedCities");
+
     let tWood = 0, tWoodPerH = 0, tWine = 0, tWinePerH = 0;
     let tMarble = 0, tMarblePerH = 0, tCrystal = 0, tCrystalPerH = 0;
     let tSulfur = 0, tSulfurPerH = 0;
 
-    for (const city of report.cities) {
+    for (const city of ownCities) {
       const r = city.resources || {};
       const woodPerH = city.woodPerHour || 0;
       const winePerH = city.winePerHour || 0;
@@ -346,7 +350,7 @@
 
     // Track total wine production vs consumption separately
     let tWineProd = 0, tWineCons = 0;
-    for (const c of report.cities) {
+    for (const c of ownCities) {
       if (c.producedTradegood === 1) tWineProd += c.tradegoodPerHour || 0;
       tWineCons += c.winePerHour || 0;
     }
@@ -366,26 +370,27 @@
   // --- Builder tab ---
   function renderBuilder(report) {
     const tbody = $("builder-body");
-    const activeCities = report.cities.filter((c) => c.construction);
+    const ownCities = report.cities.filter((c) => c.relationship !== "deployedCities");
 
-    if (activeCities.length === 0) {
+    for (const city of ownCities) {
       const tr = document.createElement("tr");
-      tr.innerHTML = `<td colspan="5" class="building-idle" style="text-align:center;padding:20px;">No active construction</td>`;
-      tbody.appendChild(tr);
-      return;
-    }
-
-    for (const city of activeCities) {
-      const c = city.construction;
-      const t = fmtTime(c.endTime);
-      const tr = document.createElement("tr");
-      tr.innerHTML = `
-        ${cityNameHtml(city)}
-        <td class="coords">${city.coords}</td>
-        <td><span class="building-active">${c.buildingName}</span></td>
-        <td>${lvl(c.level)}</td>
-        <td>${t ? `<span class="${t.cls}">${t.text}</span>` : "—"}</td>
-      `;
+      if (city.construction) {
+        const c = city.construction;
+        const t = fmtTime(c.endTime);
+        tr.innerHTML = `
+          ${cityNameHtml(city)}
+          <td class="coords">${city.coords}</td>
+          <td><span class="building-active">${c.buildingName}</span></td>
+          <td>${lvl(c.level)}</td>
+          <td>${t ? `<span class="${t.cls}">${t.text}</span>` : "—"}</td>
+        `;
+      } else {
+        tr.innerHTML = `
+          ${cityNameHtml(city)}
+          <td class="coords">${city.coords}</td>
+          <td colspan="3" class="building-idle">Idle</td>
+        `;
+      }
       tbody.appendChild(tr);
     }
   }
@@ -511,7 +516,9 @@
 
   // --- Army tab ---
   function renderArmy(report) {
-    const GROUP_ORDER = ["Infantry", "Siege & Support", "Warships", "Naval Support"];
+    const LAND_GROUPS = ["Infantry", "Siege & Support"];
+    const NAVAL_GROUPS = ["Warships", "Naval Support"];
+    const GROUP_ORDER = [...LAND_GROUPS, ...NAVAL_GROUPS];
     const container = $("army-container");
 
     // Active movements with units — shown first
@@ -543,60 +550,85 @@
       return;
     }
 
-    for (const group of activeGroups) {
-      const names = groupUnits[group];
+    // Build transposed tables — cities as columns, units as rows
+    // Split into Land and Naval sections
+    const sections = [
+      { label: "Land Units", groups: LAND_GROUPS },
+      { label: "Naval Units", groups: NAVAL_GROUPS },
+    ];
 
-      // Group subtitle
+    // Build per-city unit maps: cityIndex -> unitName -> count
+    const cityUnitMaps = report.cities.map((city) => {
+      const map = {};
+      if (city.military?.units) {
+        for (const u of city.military.units) {
+          map[u.name] = (map[u.name] || 0) + u.count;
+        }
+      }
+      return map;
+    });
+
+    for (const section of sections) {
+      const sectionGroups = section.groups.filter((g) => groupUnits[g]?.length > 0);
+      if (sectionGroups.length === 0) continue;
+
       const subtitle = document.createElement("div");
       subtitle.className = "panel-title";
       subtitle.style.fontSize = "13px";
       subtitle.style.marginTop = "16px";
-      subtitle.textContent = group;
+      subtitle.textContent = section.label;
       container.appendChild(subtitle);
 
-      // Table
       const wrap = document.createElement("div");
       wrap.className = "table-wrap";
       const table = document.createElement("table");
       table.className = "report-table";
 
-      // Header
+      // Header: Unit | City1 | City2 | ... | Total
       const thead = document.createElement("thead");
       const headTr = document.createElement("tr");
-      headTr.innerHTML = "<th>City</th>" +
-        names.map((n) => `<th class="right">${n}</th>`).join("") +
+      headTr.innerHTML = "<th>Unit</th>" +
+        report.cities.map((c) => {
+          const cls = c.relationship === "deployedCities" ? "deployed-city" : "";
+          const cap = c.isCapital ? ' <span class="capital-badge">Cap</span>' : "";
+          return `<th class="right ${cls}">${c.name}${cap}</th>`;
+        }).join("") +
         '<th class="right">Total</th>';
       thead.appendChild(headTr);
       table.appendChild(thead);
 
-      // Body
+      // Body: one row per unit, with divider between groups
       const tbody = document.createElement("tbody");
-      const totals = new Array(names.length).fill(0);
+      const cityTotals = new Array(report.cities.length).fill(0);
       let grandTotal = 0;
 
-      for (const city of report.cities) {
-        const unitMap = {};
-        let cityTotal = 0;
-        if (city.military?.units) {
-          for (const u of city.military.units) {
-            if ((u.group || "Infantry") === group) {
-              unitMap[u.name] = (unitMap[u.name] || 0) + u.count;
-              cityTotal += u.count;
-            }
-          }
-        }
-        grandTotal += cityTotal;
+      for (let gi = 0; gi < sectionGroups.length; gi++) {
+        const group = sectionGroups[gi];
+        const names = groupUnits[group];
 
-        const tr = document.createElement("tr");
-        let cells = cityNameHtml(city);
-        names.forEach((name, i) => {
-          const count = unitMap[name] || 0;
-          totals[i] += count;
-          cells += `<td class="right">${count ? count.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
-        });
-        cells += `<td class="right">${cityTotal ? cityTotal.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
-        tr.innerHTML = cells;
-        tbody.appendChild(tr);
+        // Divider row between groups (e.g. between Infantry and Siege & Support)
+        if (gi > 0) {
+          const divTr = document.createElement("tr");
+          divTr.className = "group-divider";
+          divTr.innerHTML = `<td colspan="${report.cities.length + 2}" class="divider-label">${group}</td>`;
+          tbody.appendChild(divTr);
+        }
+
+        for (const unitName of names) {
+          const tr = document.createElement("tr");
+          let rowTotal = 0;
+          let cells = `<td>${unitName}</td>`;
+          report.cities.forEach((city, ci) => {
+            const count = cityUnitMaps[ci][unitName] || 0;
+            rowTotal += count;
+            cityTotals[ci] += count;
+            cells += `<td class="right">${count ? count.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
+          });
+          grandTotal += rowTotal;
+          cells += `<td class="right">${rowTotal ? rowTotal.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
+          tr.innerHTML = cells;
+          tbody.appendChild(tr);
+        }
       }
       table.appendChild(tbody);
 
@@ -604,7 +636,7 @@
       const tfoot = document.createElement("tfoot");
       const footTr = document.createElement("tr");
       footTr.innerHTML = "<td>Total</td>" +
-        totals.map((t) => `<td class="right">${t ? t.toLocaleString() : "—"}</td>`).join("") +
+        cityTotals.map((t) => `<td class="right">${t ? t.toLocaleString() : "—"}</td>`).join("") +
         `<td class="right">${grandTotal ? grandTotal.toLocaleString() : "—"}</td>`;
       tfoot.appendChild(footTr);
       table.appendChild(tfoot);
@@ -633,25 +665,44 @@
 
     const thead = document.createElement("thead");
     const headTr = document.createElement("tr");
-    headTr.innerHTML = "<th>City</th><th>Unit</th><th class=\"right\">Count</th><th>Status</th><th>ETA</th>";
+    headTr.innerHTML = "<th>City</th><th>Units</th><th>Status</th><th>ETA</th>";
     thead.appendChild(headTr);
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
+    // Stable sort: preserve city order from game, but group by city with position order
+    const cityOrder = {};
+    let idx = 0;
+    for (const q of allQueue) {
+      if (!(q.cityName in cityOrder)) cityOrder[q.cityName] = idx++;
+    }
     allQueue.sort((a, b) => {
-      if (a.active !== b.active) return a.active ? -1 : 1;
-      return (a.enddate || 0) - (b.enddate || 0);
+      const cmp = cityOrder[a.cityName] - cityOrder[b.cityName];
+      if (cmp !== 0) return cmp;
+      return a.position - b.position;
     });
 
+    // Group by city+position (same training block)
+    const groups = [];
     for (const q of allQueue) {
-      const tr = document.createElement("tr");
-      const status = q.active
+      const key = q.cityName + "|" + q.position + "|" + (q.active ? "1" : "0");
+      const last = groups[groups.length - 1];
+      if (last && last.key === key) {
+        last.items.push(q);
+      } else {
+        groups.push({ key, items: [q] });
+      }
+    }
+
+    for (const group of groups) {
+      const first = group.items[0];
+      const status = first.active
         ? "<span class=\"val-pos\">Building</span>"
-        : "Queued #" + q.position;
+        : "Queued #" + first.position;
 
       let eta = "—";
-      if (q.enddate) {
-        const remaining = q.enddate - Math.floor(Date.now() / 1000);
+      if (first.enddate) {
+        const remaining = first.enddate - Math.floor(Date.now() / 1000);
         if (remaining > 0) {
           const h = Math.floor(remaining / 3600);
           const m = Math.floor((remaining % 3600) / 60);
@@ -661,11 +712,15 @@
         }
       }
 
-      const typeIcon = q.type === "ship" ? "🚢 " : "";
+      const unitsParts = group.items.map((q) => {
+        const icon = q.type === "ship" ? "🚢 " : "";
+        return `${icon}${q.name} ×${q.count.toLocaleString()}`;
+      });
+
+      const tr = document.createElement("tr");
       tr.innerHTML =
-        `<td>${q.cityName}</td>` +
-        `<td>${typeIcon}${q.name}</td>` +
-        `<td class="right">${q.count.toLocaleString()}</td>` +
+        `<td>${first.cityName}</td>` +
+        `<td>${unitsParts.join(", ")}</td>` +
         `<td>${status}</td>` +
         `<td>${eta}</td>`;
       tbody.appendChild(tr);
