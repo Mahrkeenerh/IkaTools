@@ -14,7 +14,12 @@
   let container = null;
   let mapCanvas = null;
   let mapCtx = null;
+  let scanPanel = null;
+  let canvasWrapper = null;
+  let layerBarEl = null;
+  let topBarEl = null;
   let currentMapData = null;
+  let scanMode = null; // null | "scan" | "progress" | "map"
   let minimapScale = 1.25;
   let vpTrimRight = 0.08;
   let vpTrimBottom = 0.15;
@@ -184,7 +189,8 @@
     });
 
     // Canvas wrapper (for overlaying controls on top)
-    const wrapper = document.createElement("div");
+    canvasWrapper = document.createElement("div");
+    const wrapper = canvasWrapper;
     Object.assign(wrapper.style, { position: "relative" });
 
     mapCanvas = document.createElement("canvas");
@@ -260,8 +266,90 @@
     wrapper.appendChild(topBar);
     container.appendChild(wrapper);
 
+    topBarEl = topBar;
+
+    // Scan panel (shown when no map data or scan in progress)
+    scanPanel = document.createElement("div");
+    scanPanel.id = "ik-minimap-scan";
+    Object.assign(scanPanel.style, {
+      display: "none",
+      padding: "12px 8px",
+      textAlign: "center",
+    });
+
+    const scanBtn = document.createElement("button");
+    scanBtn.id = "ik-scan-btn";
+    scanBtn.textContent = "Scan World Map";
+    Object.assign(scanBtn.style, {
+      padding: "8px 16px",
+      border: "1px solid rgba(60,90,130,0.6)",
+      borderRadius: "4px",
+      background: "rgba(42,74,106,0.8)",
+      color: "#e0e8f0",
+      cursor: "pointer",
+      fontSize: "12px",
+      fontFamily: "sans-serif",
+    });
+    scanBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!isWorldMapView()) return;
+      if (!globalThis.IkScanner) return;
+      if (globalThis.IkScanner.scanning) return;
+      globalThis.IkScanner.startScan();
+      showProgressUI({ phase: "probe", current: 0, total: 1, found: 0 });
+    });
+    scanPanel.appendChild(scanBtn);
+
+    const progressWrap = document.createElement("div");
+    progressWrap.id = "ik-scan-progress";
+    Object.assign(progressWrap.style, { display: "none", marginTop: "8px" });
+
+    const progressBarOuter = document.createElement("div");
+    Object.assign(progressBarOuter.style, {
+      width: "100%",
+      height: "6px",
+      background: "rgba(30,50,70,0.8)",
+      borderRadius: "3px",
+      overflow: "hidden",
+    });
+    const progressBarInner = document.createElement("div");
+    progressBarInner.id = "ik-scan-bar";
+    Object.assign(progressBarInner.style, {
+      width: "0%",
+      height: "100%",
+      background: "#4a90d9",
+      borderRadius: "3px",
+      transition: "width 0.3s ease",
+    });
+    progressBarOuter.appendChild(progressBarInner);
+    progressWrap.appendChild(progressBarOuter);
+
+    const progressPhase = document.createElement("div");
+    progressPhase.id = "ik-scan-phase";
+    Object.assign(progressPhase.style, {
+      color: "#8890a0",
+      fontSize: "10px",
+      fontFamily: "sans-serif",
+      marginTop: "4px",
+    });
+    progressWrap.appendChild(progressPhase);
+
+    const progressDetail = document.createElement("div");
+    progressDetail.id = "ik-scan-detail";
+    Object.assign(progressDetail.style, {
+      color: "#667788",
+      fontSize: "10px",
+      fontFamily: "sans-serif",
+      marginTop: "2px",
+    });
+    progressWrap.appendChild(progressDetail);
+    scanPanel.appendChild(progressWrap);
+
+    container.appendChild(scanPanel);
+
     // Layer selector bar (below canvas)
     const layerBar = document.createElement("div");
+    layerBarEl = layerBar;
     Object.assign(layerBar.style, {
       display: "flex",
       gap: "2px",
@@ -302,25 +390,51 @@
 
     // Collapse logic — move buttons out of canvas overlay into container
     let collapsed = false;
-    collapseBtn.addEventListener("click", (e) => {
-      e.stopPropagation();
-      collapsed = !collapsed;
+
+    function applyCollapsed() {
       if (collapsed) {
         mapCanvas.style.display = "none";
         layerBar.style.display = "none";
+        scanPanel.style.display = "none";
         topBar.style.position = "static";
         topBar.style.pointerEvents = "auto";
         topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
         collapseLabel.style.display = "";
       } else {
-        mapCanvas.style.display = "block";
-        layerBar.style.display = "flex";
-        topBar.style.position = "absolute";
-        topBar.style.pointerEvents = "none";
-        topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = ""; });
+        // Restore appropriate UI based on current mode
+        if (scanMode === "scan" || scanMode === "progress") {
+          scanPanel.style.display = "";
+          mapCanvas.style.display = "none";
+          layerBar.style.display = "none";
+          topBar.style.position = "static";
+          topBar.style.pointerEvents = "auto";
+          topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
+        } else {
+          mapCanvas.style.display = "block";
+          layerBar.style.display = "flex";
+          scanPanel.style.display = "none";
+          topBar.style.position = "absolute";
+          topBar.style.pointerEvents = "none";
+          topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = ""; });
+        }
         collapseLabel.style.display = "none";
       }
       collapseBtn.textContent = collapsed ? "\u25B2" : "\u25BC";
+    }
+
+    collapseBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      collapsed = !collapsed;
+      chrome.storage.local.set({ minimapCollapsed: collapsed });
+      applyCollapsed();
+    });
+
+    // Restore persisted collapse state
+    chrome.storage.local.get("minimapCollapsed", (data) => {
+      if (data.minimapCollapsed) {
+        collapsed = true;
+        applyCollapsed();
+      }
     });
 
     document.body.appendChild(container);
@@ -356,7 +470,7 @@
     if (!currentMapData || !globalThis.MapRender) return;
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
-    MapRender.enrichIslandsWithAlliances(islands, allianceIndex, allianceColorMap);
+    MapRender.enrichIslandsWithAlliances(islands, allianceIndex || {}, allianceColorMap);
 
     const tw = Math.max(1, Math.round(3 * minimapScale));
     const th = Math.max(1, Math.round(3 * minimapScale));
@@ -421,6 +535,66 @@
     }
   }
 
+  function showScanUI() {
+    scanMode = "scan";
+    if (!container) return;
+    scanPanel.style.display = "";
+    const scanBtn = scanPanel.querySelector("#ik-scan-btn");
+    const progressWrap = scanPanel.querySelector("#ik-scan-progress");
+    if (scanBtn) scanBtn.style.display = "";
+    if (progressWrap) progressWrap.style.display = "none";
+    if (canvasWrapper) canvasWrapper.querySelector("canvas").style.display = "none";
+    if (layerBarEl) layerBarEl.style.display = "none";
+    if (topBarEl) {
+      topBarEl.style.position = "static";
+      topBarEl.style.pointerEvents = "auto";
+      topBarEl.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
+    }
+  }
+
+  function showProgressUI(progress) {
+    scanMode = "progress";
+    if (!container) return;
+    scanPanel.style.display = "";
+    const scanBtn = scanPanel.querySelector("#ik-scan-btn");
+    const progressWrap = scanPanel.querySelector("#ik-scan-progress");
+    if (scanBtn) scanBtn.style.display = "none";
+    if (progressWrap) progressWrap.style.display = "";
+    if (canvasWrapper) canvasWrapper.querySelector("canvas").style.display = "none";
+    if (layerBarEl) layerBarEl.style.display = "none";
+    if (topBarEl) {
+      topBarEl.style.position = "static";
+      topBarEl.style.pointerEvents = "auto";
+      topBarEl.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
+    }
+    updateProgressBar(progress);
+  }
+
+  function updateProgressBar(progress) {
+    if (!progress) return;
+    const bar = scanPanel.querySelector("#ik-scan-bar");
+    const phase = scanPanel.querySelector("#ik-scan-phase");
+    const detail = scanPanel.querySelector("#ik-scan-detail");
+    const pct = progress.total > 0 ? Math.round((progress.current / progress.total) * 100) : 0;
+    if (bar) bar.style.width = pct + "%";
+    const phaseLabels = { probe: "Probing...", cross: "Detecting bounds...", fill: "Scanning map..." };
+    if (phase) phase.textContent = phaseLabels[progress.phase] || progress.phase || "";
+    if (detail) detail.textContent = `${progress.current}/${progress.total} jumps \u2022 ${progress.found} islands`;
+  }
+
+  function showMapUI() {
+    scanMode = "map";
+    if (!container) return;
+    scanPanel.style.display = "none";
+    if (canvasWrapper) canvasWrapper.querySelector("canvas").style.display = "block";
+    if (layerBarEl) layerBarEl.style.display = "flex";
+    if (topBarEl) {
+      topBarEl.style.position = "absolute";
+      topBarEl.style.pointerEvents = "none";
+      topBarEl.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = ""; });
+    }
+  }
+
   async function loadAndShow() {
     if (!isWorldMapView()) return;
 
@@ -428,13 +602,10 @@
     if (!worldName) return;
 
     const key = "map_" + worldName;
-    const data = await chrome.storage.local.get([key, STORAGE_KEY_ENABLED, STORAGE_KEY_POSITION, STORAGE_KEY_SCALE, "vpTrimRight", "vpTrimBottom", "minimapLayer", "hideZeroCities"]);
+    const data = await chrome.storage.local.get([key, STORAGE_KEY_ENABLED, STORAGE_KEY_POSITION, STORAGE_KEY_SCALE, "vpTrimRight", "vpTrimBottom", "minimapLayer", "hideZeroCities", "scanInProgress", "scanProgress"]);
 
     if (!data[STORAGE_KEY_ENABLED]) return;
-    if (!data[key]) return;
 
-    currentMapData = data[key];
-    await loadAllianceIndex();
     minimapScale = data[STORAGE_KEY_SCALE] || 1.25;
     vpTrimRight = data.vpTrimRight ?? 0.08;
     vpTrimBottom = data.vpTrimBottom ?? 0.15;
@@ -447,9 +618,21 @@
     }
     container.style.display = "";
 
-    if (dimEmpty) startZeros();
-    readAndMergeTiles();
-    drawMinimap();
+    if (data[key]) {
+      // Has map data — show map
+      currentMapData = data[key];
+      await loadAllianceIndex();
+      if (dimEmpty) startZeros();
+      readAndMergeTiles();
+      showMapUI();
+      drawMinimap();
+    } else if (data.scanInProgress) {
+      // Scan running but no map data yet — show progress
+      showProgressUI(data.scanProgress || { phase: "probe", current: 0, total: 1, found: 0 });
+    } else {
+      // No data, no scan — show scan button
+      showScanUI();
+    }
   }
 
   // Poll map1 screen position via getBoundingClientRect — always accurate
@@ -536,6 +719,65 @@
       tile.style.opacity = "";
     });
   }
+
+  // Track scan progress/completion via storage changes
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local") return;
+
+    if (changes.scanProgress && changes.scanProgress.newValue) {
+      if (scanMode === "progress" || scanMode === "scan") {
+        showProgressUI(changes.scanProgress.newValue);
+      }
+    }
+
+    if (changes.scanResult && changes.scanResult.newValue) {
+      // Scan completed — save map data and switch to map view
+      const result = changes.scanResult.newValue;
+      const worldName = IkUtils.getWorldName();
+      if (worldName && result.worldName === worldName) {
+        const mapKey = "map_" + worldName;
+        const scanDate = new Date().toISOString();
+        const mapData = { worldName, scanDate, islands: result.islands };
+
+        // Save map data (popup normally does this, but we may not have popup)
+        chrome.storage.local.get(mapKey, (existing) => {
+          if (!existing[mapKey]) {
+            // No popup saved it yet — save from minimap
+            const indexKey = "mapIndex";
+            chrome.storage.local.get(indexKey, (idxData) => {
+              const index = idxData[indexKey] || [];
+              const entry = { worldName, scanDate, key: mapKey };
+              const pos = index.findIndex((e) => e.key === mapKey);
+              if (pos >= 0) index[pos] = entry;
+              else index.unshift(entry);
+              chrome.storage.local.set({ [indexKey]: index, [mapKey]: mapData });
+            });
+          }
+
+          currentMapData = existing[mapKey] || mapData;
+          cachedBaseMap = null;
+          loadAllianceIndex().then(() => {
+            showMapUI();
+            drawMinimap();
+          });
+        });
+
+      }
+    }
+
+    if (changes.scanInProgress && !changes.scanInProgress.newValue) {
+      // Scan ended (completed or cancelled)
+      if (scanMode === "progress") {
+        // If we have map data now, show it; otherwise show scan button
+        if (currentMapData && currentMapData.islands && currentMapData.islands.length > 0) {
+          showMapUI();
+          drawMinimap();
+        } else {
+          showScanUI();
+        }
+      }
+    }
+  });
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "minimap-toggle") {

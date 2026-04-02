@@ -391,4 +391,16 @@
       }
     });
   });
+
+  // Expose scanner for minimap to trigger scans without popup
+  globalThis.IkScanner = {
+    startScan() {
+      const fakePort = {
+        postMessage() {},
+        onDisconnect: { addListener() {} },
+      };
+      scanWorldMap(fakePort);
+    },
+    get scanning() { return scanning; },
+  };
 })();

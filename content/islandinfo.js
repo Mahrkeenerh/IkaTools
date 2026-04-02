@@ -280,6 +280,7 @@
   let panel = null;
   let currentSort = { key: "level", dir: -1 };
   let expanded = true;
+  const KEY_PANEL_EXPANDED = "islandPanelExpanded";
 
   const TG_NAMES = ["", "Wine", "Marble", "Glass", "Sulfur"];
   const WONDER_NAMES = {
@@ -431,6 +432,7 @@
     panel.querySelector('[data-action="toggle"]').addEventListener("click", (e) => {
       e.stopPropagation();
       expanded = !expanded;
+      chrome.storage.local.set({ [KEY_PANEL_EXPANDED]: expanded });
       renderPanel(island);
     });
     panel.querySelectorAll("th[data-sort]").forEach((th) => {
@@ -538,6 +540,9 @@
     injectShipsNeeded();
 
     lastIslandId = getCurrentIslandId();
+
+    const stored = await chrome.storage.local.get(KEY_PANEL_EXPANDED);
+    if (stored[KEY_PANEL_EXPANDED] !== undefined) expanded = stored[KEY_PANEL_EXPANDED];
 
     const island = await extractAndStore();
     if (island && island.cities.length > 0) {
