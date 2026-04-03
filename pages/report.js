@@ -1454,7 +1454,9 @@
     const container = $("spy-container");
     if (!container) return;
 
-    const hasSpy = report.cities.some((c) => c.spy);
+    // Exclude deployed (allied) cities — no spy data for them
+    const ownCities = report.cities.filter((c) => c.relationship !== "deployedCities");
+    const hasSpy = ownCities.some((c) => c.spy);
     if (!hasSpy) {
       container.innerHTML = '<div class="no-data"><strong>No spy data</strong>No cities have a safehouse, or spy data was not collected.</div>';
       return;
@@ -1488,7 +1490,7 @@
       return `<span class="${cls}">${trained} / ${max}</span>`;
     }
 
-    for (const c of report.cities) {
+    for (const c of ownCities) {
       const tr = document.createElement("tr");
       const nameHtml = `<span class="city-name">${c.name}</span>${c.isCapital ? '<span class="capital-badge">Capital</span>' : ""}`;
 
@@ -1551,7 +1553,7 @@
 
     // Missions detail table
     const allMissions = [];
-    for (const c of report.cities) {
+    for (const c of ownCities) {
       if (!c.spy) continue;
       for (const m of c.spy.missions) {
         allMissions.push({ sourceCity: c.name, ...m });
