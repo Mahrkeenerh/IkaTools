@@ -840,9 +840,12 @@
       return `<td class="right">${fmt(total)} <span class="val-pos">(+${fmt(remaining)})</span></td>`;
     }
 
+    // Exclude deployed (allied) cities — no warehouse data for them
+    const ownCities = report.cities.filter((c) => c.relationship !== "deployedCities");
+
     let tWood = 0, tWine = 0, tMarble = 0, tCrystal = 0, tSulfur = 0;
 
-    for (const city of report.cities) {
+    for (const city of ownCities) {
       const s = city.storage;
       const r = city.resources || {};
       if (!s) continue;
