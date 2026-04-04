@@ -298,6 +298,7 @@
 
   // --- Economy tab — merged stock+rate columns ---
   function renderEconomy(report) {
+    renderCargoRoutes(report, $("economy-routes"));
     const tbody = $("economy-body");
     const tfoot = $("economy-foot");
 
@@ -826,6 +827,7 @@
 
   // --- Storage tab ---
   function renderStorage(report) {
+    renderCargoRoutes(report, $("storage-routes"));
     const tbody = $("storage-body");
 
     // Green (+remaining) when safe, red (lootable) when overflowing
@@ -877,6 +879,117 @@
     `;
     tfoot.appendChild(footTr);
   }
+
+  // --- Cargo routes (shared by Economy & Storage) ---
+  function renderCargoRoutes(report, container) {
+    const movements = report.militaryMovements;
+    if (!movements || movements.length === 0) return;
+
+    const RES_MAP = { wood: "wood", wine: "wine", marble: "marble", glass: "crystal", crystal: "crystal", sulfur: "sulfur" };
+    const RES_CLASSES = { wood: "res-wood", wine: "res-wine", marble: "res-marble", crystal: "res-crystal", sulfur: "res-sulfur" };
+    const MISSION_LABELS = {
+      transport: "Transport", deployarmy: "Deploy Army", deployfleet: "Deploy Fleet",
+      trade: "Trade", transport_barbarians: "Barbarian Transport", plunder: "Plunder",
+      defend: "Defend", defend_port: "Defend Port", occupy: "Occupy",
+      blockade: "Blockade", barbarianFleet: "Barbarian Fleet", piracyRaid: "Piracy Raid",
+    };
+
+    // Filter to movements carrying non-gold resources
+    const convoys = movements.filter((m) => {
+      if (!m.resources || m.resources.length === 0) return false;
+      return m.resources.some((r) => {
+        const key = RES_MAP[r.type];
+        return key && r.amount > 0;
+      });
+    });
+    if (convoys.length === 0) return;
+
+    const title = document.createElement("div");
+    title.className = "panel-title";
+    title.style.marginTop = "24px";
+    title.textContent = `Active Routes (${convoys.length})`;
+    container.appendChild(title);
+
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
+    const table = document.createElement("table");
+    table.className = "report-table";
+
+    const thead = document.createElement("thead");
+    thead.innerHTML = `<tr>
+      <th>Mission</th>
+      <th>Direction</th>
+      <th>From</th>
+      <th>To</th>
+      <th>ETA</th>
+      <th class="right res-wood"><img class="res-icon" src="../icons/resources/wood.png" alt="">Wood</th>
+      <th class="right res-wine"><img class="res-icon" src="../icons/resources/wine.png" alt="">Wine</th>
+      <th class="right res-marble"><img class="res-icon" src="../icons/resources/marble.png" alt="">Marble</th>
+      <th class="right res-crystal"><img class="res-icon" src="../icons/resources/crystal.png" alt="">Crystal</th>
+      <th class="right res-sulfur"><img class="res-icon" src="../icons/resources/sulfur.png" alt="">Sulfur</th>
+    </tr>`;
+    table.appendChild(thead);
+
+    const tbody = document.createElement("tbody");
+    const totals = { wood: 0, wine: 0, marble: 0, crystal: 0, sulfur: 0 };
+
+    for (const m of convoys) {
+      const tr = document.createElement("tr");
+      const label = MISSION_LABELS[m.missionType] || m.missionType;
+      const dir = m.isReturning ? "←" : "→";
+      const dirClass = m.isReturning ? "val-pos" : "";
+
+      const res = {};
+      for (const r of m.resources) {
+        const key = RES_MAP[r.type];
+        if (!key) continue;
+        res[key] = (res[key] || 0) + r.amount;
+        if (totals[key] !== undefined) totals[key] += r.amount;
+      }
+
+      function resCell(key) {
+        const val = res[key] || 0;
+        const cls = RES_CLASSES[key] || "";
+        return val ? `<td class="right ${cls}">${fmt(val)}</td>` : '<td class="right"><span class="val-zero">—</span></td>';
+      }
+
+      tr.innerHTML = `
+        <td>${label}</td>
+        <td><span class="${dirClass}">${dir}</span></td>
+        <td>${m.origin.city}${m.origin.player ? ' <span style="color:#667">(' + m.origin.player + ')</span>' : ""}</td>
+        <td>${m.target.city}${m.target.player ? ' <span style="color:#667">(' + m.target.player + ')</span>' : ""}</td>
+        <td>${m.countdown || m.arrivalTime || "—"}</td>
+        ${resCell("wood")}
+        ${resCell("wine")}
+        ${resCell("marble")}
+        ${resCell("crystal")}
+        ${resCell("sulfur")}
+      `;
+      tbody.appendChild(tr);
+    }
+
+    const tfoot = document.createElement("tfoot");
+    const footTr = document.createElement("tr");
+    function totalCell(key) {
+      const val = totals[key] || 0;
+      return val ? `<td class="right">${fmt(val)}</td>` : '<td class="right">—</td>';
+    }
+    footTr.innerHTML = `
+      <td colspan="5">Total in transit</td>
+      ${totalCell("wood")}
+      ${totalCell("wine")}
+      ${totalCell("marble")}
+      ${totalCell("crystal")}
+      ${totalCell("sulfur")}
+    `;
+    tfoot.appendChild(footTr);
+
+    table.appendChild(tbody);
+    table.appendChild(tfoot);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
+  }
+
   // --- Trading tab ---
   function renderConvoys(report, container, RES_LABELS, RES_CLASSES) {
     const movements = report.militaryMovements;

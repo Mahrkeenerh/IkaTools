@@ -913,7 +913,7 @@
     const wantArmy = mode === "army" || mode === "full";
     const wantTrading = mode === "trading" || mode === "full";
     const wantSpy = mode === "spy" || mode === "full";
-    const wantMovements = wantArmy || wantTrading;
+    const wantMovements = mode === "basic" || wantStorage || wantArmy || wantTrading;
     const needsPhase2 = mode !== "basic" && mode !== "storage";
     const phases = 1 + (needsPhase2 ? 1 : 0) + (wantStorage && !needsPhase2 ? 1 : 0) + (wantTrading ? 1 : 0);
     const total = cities.length * phases;
