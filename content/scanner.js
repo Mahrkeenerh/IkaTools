@@ -42,11 +42,18 @@
     return coords;
   }
 
+  // Snapshot tile grid element IDs (includes ocean tiles — always present)
+  function snapshotTileGrid() {
+    const ids = new Set();
+    document.querySelectorAll('[id^="tile_"]').forEach((el) => ids.add(el.id));
+    return ids;
+  }
+
   // Wait for tiles to actually update after a jump by detecting DOM changes.
   // The old proximity-only check could pass on stale tiles when the stride
   // was close to the proximity threshold, causing the scanner to read duplicate
   // data from the previous viewport and skip the target area entirely.
-  function waitForTilesUpdate(beforeCoords, targetX, targetY, timeoutMs = 5000) {
+  function waitForTilesUpdate(beforeCoords, beforeGrid, targetX, targetY, timeoutMs = 5000) {
     return new Promise((resolve) => {
       const start = Date.now();
 
@@ -77,6 +84,19 @@
 
         // Accept if the tile set changed substantially (>50% new)
         if (tiles.length > 0 && totalNew > tiles.length / 2) { resolve(true); return; }
+
+        // Accept if the tile grid itself changed (handles empty-to-empty transitions
+        // where no .islandTile elements exist but the viewport has moved)
+        if (beforeGrid) {
+          let gridNew = 0;
+          const currentGrid = document.querySelectorAll('[id^="tile_"]');
+          for (const el of currentGrid) {
+            if (!beforeGrid.has(el.id)) gridNew++;
+          }
+          if (currentGrid.length > 0 && gridNew > currentGrid.length / 2) {
+            resolve(true); return;
+          }
+        }
 
         if (Date.now() - start > timeoutMs) {
           resolve(false);
@@ -210,8 +230,9 @@
 
       try {
         const before = snapshotIslandCoords();
+        const gridBefore = snapshotTileGrid();
         jumpTo(cx, cy);
-        await waitForTilesUpdate(before, cx, cy);
+        await waitForTilesUpdate(before, gridBefore, cx, cy);
         const result = readCurrentTiles();
         addIslands(result.islands);
         requestsDone++;
@@ -251,8 +272,8 @@
     // Use 75% of viewport as stride — the game renders buffer tiles beyond the
     // visible area, so the tile grid is wider than the actual data zone.
     // A fixed overlap of 3 was too thin and left gaps at buffer boundaries.
-    const strideX = Math.max(1, Math.floor(probe.cols * 0.75));
-    const strideY = Math.max(1, Math.floor(probe.rows * 0.75));
+    const strideX = Math.max(1, Math.floor((probe.cols + 1) * 0.75));
+    const strideY = Math.max(1, Math.floor((probe.rows + 1) * 0.75));
 
     safeSend({
       type: "stride-detected",
@@ -262,89 +283,38 @@
       strideY,
     });
 
-    // --- Phase 2: Cross scan to find the 4 tips of the diamond ---
-    // The world map is diamond-shaped. Scan outward from center in 4
-    // cardinal directions, stop on first empty.
-    let tipRight = 50, tipLeft = 50, tipDown = 50, tipUp = 50;
-
-    totalEstimate = 42;
-    progress("cross");
-
-    const centerResult = await jumpAndRead(50, 50, "cross");
-    if (cancelRequested) return;
-
-    // Scan right (+X)
-    for (let x = 50 + strideX; x <= 120; x += strideX) {
-      if (cancelRequested) return;
-      const r = await jumpAndRead(x, 50, "cross");
-      if (!r || r.islands.length === 0) break;
-      tipRight = x;
-    }
-    // Scan left (-X)
-    for (let x = 50 - strideX; x >= -20; x -= strideX) {
-      if (cancelRequested) return;
-      const r = await jumpAndRead(x, 50, "cross");
-      if (!r || r.islands.length === 0) break;
-      tipLeft = x;
-    }
-    // Scan down (+Y)
-    for (let y = 50 + strideY; y <= 120; y += strideY) {
-      if (cancelRequested) return;
-      const r = await jumpAndRead(50, y, "cross");
-      if (!r || r.islands.length === 0) break;
-      tipDown = y;
-    }
-    // Scan up (-Y)
-    for (let y = 50 - strideY; y >= -20; y -= strideY) {
-      if (cancelRequested) return;
-      const r = await jumpAndRead(50, y, "cross");
-      if (!r || r.islands.length === 0) break;
-      tipUp = y;
-    }
-
-    if (cancelRequested) return;
-
-    // Diamond center and radii (in grid coords)
-    const cx = (tipLeft + tipRight) / 2;
-    const cy = (tipUp + tipDown) / 2;
-    const halfW = (tipRight - tipLeft) / 2 + strideX; // +1 stride margin
-    const halfH = (tipDown - tipUp) / 2 + strideY;
-
-    safeSend({
-      type: "bounds-detected",
-      mapMinX: Math.round(cx - halfW),
-      mapMaxX: Math.round(cx + halfW),
-      mapMinY: Math.round(cy - halfH),
-      mapMaxY: Math.round(cy + halfH),
-    });
-
-    // --- Phase 3: Fill the diamond ---
-    // A point (x,y) is inside the diamond if:
-    //   |x - cx| / halfW + |y - cy| / halfH <= 1
-    const fillCenters = [];
-    const yMin = Math.round(cy - halfH);
-    const yMax = Math.round(cy + halfH);
-    const xMin = Math.round(cx - halfW);
-    const xMax = Math.round(cx + halfW);
-    for (let y = yMin; y <= yMax; y += strideY) {
-      for (let x = xMin; x <= xMax; x += strideX) {
-        const dx = Math.abs(x - cx) / halfW;
-        const dy = Math.abs(y - cy) / halfH;
-        if (dx + dy <= 1.05) { // small tolerance
-          const key = `${x}:${y}`;
-          if (!scannedCenters.has(key)) {
-            fillCenters.push([x, y]);
-          }
-        }
-      }
-    }
-
-    totalEstimate = requestsDone + fillCenters.length;
+    // --- Phase 2: Row-by-row fill from (0,0) to (100,100) ---
+    // Scan each row left-to-right, stop after passing through the island
+    // area. Stop scanning rows after 2 consecutive all-empty rows.
+    const MAP_MAX = 100;
+    const xSteps = Math.floor(MAP_MAX / strideX) + 1;
+    const ySteps = Math.floor(MAP_MAX / strideY) + 1;
+    totalEstimate = requestsDone + xSteps * ySteps;
     progress("fill");
 
-    for (const [fx, fy] of fillCenters) {
+    let emptyRows = 0;
+
+    for (let y = 0; y <= MAP_MAX; y += strideY) {
       if (cancelRequested) return;
-      await jumpAndRead(fx, fy, "fill");
+      let rowHasIslands = false;
+      let foundAny = false;
+
+      for (let x = 0; x <= MAP_MAX; x += strideX) {
+        if (cancelRequested) return;
+        const key = `${x}:${y}`;
+        if (scannedCenters.has(key)) continue;
+        const r = await jumpAndRead(x, y, "fill");
+        if (r && r.islands.length > 0) {
+          foundAny = true;
+          rowHasIslands = true;
+        } else if (foundAny) {
+          break; // passed through island area on this row
+        }
+      }
+
+      if (rowHasIslands) emptyRows = 0;
+      else emptyRows++;
+      if (emptyRows >= 2) break; // past the map
     }
 
     if (!cancelRequested) {
