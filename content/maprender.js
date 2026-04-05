@@ -119,6 +119,11 @@ globalThis.MapRender = (() => {
       },
       sort: (a, b) => (a._allyCount || 0) - (b._allyCount || 0),
     },
+    filter: {
+      name: "Filter",
+      color: (isl) => isl._filterMatch ? "#5ae87a" : DIM,
+      sort: (a, b) => (a._filterMatch ? 1 : 0) - (b._filterMatch ? 1 : 0),
+    },
   };
 
   // Generate distinct colors for alliances
@@ -226,6 +231,13 @@ globalThis.MapRender = (() => {
       ctx.filter = "none";
     }
 
+    // Stamp _filterMatch for the filter layer
+    if (layerKey === "filter" && opts.filterConfig && globalThis.MapFilter) {
+      for (const isl of islands) {
+        isl._filterMatch = MapFilter.islandMatches(isl, opts.filterConfig);
+      }
+    }
+
     // Sort: dim islands first, highlighted on top
     const sorted = [...islands].sort(layer.sort);
     const half = size / 2;
@@ -236,7 +248,13 @@ globalThis.MapRender = (() => {
       const cx = px - pxMin + pad;
       const cy = py - pyMin + pad;
 
-      ctx.globalAlpha = (dimEmpty && isl.cities === 0) ? 0.3 : 1;
+      let dimmed = false;
+      if (opts.filterConfig && globalThis.MapFilter) {
+        dimmed = !MapFilter.islandMatches(isl, opts.filterConfig);
+      } else if (dimEmpty) {
+        dimmed = isl.cities === 0;
+      }
+      ctx.globalAlpha = dimmed ? 0.3 : 1;
       const fillColor = layer.color(isl);
       ctx.fillStyle = fillColor;
       if (layerKey === "alliances" && isl._allyColor && isl._allyTag) {
@@ -361,6 +379,15 @@ globalThis.MapRender = (() => {
         ctx.fillRect(lx, ly, boxSize, boxSize);
         ctx.fillStyle = "#c0c8d8";
         ctx.fillText("War zone", lx + boxSize + 4, ly + boxSize - 1);
+      } else if (layerKey === "filter") {
+        const matched = islands.filter((i) => i._filterMatch).length;
+        const boxSize = Math.max(12, Math.round(tw * 1.2));
+        ctx.font = `${fontSize}px sans-serif`;
+        ctx.textAlign = "left";
+        ctx.fillStyle = "#5ae87a";
+        ctx.fillRect(lx, ly, boxSize, boxSize);
+        ctx.fillStyle = "#c0c8d8";
+        ctx.fillText(`Matched (${matched})`, lx + boxSize + 4, ly + boxSize - 1);
       } else if (layerKey === "alliances") {
         // Sort alliances by frequency (count islands with each color)
         const allyCounts = {};

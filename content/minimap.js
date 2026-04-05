@@ -35,6 +35,8 @@
   let cachedScale = null;
   let cachedIslandCount = 0;
   let cachedDimEmpty = null;
+  let filterConfig = null;
+  let cachedFilterJSON = null;
 
   function getViewportCorners() {
     const worldview = document.getElementById("worldview");
@@ -168,6 +170,14 @@
 
     // Return true optimistically so callers know tiles were processed
     return true;
+  }
+
+  function updateLayerBar() {
+    if (!layerBarEl) return;
+    layerBarEl.querySelectorAll("button").forEach((b) => {
+      b.style.background = b.dataset.layer === currentLayer ? "#2a4a6a" : "transparent";
+      b.style.color = b.dataset.layer === currentLayer ? "#e0e8f0" : "#6a7a8a";
+    });
   }
 
   function createOverlay(position) {
@@ -483,6 +493,7 @@
     const renderInfo = globalThis.MapRender.render(baseCtx, islands, {
       tileW: tw, tileH: th, islandSize: iSize, pad: padding,
       drawLegend: false, layer: currentLayer, dimEmpty: dimEmpty,
+      filterConfig: filterConfig,
     });
 
     lastRenderPxMin = renderInfo.pxMin;
@@ -501,10 +512,12 @@
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
 
-    // Rebuild base map only when layer, scale, or data changes
+    // Rebuild base map only when layer, scale, data, or filters change
+    const filterJSON = filterConfig ? JSON.stringify(filterConfig) : null;
     if (!cachedBaseMap || cachedLayer !== currentLayer ||
         cachedScale !== minimapScale || cachedIslandCount !== islands.length ||
-        cachedDimEmpty !== dimEmpty) {
+        cachedDimEmpty !== dimEmpty || cachedFilterJSON !== filterJSON) {
+      cachedFilterJSON = filterJSON;
       rebuildBaseMap();
     }
     if (!cachedBaseMap) return;
@@ -602,7 +615,7 @@
     if (!worldName) return;
 
     const key = "map_" + worldName;
-    const data = await chrome.storage.local.get([key, STORAGE_KEY_ENABLED, STORAGE_KEY_POSITION, STORAGE_KEY_SCALE, "vpTrimRight", "vpTrimBottom", "minimapLayer", "hideZeroCities", "scanInProgress", "scanProgress"]);
+    const data = await chrome.storage.local.get([key, STORAGE_KEY_ENABLED, STORAGE_KEY_POSITION, STORAGE_KEY_SCALE, "vpTrimRight", "vpTrimBottom", "minimapLayer", "hideZeroCities", "scanInProgress", "scanProgress", "mapFilters"]);
 
     if (!data[STORAGE_KEY_ENABLED]) return;
 
@@ -611,6 +624,7 @@
     vpTrimBottom = data.vpTrimBottom ?? 0.15;
     currentLayer = data.minimapLayer || "population";
     dimEmpty = !!data.hideZeroCities;
+    filterConfig = data.mapFilters || null;
     const position = data[STORAGE_KEY_POSITION] || "right";
 
     if (!container || !document.body.contains(container)) {
@@ -622,7 +636,9 @@
       // Has map data — show map
       currentMapData = data[key];
       await loadAllianceIndex();
-      if (dimEmpty) startZeros();
+      const hasFilters = filterConfig && filterConfig.enabled &&
+        filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+      if (hasFilters || dimEmpty) startDimming();
       readAndMergeTiles();
       showMapUI();
       drawMinimap();
@@ -680,45 +696,109 @@
       loadAndShow();
     } else {
       if (container) container.style.display = "none";
-      stopZeros();
+      stopDimming();
     }
   }
 
-  // --- Dim empty islands on world map (zero-city opacity) ---
-  let zerosObserver = null;
+  // --- Dim islands on world map (filter-aware or zero-city fallback) ---
+  let dimmingObserver = null;
 
-  function cleanZeros() {
-    if (!dimEmpty) return;
+  function applyDimming() {
+    const hasFilters = filterConfig && filterConfig.enabled &&
+      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+
+    if (!hasFilters && !dimEmpty) return;
+
     document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
       const title = tile.getAttribute("title") || "";
       if (!title.match(/\[\d+:\d+\]$/)) { tile.style.opacity = ""; return; }
-      const citiesEl = tile.querySelector(".cities");
-      if (!citiesEl) { tile.style.opacity = ""; return; }
-      tile.style.opacity = citiesEl.textContent.trim() === "0" ? "0.35" : "";
+
+      if (hasFilters && globalThis.MapFilter) {
+        // Build island object from DOM
+        const citiesEl = tile.querySelector(".cities");
+        const wonderEl = tile.querySelector('[class*="wonder wonder"]');
+        const tgEl = tile.querySelector('[class*="tradegood tradegood"]');
+        const piracyEl = tile.querySelector('[id^="piracy_"]');
+        const heliosEl = tile.querySelector('[id^="helios_"]');
+        const ownerEl = tile.querySelector('[id^="owner_"]');
+
+        const isl = {
+          cities: citiesEl ? parseInt(citiesEl.textContent, 10) || 0 : 0,
+          wonder: wonderEl ? parseInt(wonderEl.className.match(/wonder(\d+)/)?.[1], 10) || 0 : 0,
+          tradegood: tgEl ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0 : 0,
+          piracy: piracyEl ? piracyEl.className !== "" : false,
+          helios: heliosEl ? heliosEl.className !== "" : false,
+          owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
+          military: false,
+          war: false,
+        };
+
+        // Cross-reference military/war from stored map data
+        if (currentMapData && currentMapData.islands) {
+          const m = title.match(/\[(\d+):(\d+)\]$/);
+          if (m) {
+            const x = parseInt(m[1], 10), y = parseInt(m[2], 10);
+            const stored = currentMapData.islands.find((s) => s.x === x && s.y === y);
+            if (stored) {
+              isl.military = !!stored.military;
+              isl.war = !!stored.war;
+            }
+          }
+        }
+
+        tile.style.opacity = MapFilter.islandMatches(isl, filterConfig) ? "" : "0.35";
+      } else {
+        // Fallback: dim empty islands
+        const citiesEl = tile.querySelector(".cities");
+        if (!citiesEl) { tile.style.opacity = ""; return; }
+        tile.style.opacity = citiesEl.textContent.trim() === "0" ? "0.35" : "";
+      }
     });
   }
 
-  function startZeros() {
-    cleanZeros();
-    if (!zerosObserver) {
-      let zerosDebounce = null;
-      zerosObserver = new MutationObserver(() => {
-        clearTimeout(zerosDebounce);
-        zerosDebounce = setTimeout(cleanZeros, 150);
+  function startDimming() {
+    applyDimming();
+    if (!dimmingObserver) {
+      let debounce = null;
+      dimmingObserver = new MutationObserver(() => {
+        clearTimeout(debounce);
+        debounce = setTimeout(applyDimming, 150);
       });
-      zerosObserver.observe(document.body, { childList: true, subtree: true });
+      dimmingObserver.observe(document.body, { childList: true, subtree: true });
     }
   }
 
-  function stopZeros() {
-    if (zerosObserver) {
-      zerosObserver.disconnect();
-      zerosObserver = null;
+  function stopDimming() {
+    if (dimmingObserver) {
+      dimmingObserver.disconnect();
+      dimmingObserver = null;
     }
     document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
       tile.style.opacity = "";
     });
   }
+
+  // Listen for filter changes from filter panel
+  let layerBeforeFilter = null;
+  window.addEventListener("ik-filter-change", (e) => {
+    filterConfig = e.detail;
+    cachedBaseMap = null;
+    const hasFilters = filterConfig && filterConfig.enabled &&
+      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+    if (hasFilters || dimEmpty) startDimming();
+    else stopDimming();
+    // Auto-switch to/from filter layer
+    if (hasFilters && currentLayer !== "filter") {
+      layerBeforeFilter = currentLayer;
+      currentLayer = "filter";
+      updateLayerBar();
+    } else if (!hasFilters && currentLayer === "filter") {
+      currentLayer = layerBeforeFilter || "population";
+      layerBeforeFilter = null;
+      updateLayerBar();
+    }
+    drawMinimap();
+  });
 
   // Track scan progress/completion via storage changes
   chrome.storage.onChanged.addListener((changes, area) => {
@@ -800,7 +880,9 @@
     if (msg.type === "hide-zeros-toggle") {
       dimEmpty = msg.enabled;
       cachedBaseMap = null;
-      if (dimEmpty) startZeros(); else stopZeros();
+      const hasFilters = filterConfig && filterConfig.enabled &&
+        filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+      if (hasFilters || dimEmpty) startDimming(); else stopDimming();
       if (container && container.style.display !== "none") drawMinimap();
     }
     if (msg.type === "vp-trim") {
@@ -825,8 +907,11 @@
   watchWorldmapScroll();
 
   // Init dim-empty independently of minimap overlay
-  chrome.storage.local.get("hideZeroCities", (data) => {
+  chrome.storage.local.get(["hideZeroCities", "mapFilters"], (data) => {
     dimEmpty = !!data.hideZeroCities;
-    if (dimEmpty && isWorldMapView()) startZeros();
+    if (!filterConfig && data.mapFilters) filterConfig = data.mapFilters;
+    const hasFilters = filterConfig && filterConfig.enabled &&
+      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+    if ((hasFilters || dimEmpty) && isWorldMapView()) startDimming();
   });
 })();
