@@ -1589,7 +1589,6 @@
       <th>City</th>
       <th class="right">Safehouse Lv</th>
       <th class="right">Capacity</th>
-      <th class="right">Waiting</th>
       <th class="right">Defense</th>
       <th class="right">In Use</th>
       <th class="right">Missions</th>
@@ -1598,7 +1597,7 @@
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
-    let totCap = 0, totTrained = 0, totWait = 0, totDef = 0, totUse = 0, totMissions = 0, totEnemy = 0;
+    let totCap = 0, totTrained = 0, totDef = 0, totUse = 0, totMissions = 0, totEnemy = 0;
 
     function capHtml(trained, max) {
       if (max === 0) return '<span class="val-zero">0 / 0</span>';
@@ -1612,10 +1611,9 @@
 
       if (c.spy) {
         const s = c.spy;
-        const trained = s.waiting + s.defense + s.inUse;
+        const trained = s.defense + s.inUse;
         totCap += s.canTrain;
         totTrained += trained;
-        totWait += s.waiting;
         totDef += s.defense;
         totUse += s.inUse;
         totMissions += s.missions.length;
@@ -1629,7 +1627,6 @@
           <td>${nameHtml}</td>
           <td class="right"><span class="lvl">${s.safehouseLevel}</span></td>
           <td class="right">${capHtml(trained, s.canTrain)}</td>
-          <td class="right">${s.waiting || '<span class="val-zero">0</span>'}</td>
           <td class="right">${s.defense || '<span class="val-zero">0</span>'}</td>
           <td class="right">${s.inUse || '<span class="val-zero">0</span>'}</td>
           <td class="right">${s.missions.length || '<span class="val-zero">0</span>'}</td>
@@ -1643,7 +1640,7 @@
 
         tr.innerHTML = `
           <td>${nameHtml}</td>
-          <td colspan="6" style="color:#556;text-align:center;">No safehouse</td>
+          <td colspan="5" style="color:#556;text-align:center;">No safehouse</td>
           <td>${enemyHtml}</td>
         `;
       }
@@ -1656,7 +1653,6 @@
       <td>Total</td>
       <td></td>
       <td class="right">${capHtml(totTrained, totCap)}</td>
-      <td class="right">${totWait}</td>
       <td class="right">${totDef}</td>
       <td class="right">${totUse}</td>
       <td class="right">${totMissions}</td>
