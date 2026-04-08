@@ -534,12 +534,14 @@
   }
 
   // --- Initialization ---
-  function isWorldMapView() {
-    return document.body.id === "worldmap_iso";
+  // Filter panel is shown on both world map and island views — same predicates
+  // apply to the minimap dim overlay and the per-city island dimming.
+  function isSupportedView() {
+    return document.body.id === "worldmap_iso" || document.body.id === "island";
   }
 
   async function init() {
-    if (!isWorldMapView()) return;
+    if (!isSupportedView()) return;
     if (!globalThis.MapFilter) return;
 
     const data = await chrome.storage.local.get([STORAGE_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
@@ -564,7 +566,7 @@
   window.addEventListener("ik-custom-predicate-change", () => renderStatus());
 
   function showOrHide() {
-    if (isWorldMapView()) {
+    if (isSupportedView()) {
       if (!panelEl) init();
       else if (panelEl) panelEl.style.display = "";
     } else {

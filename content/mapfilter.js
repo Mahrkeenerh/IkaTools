@@ -35,7 +35,7 @@ globalThis.MapFilter = (() => {
     { type: "ctAvailable", value: true, label: "CT available", color: "#00FFAA", group: "Cultural Treaty", requiresRich: true },
     { type: "allyTag", value: "", label: "Alliance tag", color: "#FFAA00", group: "Players", requiresRich: true, parameterized: true, paramKind: "allyTag", paramPlaceholder: "tag" },
     { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
-    { type: "armyMin", value: 0, label: "Max army on island ≥", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "score" },
+    { type: "armyMin", value: null, label: "Player army ≥", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
   ];
 
   // Custom predicate hook for power users — set via window.IkFilter.setCustomPredicate(fn).
@@ -68,7 +68,9 @@ globalThis.MapFilter = (() => {
         return isl._ownerNamesText.indexOf(q) !== -1;
       }
       case "armyMin": {
-        const n = Number(filter.value) || 0;
+        // Empty/NaN threshold = inactive rule (match everything)
+        const n = Number(filter.value);
+        if (!Number.isFinite(n)) return true;
         return (isl._maxArmy || 0) >= n;
       }
       default: return false;

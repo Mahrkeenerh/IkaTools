@@ -121,5 +121,33 @@ globalThis.IkUtils = (() => {
     return idx > 0 ? host.substring(0, idx) : null;
   }
 
-  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems };
+  // Extract updateBackgroundData JSON from inline scripts on island/city pages.
+  // Naive brace-matching: JSON.parse on the raw substring fails because trailing
+  // script content follows the object.
+  function parseBackgroundData() {
+    let result = null;
+    document.querySelectorAll("script").forEach((script) => {
+      if (result) return;
+      const text = script.textContent;
+      const idx = text.indexOf('"updateBackgroundData"');
+      if (idx === -1) return;
+      const start = text.indexOf("{", idx);
+      if (start === -1) return;
+      let depth = 0;
+      for (let i = start; i < text.length; i++) {
+        if (text[i] === "{") depth++;
+        else if (text[i] === "}") {
+          depth--;
+          if (depth === 0) {
+            try { result = JSON.parse(text.substring(start, i + 1)); }
+            catch (e) { /* swallow — caller handles null */ }
+            return;
+          }
+        }
+      }
+    });
+    return result;
+  }
+
+  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems, parseBackgroundData };
 })();

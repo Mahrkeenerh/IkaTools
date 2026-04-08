@@ -113,38 +113,8 @@
     friendIds = new Set(Object.keys(data[KEY_FRIEND_LIST] || data.friendList || {}));
   }
 
-  // --- Extract updateBackgroundData from inline scripts ---
-  function parseBackgroundData() {
-    let result = null;
-    document.querySelectorAll("script").forEach((script) => {
-      if (result) return;
-      const text = script.textContent;
-      // The data is inside: ["updateBackgroundData",{...JSON...}]
-      const idx = text.indexOf('"updateBackgroundData"');
-      if (idx === -1) return;
-      // Find the JSON object that follows
-      const start = text.indexOf("{", idx);
-      if (start === -1) return;
-      // Naive brace-matching to extract the JSON object from the surrounding script content.
-      // (JSON.parse on the raw substring always fails because trailing script content follows.)
-      let depth = 0;
-      for (let i = start; i < text.length; i++) {
-        if (text[i] === "{") depth++;
-        else if (text[i] === "}") {
-          depth--;
-          if (depth === 0) {
-            try {
-              result = JSON.parse(text.substring(start, i + 1));
-            } catch (e) {
-              console.error(TAG, "Failed to parse background data:", e);
-            }
-            return;
-          }
-        }
-      }
-    });
-    return result;
-  }
+  // Extract updateBackgroundData from inline scripts — shared helper
+  const parseBackgroundData = IkUtils.parseBackgroundData;
 
   // --- Store island data passively ---
   async function extractAndStore() {
