@@ -7,10 +7,12 @@
 
   let panelEl = null;
   let bodyEl = null;
+  let statusEl = null;
   let config = null;
   let collapsed = false;
   let saveTimer = null;
   let panelPosition = "left"; // opposite of minimap
+  let queryIndex = null; // derived rich-data blob, or null if no full scan
 
   function uid() {
     return Math.random().toString(36).slice(2, 7);
@@ -81,11 +83,19 @@
     return btn;
   }
 
-  // --- Build filter chip ---
+  // Find option metadata for an active filter (matches by type, plus value
+  // for non-parameterized filters where value is part of the identity).
+  function findOption(filter) {
+    return globalThis.MapFilter.FILTER_OPTIONS.find((o) => {
+      if (o.type !== filter.type) return false;
+      if (o.parameterized) return true;
+      return o.value === filter.value;
+    });
+  }
+
+  // --- Build filter chip (used for fixed enum/boolean filters) ---
   function buildChip(filter, onRemove) {
-    const opt = globalThis.MapFilter.FILTER_OPTIONS.find(
-      (o) => o.type === filter.type && o.value === filter.value
-    );
+    const opt = findOption(filter);
     const label = opt ? opt.label : `${filter.type}:${filter.value}`;
     const color = opt ? opt.color : "#888";
 
@@ -110,6 +120,80 @@
     return chip;
   }
 
+  // --- Build rule row (used for parameterized filters: text/number/allyTag) ---
+  function buildRuleRow(filter, onRemove) {
+    const opt = findOption(filter);
+    const label = opt ? opt.label : filter.type;
+    const color = opt ? opt.color : "#888";
+
+    const row = document.createElement("div");
+    applyStyle(row, {
+      display: "flex", alignItems: "center", gap: "4px",
+      margin: "3px 0", padding: "3px 6px",
+      background: color + "1a",
+      border: "1px solid " + color + "55",
+      borderRadius: "4px",
+      fontSize: "11px", fontFamily: "sans-serif", color: "#d0d8e0",
+    });
+
+    const labelEl = document.createElement("span");
+    labelEl.textContent = label;
+    applyStyle(labelEl, { flexShrink: "0", color: "#a0a8b8" });
+    row.appendChild(labelEl);
+
+    let inputEl;
+    if (opt && opt.paramKind === "allyTag") {
+      // Dropdown of known alliance tags from the query index
+      inputEl = document.createElement("select");
+      applyStyle(inputEl, {
+        flex: "1", minWidth: "60px", background: "#1a2a40", color: "#c0c8d8",
+        border: "1px solid rgba(60,90,130,0.5)", borderRadius: "3px",
+        fontSize: "11px", padding: "1px 3px",
+      });
+      const placeholder = document.createElement("option");
+      placeholder.value = ""; placeholder.textContent = "-- pick --";
+      inputEl.appendChild(placeholder);
+      const tags = (queryIndex && queryIndex.allyTags) || [];
+      const counts = (queryIndex && queryIndex.allyCityCounts) || {};
+      for (const tag of tags) {
+        const o = document.createElement("option");
+        o.value = tag;
+        o.textContent = counts[tag] ? `${tag} (${counts[tag]})` : tag;
+        inputEl.appendChild(o);
+      }
+      inputEl.value = filter.value || "";
+    } else {
+      inputEl = document.createElement("input");
+      inputEl.type = (opt && opt.paramKind === "number") ? "number" : "text";
+      inputEl.placeholder = (opt && opt.paramPlaceholder) || "";
+      inputEl.value = filter.value != null ? String(filter.value) : "";
+      applyStyle(inputEl, {
+        flex: "1", minWidth: "50px", background: "#1a2a40", color: "#c0c8d8",
+        border: "1px solid rgba(60,90,130,0.5)", borderRadius: "3px",
+        fontSize: "11px", padding: "1px 4px",
+      });
+    }
+
+    inputEl.addEventListener("input", () => {
+      filter.value = inputEl.type === "number" ? Number(inputEl.value) : inputEl.value;
+      update();
+    });
+    inputEl.addEventListener("change", () => {
+      filter.value = inputEl.type === "number" ? Number(inputEl.value) : inputEl.value;
+      update();
+    });
+    inputEl.addEventListener("click", (e) => e.stopPropagation());
+    row.appendChild(inputEl);
+
+    const x = document.createElement("span");
+    x.textContent = "\u00D7";
+    applyStyle(x, { cursor: "pointer", fontSize: "13px", lineHeight: "1", color: "#aa6666", flexShrink: "0", padding: "0 2px" });
+    x.addEventListener("click", (e) => { e.stopPropagation(); onRemove(); });
+    row.appendChild(x);
+
+    return row;
+  }
+
   // --- Build add-filter dropdown ---
   function buildAddSelect(group, onAdd) {
     const wrap = document.createElement("span");
@@ -132,17 +216,22 @@
     select.appendChild(placeholder);
 
     const options = globalThis.MapFilter.FILTER_OPTIONS;
+    const haveRich = !!queryIndex;
     let lastGroup = "";
     for (const opt of options) {
+      // Hide rich predicates entirely when no query index exists.
+      if (opt.requiresRich && !haveRich) continue;
       if (opt.group !== lastGroup) {
         const optgroup = document.createElement("optgroup");
         optgroup.label = opt.group;
         select.appendChild(optgroup);
         lastGroup = opt.group;
       }
-      // Skip if already in this group
-      const exists = group.filters.some((f) => f.type === opt.type && f.value === opt.value);
-      if (exists) continue;
+      // Dedupe fixed filters; allow multiple parameterized rows of the same type
+      if (!opt.parameterized) {
+        const exists = group.filters.some((f) => f.type === opt.type && f.value === opt.value);
+        if (exists) continue;
+      }
       const o = document.createElement("option");
       o.value = JSON.stringify({ type: opt.type, value: opt.value });
       o.textContent = opt.label;
@@ -212,17 +301,27 @@
     header.appendChild(delBtn);
     div.appendChild(header);
 
-    // Chips
+    // Chips (fixed filters) and rule rows (parameterized filters) — split rendering
     const chipsRow = document.createElement("div");
     applyStyle(chipsRow, { display: "flex", flexWrap: "wrap", alignItems: "center" });
 
+    const rulesContainer = document.createElement("div");
+    applyStyle(rulesContainer, { display: "flex", flexDirection: "column" });
+
     for (let i = 0; i < group.filters.length; i++) {
       const fi = i;
-      chipsRow.appendChild(buildChip(group.filters[i], () => {
+      const f = group.filters[i];
+      const opt = findOption(f);
+      const remove = () => {
         group.filters.splice(fi, 1);
         update();
         renderBody();
-      }));
+      };
+      if (opt && opt.parameterized) {
+        rulesContainer.appendChild(buildRuleRow(f, remove));
+      } else {
+        chipsRow.appendChild(buildChip(f, remove));
+      }
     }
 
     chipsRow.appendChild(buildAddSelect(group, (filter) => {
@@ -232,7 +331,54 @@
     }));
 
     div.appendChild(chipsRow);
+    if (rulesContainer.children.length > 0) div.appendChild(rulesContainer);
     return div;
+  }
+
+  function formatAge(ts) {
+    if (!ts) return "never";
+    const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    return Math.round(hrs / 24) + "d ago";
+  }
+
+  function renderStatus() {
+    if (!statusEl) return;
+    statusEl.innerHTML = "";
+    const lines = [];
+    if (queryIndex) {
+      const islandCount = Object.keys(queryIndex.islandsByCoord || {}).length;
+      lines.push(`Rich data: ${islandCount} islands · scan ${formatAge(queryIndex.fullScanAt)}`);
+      if (queryIndex.ct) {
+        const flt = queryIndex.ct.allyFilter ? ` filter "${queryIndex.ct.allyFilter}"` : "";
+        lines.push(`CT: ${queryIndex.ct.availableCount}/${queryIndex.ct.checkedCount} avail${flt}`);
+      } else {
+        lines.push("CT: not run");
+      }
+    } else {
+      lines.push("Rich data: none — run a Full Scan to enable player/army/CT filters");
+    }
+    if (lastMatchCount != null) {
+      lines.push(`${lastMatchCount} islands match`);
+    }
+    if (globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) {
+      lines.push("Custom JS predicate active (window.IkFilter.clear() to remove)");
+    }
+    for (const line of lines) {
+      const div = document.createElement("div");
+      div.textContent = line;
+      applyStyle(div, { color: "#7080a0", fontSize: "10px", fontFamily: "sans-serif", padding: "1px 0" });
+      statusEl.appendChild(div);
+    }
+  }
+
+  let lastMatchCount = null;
+  function setMatchCount(n) {
+    lastMatchCount = n;
+    renderStatus();
   }
 
   // --- Render panel body ---
@@ -254,6 +400,8 @@
       renderBody();
     });
     bodyEl.appendChild(addGroupBtn);
+
+    renderStatus();
   }
 
   // --- Create the panel DOM ---
@@ -344,6 +492,15 @@
     });
     panelEl.appendChild(bodyEl);
 
+    // Status footer — rich data freshness, CT counts, match count, custom predicate flag
+    statusEl = document.createElement("div");
+    applyStyle(statusEl, {
+      padding: "4px 8px",
+      borderTop: "1px solid rgba(60,90,130,0.3)",
+      flexShrink: "0",
+    });
+    panelEl.appendChild(statusEl);
+
     renderBody();
     applyCollapse(collapseBtn);
     document.body.appendChild(panelEl);
@@ -351,7 +508,20 @@
 
   function applyCollapse(collapseBtn) {
     if (bodyEl) bodyEl.style.display = collapsed ? "none" : "";
+    if (statusEl) statusEl.style.display = collapsed ? "none" : "";
     if (collapseBtn) collapseBtn.textContent = collapsed ? "\u25B2" : "\u25BC";
+  }
+
+  // Load the rich-data query index for this world. Called on init and on
+  // storage changes that touch queryIndex_{world}.
+  async function loadQueryIndex() {
+    const world = (globalThis.IkUtils && IkUtils.getUrlWorldName && IkUtils.getUrlWorldName()) || "unknown";
+    const key = "queryIndex_" + world;
+    const data = await chrome.storage.local.get(key);
+    queryIndex = data[key] || null;
+    if (panelEl) {
+      renderBody();
+    }
   }
 
   function updatePosition(minimapPos) {
@@ -379,8 +549,19 @@
     collapsed = !!data.filterPanelCollapsed;
     updatePosition(data.minimapPosition || "right");
     createPanel();
+    await loadQueryIndex();
     emit(); // notify minimap of current config
   }
+
+  // Expose hooks for the minimap to push match count + for the world data
+  // updater (background commit) to refresh the panel without polling.
+  globalThis.IkFilterPanel = {
+    setMatchCount,
+    refreshQueryIndex: loadQueryIndex,
+  };
+
+  // Refresh the status footer when a power-user predicate is toggled.
+  window.addEventListener("ik-custom-predicate-change", () => renderStatus());
 
   function showOrHide() {
     if (isWorldMapView()) {
@@ -395,7 +576,7 @@
   const viewObs = new MutationObserver(() => showOrHide());
   viewObs.observe(document.body, { attributes: true, attributeFilter: ["id"] });
 
-  // React to minimap position changes
+  // React to minimap position changes + queryIndex updates from background scans
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
     if (changes.minimapPosition) {
@@ -404,6 +585,11 @@
     if (changes.minimapEnabled) {
       if (changes.minimapEnabled.newValue) init();
       else if (panelEl) panelEl.style.display = "none";
+    }
+    // Refresh rich data when the background scan commits a new query index
+    const world = (globalThis.IkUtils && IkUtils.getUrlWorldName && IkUtils.getUrlWorldName()) || "unknown";
+    if (changes["queryIndex_" + world]) {
+      loadQueryIndex();
     }
   });
 

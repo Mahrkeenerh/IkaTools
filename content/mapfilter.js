@@ -29,7 +29,19 @@ globalThis.MapFilter = (() => {
     // Population / free space
     { type: "pop", value: 15, label: "Pop < 15", color: "#5ab87a", group: "Population" },
     { type: "pop", value: 16, label: "Pop < 16", color: "#7acc94", group: "Population" },
+    // Rich-data predicates — require a recent full scan (queryIndex_{world}).
+    // `parameterized` filters render as rule rows, not chips, in the panel.
+    // `requiresRich` flags filters that should be hidden when no query index exists.
+    { type: "ctAvailable", value: true, label: "CT available", color: "#00FFAA", group: "Cultural Treaty", requiresRich: true },
+    { type: "allyTag", value: "", label: "Alliance tag", color: "#FFAA00", group: "Players", requiresRich: true, parameterized: true, paramKind: "allyTag", paramPlaceholder: "tag" },
+    { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
+    { type: "armyMin", value: 0, label: "Max army on island ≥", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "score" },
   ];
+
+  // Custom predicate hook for power users — set via window.IkFilter.setCustomPredicate(fn).
+  // If set, the function is called with the enriched island and must return a boolean.
+  // Treated as a virtual filter group ANDed with the regular filter config.
+  let customPredicate = null;
 
   function matchFilter(isl, filter) {
     switch (filter.type) {
@@ -44,6 +56,21 @@ globalThis.MapFilter = (() => {
         if (filter.value === "empty") return isl.cities === 0;
         if (filter.value === "hasCities") return isl.cities > 0;
         return !!isl[filter.value];
+      // Rich predicates — read precomputed underscore fields stamped by enrichment
+      case "ctAvailable": return !!isl._ctAvailable;
+      case "allyTag": {
+        if (!filter.value || !isl._allyTags) return false;
+        return isl._allyTags.has(String(filter.value));
+      }
+      case "playerName": {
+        const q = String(filter.value || "").trim().toLowerCase();
+        if (!q || !isl._ownerNamesText) return false;
+        return isl._ownerNamesText.indexOf(q) !== -1;
+      }
+      case "armyMin": {
+        const n = Number(filter.value) || 0;
+        return (isl._maxArmy || 0) >= n;
+      }
       default: return false;
     }
   }
@@ -57,6 +84,11 @@ globalThis.MapFilter = (() => {
   }
 
   function islandMatches(isl, config) {
+    // Custom power-user predicate ANDs with everything else.
+    if (customPredicate) {
+      try { if (!customPredicate(isl)) return false; }
+      catch (e) { /* swallow — bad predicate shouldn't kill rendering */ }
+    }
     if (!config || !config.enabled) return true;
     if (!config.groups || config.groups.length === 0) return true;
     // Only consider groups that have filters
@@ -68,5 +100,70 @@ globalThis.MapFilter = (() => {
     return active.some((g) => matchGroup(isl, g));
   }
 
-  return { islandMatches, matchGroup, matchFilter, FILTER_OPTIONS };
+  function setCustomPredicate(fn) {
+    customPredicate = (typeof fn === "function") ? fn : null;
+    // Dedicated event so the minimap can redraw without overwriting filterConfig.
+    window.dispatchEvent(new CustomEvent("ik-custom-predicate-change"));
+  }
+
+  function getCustomPredicate() { return customPredicate; }
+
+  return { islandMatches, matchGroup, matchFilter, FILTER_OPTIONS, setCustomPredicate, getCustomPredicate };
 })();
+
+// Power-user hook: expose a tiny API on globalThis so a programmer can write
+// JS predicates from the DevTools console (context: "ikariam-tools" content
+// script) and have the map highlight matching islands.
+//
+// Each enriched island has these fields available to the predicate:
+//   x, y, name, cities, owner, tradegood, wonder        (lightweight scan)
+//   _allyTags        Set<string>     (alliance tags on the island)
+//   _ownerNamesText  string          ("\n"-joined lowercased owner names)
+//   _maxArmy         number          (max army score across cities)
+//   _ctAvailable     boolean
+//   _ctChecked       boolean
+//
+// Examples:
+//   IkFilter.set(i => i._allyTags && i._allyTags.has("-DR-"))
+//   IkFilter.set(i => i._maxArmy > 50000 && !i._allyTags.has("-DR-"))
+//   IkFilter.set(i => i._ownerNamesText.includes("bob"))
+//   IkFilter.clear()
+//
+// IkData.get() returns the raw queryIndex_{world} blob for ad-hoc inspection.
+globalThis.IkFilter = {
+  set(fn) { globalThis.MapFilter.setCustomPredicate(fn); },
+  clear() { globalThis.MapFilter.setCustomPredicate(null); },
+  current() { return globalThis.MapFilter.getCustomPredicate(); },
+};
+
+globalThis.IkData = {
+  async get(worldName) {
+    const w = worldName || (globalThis.IkUtils && IkUtils.getUrlWorldName && IkUtils.getUrlWorldName()) || "unknown";
+    const data = await chrome.storage.local.get("queryIndex_" + w);
+    return data["queryIndex_" + w] || null;
+  },
+  async players(worldName) {
+    const idx = await this.get(worldName);
+    if (!idx) return [];
+    // Flatten unique players from islandsByCoord
+    const seen = new Map();
+    for (const coord of Object.keys(idx.islandsByCoord)) {
+      const isl = idx.islandsByCoord[coord];
+      for (let i = 0; i < isl.ownerIds.length; i++) {
+        const id = isl.ownerIds[i];
+        if (seen.has(id)) {
+          seen.get(id).islands.push({ x: isl.x, y: isl.y, name: isl.name });
+          continue;
+        }
+        seen.set(id, {
+          id,
+          name: (isl._ownerNamesText || isl.ownerNamesText || "").split("\n")[i] || "",
+          allyTags: isl.allyTags,
+          islands: [{ x: isl.x, y: isl.y, name: isl.name }],
+          maxArmyOnIsland: isl.maxArmy,
+        });
+      }
+    }
+    return [...seen.values()];
+  },
+};
