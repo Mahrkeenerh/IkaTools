@@ -605,7 +605,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     const url = msg.worldName
       ? reportUrl + "?world=" + encodeURIComponent(msg.worldName)
       : reportUrl;
-    chrome.tabs.create({ url });
+    const opts = { url };
+    if (sender.tab) {
+      opts.index = sender.tab.index + 1;
+      opts.openerTabId = sender.tab.id;
+    }
+    chrome.tabs.create(opts);
+    return;
+  }
+
+  if (msg.type === "open-tab-next") {
+    const opts = { url: msg.url };
+    if (typeof msg.active === "boolean") opts.active = msg.active;
+    if (sender.tab) {
+      opts.index = sender.tab.index + 1;
+      opts.openerTabId = sender.tab.id;
+    }
+    chrome.tabs.create(opts);
     return;
   }
 

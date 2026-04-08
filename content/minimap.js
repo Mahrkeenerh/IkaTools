@@ -625,7 +625,7 @@
     });
     canvas.toBlob((blob) => {
       const url = URL.createObjectURL(blob);
-      window.open(url, "_blank");
+      chrome.runtime.sendMessage({ type: "open-tab-next", url });
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     });
   }

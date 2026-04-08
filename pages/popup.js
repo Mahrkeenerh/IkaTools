@@ -536,12 +536,24 @@
         MapRender.render(previewCtx, map.islands || [], { layer: layerKey || "population", dimEmpty: dimEmptyActive });
         const blob = dataUrlToBlob(previewCanvas.toDataURL("image/png"));
         const url = URL.createObjectURL(blob);
-        chrome.tabs.create({ url, active: !background });
+        openTabNextToActive(url, !background);
         setTimeout(() => URL.revokeObjectURL(url), 5000);
       }
 
       card.addEventListener("click", () => openPreview("population"));
     }
+  }
+
+  function openTabNextToActive(url, active) {
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const opts = { url, active };
+      const cur = tabs && tabs[0];
+      if (cur) {
+        opts.index = cur.index + 1;
+        opts.openerTabId = cur.id;
+      }
+      chrome.tabs.create(opts);
+    });
   }
 
   function dataUrlToBlob(dataUrl) {
