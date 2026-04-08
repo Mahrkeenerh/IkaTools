@@ -409,40 +409,9 @@
   }
 
   // --- Storage ---
+  // Map writing is done directly by culturaltreaty.js (content script) during
+  // the scan flow — popup is read-only for the gallery.
   const STORAGE_INDEX = "mapIndex";
-
-  async function saveMap(worldName, islands, png) {
-    const index = await getIndex();
-    const key = "map_" + worldName;
-    const entry = { worldName, scanDate: new Date().toISOString(), key };
-
-    const existing = index.findIndex((e) => e.key === key);
-    if (existing >= 0) index[existing] = entry;
-    else index.unshift(entry);
-
-    // Re-apply alliance data from the alliance index onto fresh scan islands
-    const allyKey = "allianceIndex_" + worldName;
-    const allyData = await chrome.storage.local.get(allyKey);
-    const allyIdx = allyData[allyKey] || {};
-    for (const isl of islands) {
-      const coordKey = `${isl.x}:${isl.y}`;
-      const entry2 = allyIdx[coordKey];
-      if (!entry2 || !entry2.counts) continue;
-      const allyCounts = {};
-      for (const [tag, count] of Object.entries(entry2.counts)) {
-        if (tag !== "(none)") allyCounts[tag] = count;
-      }
-      const sorted = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
-      isl.alliances = allyCounts;
-      isl.dominantAlly = sorted.length > 0 ? sorted[0][0] : "";
-      isl.cities = Math.max(isl.cities, entry2.total || 0);
-    }
-
-    await chrome.storage.local.set({
-      [STORAGE_INDEX]: index,
-      [key]: { worldName, scanDate: entry.scanDate, islands, png },
-    });
-  }
 
   async function getIndex() {
     const data = await chrome.storage.local.get(STORAGE_INDEX);

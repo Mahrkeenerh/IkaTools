@@ -1,6 +1,6 @@
 # Ikariam Tools
 
-Chrome MV3 extension for the Ikariam browser game. Features: premium UI cleanup, CAPTCHA auto-solver (YOLOv8n/ONNX), world map scanner with minimap overlay, island info panel, auto-finish buildings, auto-pirate missions, trade history charts, upgrade resource info, wine timer.
+Chrome MV3 extension for the Ikariam browser game. Features: premium UI cleanup, CAPTCHA auto-solver (CRNN+CTC ONNX model), world map scanner with minimap overlay, full-world player/score/alliance scan, rich-data filter panel with custom JS predicates, cultural treaty scanner and dedicated popup tab, island info panel, auto-finish buildings, auto-pirate missions, trade history charts, upgrade resource info, wine timer.
 
 ## Tech Stack
 
@@ -33,16 +33,22 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - `manifest.json` — Extension manifest (permissions, content scripts, popup)
 - `background.js` — Service worker, routes messages, manages offscreen document (with ping/recreate)
 - `content/` — Content scripts injected into game pages + shared modules
-  - `utils.js` — Shared utilities (`globalThis.IkUtils`): bridge injection, world name, tile parsing, alliance helpers
-  - `bridge.js` — Page-context script (CSP bypass), 7 event handlers for game function calls
+  - `utils.js` — Shared utilities (`globalThis.IkUtils`): bridge injection, URL/title world name, tile parsing, island bg-data parsing
+  - `customeval.js` — Promise-based wrapper around bridge.js eval handlers (`globalThis.CustomEval`)
+  - `bridge.js` — Page-context script (CSP bypass), 9 event handlers — includes `ik-eval-cmd` for power-user JS predicate compilation since MV3 extension CSP bans `unsafe-eval` in the content-script isolated world
   - `content.js` — CAPTCHA detection and solving orchestration
   - `cleanup.js` — Premium UI removal (shop, ambrosia, premium trader, ads)
-  - `scanner.js` — World map scanning via game's coordinate navigation
-  - `minimap.js` — In-game overlay with viewport tracking, click-to-navigate, layer/scale/collapse controls, dim empty islands
+  - `scanner.js` — World map scanning via game's coordinate navigation (`globalThis.IkScanner`)
+  - `culturaltreaty.js` — Orchestrates the 2-phase full scan (DOM map scan then background-worker handoff for island fetches + CT check)
+  - `mapfilter.js` — Filter engine and predicate types (`globalThis.MapFilter`). Supports both chip filters and parameterized rule rows, plus two power-user hooks: `setCustomPredicate(fn)` (sync function, used by DevTools `IkFilter.set()`) and `setCustomResults(map, keyFn)` (pre-computed result map used by the panel textarea)
+  - `filterpanel.js` — In-game filter panel UI with chip groups, rule rows, Custom JS textarea, status footer (rich data freshness + match count)
   - `maprender.js` — Shared map rendering engine (8 layers including alliances, isometric projection)
-  - `islandinfo.js` — Island view: passive data extraction, sortable player panel, alliance labels on cities
+  - `minimap.js` — In-game overlay with viewport tracking, click-to-navigate, layer/scale/collapse controls, dim empty/filtered islands. Handles rich-data enrichment and custom-predicate refresh.
+  - `islandfilter.js` — Per-city dimming on the island view using the same filter engine and custom predicate (builds virtual-island objects per city slot)
+  - `islandinfo.js` — Island view: passive data extraction, sortable player panel, alliance labels on cities, writes to `island_{world}_{id}` and `allianceIndex_{world}`
+  - `mapfilter.js` is loaded before `minimap.js` / `filterpanel.js` / `islandfilter.js` so they can read `globalThis.MapFilter`.
   - `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
-  - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar
+  - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar. Pauses only during the DOM scan phase, not the background fetch phases.
   - `gamenotes.js` — In-game notes toolbar button with floating panel, syncs with popup notes via chrome.storage
   - `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
   - `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`
@@ -50,33 +56,61 @@ No dev server — load unpacked extension directly from this directory in `chrom
   - `upgradeinfo.js` — Injects missing-resource amounts onto building upgrade panels
   - `winetimer.js` — Shows wine stock duration in the resource bar
 - `pages/` — Extension UI pages
-  - `popup.html` / `popup.js` — Extension popup (scan, gallery with layer thumbnails, settings)
+  - `popup.html` / `popup.js` — Extension popup with Maps / CT / Pirate / Notes / Settings tabs. Maps tab triggers scans + shows gallery; CT tab shows last scan results with live alliance filter.
   - `report.html` / `report.js` — Advisor report page: multi-city data summary, trading history charts
   - `offscreen.html` — Offscreen document for ONNX inference
-  - `inference.js` — YOLOv8n pre/postprocessing for CAPTCHA
+  - `inference.js` — CRNN+CTC pre/postprocessing for CAPTCHA (replaces earlier YOLOv8 pipeline)
 - `src/offscreen.js` — ONNX runtime entry point (bundled by esbuild to dist/)
-- `model/model.onnx` — CAPTCHA solver model (12 MB binary)
+- `model/model.onnx` — CAPTCHA solver model (6.4 MB CRNN+CTC binary)
 - `icons/` — Extension icons and resource images
 - `dist/` — Build output (WASM binaries, bundled JS) — gitignored, regenerate with `npm run build`
 
 ## Architecture
 
-- **CSP bypass**: `bridge.js` injected as external `<script src="chrome-extension://...">`, listens for 7 CustomEvents (`ik-jump`, `ik-ajax-call`, `ik-close-popup`, `ik-convert-crew`, `ik-read-cities`, `ik-read-island-data`, `ik-read-game-data`)
-- **Scanner**: Dispatches `ik-jump` events → bridge calls `jumpToCoord()`. Diamond-shaped scan pattern with auto-detected stride. Restores position after scan.
-- **Minimap**: Cached base map (rebuilds only on layer/scale/data/dimEmpty change), viewport overlay at ~30fps polling anchor tile `getBoundingClientRect`
-- **Island info**: Parses `updateBackgroundData` JSON from inline `<script>` tags (not bridge), stores per-island in `island_{id}`, enriches world map with alliance data
-- **Auto-pirate**: Polls every 5s when idle, navigates to pirate city via `ik-ajax-call`, opens fortress BootyQuest tab, triggers capture. Popup heartbeat suppresses takeover for 10s. Togglable from game header bar via `chrome.storage.onChanged`
-- **Advisor toolbar**: Dropdown in `#GF_toolbar` (right of pirate toggle) with 7 report modes. Unicode block progress bar (█░) shows inline during collection. Calls `collectData()` directly (same content script context)
-- **Notes toolbar**: Button in `#GF_toolbar` (left of pirate toggle) opens floating panel with sidebar + editor. Syncs bidirectionally with popup notes via `chrome.storage.onChanged`. "Hide game notes" setting hides `#GF_toolbar li.notes`
-- **CAPTCHA**: content.js detects → background.js routes → offscreen ONNX inference → fills input
-- **Storage**: `chrome.storage.local` — raw island data per world (`map_${worldName}`), per-island details (`island_{worldName}_{id}`), alliance index (`allianceIndex`), trade history chunks (`tradeHistory_{world}_{avatarId}_{YYYY-MM}`), trade history index (`tradeHistoryIdx_{world}_{avatarId}`), settings/toggles (global, not world-scoped)
-  - Key convention: feature toggles/settings use camelCase with feature prefix (e.g., `pirateEnabled`, `minimapScale`); per-world data uses underscore separator with world name (e.g., `map_{worldName}`, `island_{worldName}_{id}`); settings are global (not world-scoped)
+- **CSP bypass**: `bridge.js` injected as external `<script src="chrome-extension://...">`, listens for 9 CustomEvents (`ik-jump`, `ik-ajax-call`, `ik-close-popup`, `ik-convert-crew`, `ik-read-cities`, `ik-read-island-data`, `ik-read-game-data`, `ik-read-world-islands`, `ik-eval-cmd`). The `ik-eval-cmd` handler exists because MV3 bans `'unsafe-eval'` in the extension CSP (content-script isolated world), but the page context is governed by Ikariam's CSP which has no such restriction — so `new Function(...)` is allowed there.
+- **Scanner**: Exposes `IkScanner.scan(progressCb)` for reuse by the CT orchestrator. Dispatches `ik-jump` events → bridge calls `jumpToCoord()`. Row-by-row scan pattern with auto-detected stride. Restores position after scan.
+- **Full scan pipeline**: `culturaltreaty.js` runs Phase 1 (DOM map scan via IkScanner) in the content script, then hands off Phase 2 (per-island HTML fetches) and Phase 3 (CT availability pings) to `background.js` so they survive page navigation. Stage-then-swap commit: no data is wiped until the new data is fully fetched, so cancelled/crashed scans never leave an empty world.
+- **Rich-data query index**: `bgCommitIslandData` in background.js writes a derived `queryIndex_{world}` blob with `islandsByCoord → {allyTags, ownerNamesText, maxArmy, ctAvailable, …}`. The filter panel and minimap read from this single key instead of doing `get(null)` prefix scans.
+- **Filter system**: `mapfilter.js` evaluates chip + rule-row predicates plus power-user hooks (sync `setCustomPredicate(fn)` from DevTools `IkFilter.set`, or pre-computed `setCustomResults(map, keyFn)` from the filter panel's Custom JS textarea). `minimap.js` enriches the stored world islands with `_allyTags / _ownerNamesText / _maxArmy / _ctAvailable / _ctChecked` from the query index before rendering. `islandfilter.js` builds virtual-island objects per city slot on the island view so the same predicates dim individual cities.
+- **Custom JS eval**: filter panel → `CustomEval.compile(code)` → posts `ik-eval-cmd` → bridge.js compiles via `new Function` in page context → success/error response. On data or code change, minimap/islandfilter call `CustomEval.evaluate(islands)` once and store a Map<coord, bool> so the hot per-island `islandMatches()` path stays synchronous and bridge-free.
+- **Minimap**: Cached base map (rebuilds only on layer/scale/data/dimEmpty/allyVersion change), viewport overlay at ~30fps polling anchor tile `getBoundingClientRect`. Dim path uses a coord-keyed lookup into enriched stored islands (was O(n²) before via per-tile `.find()`).
+- **Island info**: Parses `updateBackgroundData` JSON from inline `<script>` tags via `IkUtils.parseBackgroundData` (shared with `islandfilter.js`), stores per-island in `island_{world}_{id}`, enriches world map with alliance data.
+- **Auto-pirate**: Polls every 5s when idle, navigates to pirate city via `ik-ajax-call`, opens fortress BootyQuest tab, triggers capture. Popup heartbeat suppresses takeover for 10s. Togglable from game header bar via `chrome.storage.onChanged`. Only pauses during `scanInProgress` (the DOM-jumping map scan); background fetch phases don't touch the page so pirates run during them.
+- **Advisor toolbar**: Dropdown in `#GF_toolbar` (right of pirate toggle) with 7 report modes. Unicode block progress bar (█░) shows inline during collection. Calls `collectData()` directly (same content script context).
+- **Notes toolbar**: Button in `#GF_toolbar` (left of pirate toggle) opens floating panel with sidebar + editor. Syncs bidirectionally with popup notes via `chrome.storage.onChanged`. "Hide game notes" setting hides `#GF_toolbar li.notes`.
+- **CAPTCHA**: content.js detects → background.js routes → offscreen ONNX inference → fills input. Model is CRNN+BiLSTM with CTC decoding (48×256 grayscale input → 64 timesteps × 29 classes → greedy collapse).
+- **Storage**: `chrome.storage.local` — see Storage Keys section below.
+  - Key convention: feature toggles/settings use camelCase with feature prefix (e.g. `pirateEnabled`, `minimapScale`) and are **global** (not world-scoped). Per-world data uses underscore separator with the **URL-based** world name (e.g. `s55-cz`) for the map subsystem, and the **title-based** world name for legacy subsystems (friend list, pirate city, advisor, trade history) that predate the migration.
+
+## Storage Keys
+
+| Key | Scope | Writer | Purpose |
+|---|---|---|---|
+| `map_{world}` | URL world | scanner, CT orchestrator, background commit | Lightweight world map (one row per island) |
+| `island_{world}_{id}` | URL world | background full-scan commit, islandinfo passive | Rich per-island record (cities, owners, scores) |
+| `allianceIndex_{world}` | URL world | background full-scan commit, islandinfo | Coord → `{counts, members, total}` |
+| `queryIndex_{world}` | URL world | background full-scan commit, bgApplyCtToQueryIndex | Denormalized filter-ready blob used by rich-data filters |
+| `ctScan_{world}` | URL world | background CT phase | Last CT scan result set (players, ctPlayers, allyCounts, timestamp, allyFilter, ownExcluded) |
+| `mapIndex` | global | CT orchestrator | Gallery ordering (newest first) |
+| `mapFilters` | global | filter panel | Filter config (groups, ops, enabled) |
+| `mapCustomPredicateCode` | global | filter panel | Source of the Custom JS predicate |
+| `filterPanelCollapsed` | global | filter panel | UI state |
+| `minimapEnabled` / `minimapPosition` / `minimapScale` / `minimapLayer` / `hideZeroCities` / `vpTrimRight` / `vpTrimBottom` | global | minimap | Minimap UI state |
+| `scanInProgress` / `scanProgress` / `scanResult` | global (transient) | scanner | DOM scan coordination with popup |
+| `ctScanRunning` / `ctScanProgress` | global (transient) | background | Background scan coordination |
+| `island_{titleWorld}_*` (friend list / slots) | title world | islandinfo | `friendList_{titleWorld}`, `friendSlots_{titleWorld}` — legacy title-based, not migrated |
+| `pirateCityId_{titleWorld}` / `pirateCities_{titleWorld}` | title world | autopirate | Pirate city selection — legacy title-based |
+| `tradeHistory_{titleWorld}_{avatarId}_{YYYY-MM}` | title world | tradehistory | Monthly trade history chunks |
+| `tradeHistoryIdx_{titleWorld}_{avatarId}` | title world | tradehistory | Index of available months |
+| `pirateEnabled` / `pirateConvertEnabled` / `pirateSleepStart` / `pirateSleepEnd` / `pirateState` / `pirateIdleTimeout` + advanced timing params | global | autopirate | Pirate toggles and config |
+| `cleanupEnabled` / `autoFinishEnabled` / `hideGameNotes` | global | settings | Feature toggles |
+| `notes` | global | gamenotes / popup | Notes content |
 
 ## Code Style
 
 - 2-space indentation, double quotes, semicolons
 - IIFEs for content scripts (isolated scope)
-- `globalThis.IkUtils` / `globalThis.MapRender` / `globalThis.inference` / `globalThis.TradeHistory` / `globalThis.TradeChart` for shared modules
+- Shared modules on `globalThis`: `IkUtils`, `MapRender`, `MapFilter`, `IkScanner`, `CustomEval`, `IkFilter` (DevTools power-user alias), `IkData` (query-index read helper), `IkFilterPanel` (match count hook), `inference`, `TradeHistory`, `TradeChart`
 - camelCase variables/functions, UPPER_SNAKE_CASE constants
 - Arrow functions for callbacks
 
@@ -90,7 +124,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 ## Gotchas
 
 - `dist/` is gitignored — run `npm run build` before loading extension
-- `model/model.onnx` is a 12 MB binary, not regenerated by build
+- `model/model.onnx` is a 6.4 MB CRNN+CTC binary, not regenerated by build
 - Viewport trim defaults (R:8%, B:15%) compensate for game rendering extra buffer tiles
 - CAPTCHA auto-submit caps at 5 attempts, then switches to manual mode
 - Multiple MutationObservers on `document.body` — be cautious adding more

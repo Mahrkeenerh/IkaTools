@@ -7,9 +7,13 @@ Chrome extension for the Ikariam browser game. Adds quality-of-life features, au
 ## Features
 
 - **Cleaner UI** — Removes shop, ambrosia, and ad clutter
-- **Map tools** — World map scanner with overlay layers, minimap, and island/player info
-- **Piracy automation** — Automated raids with CAPTCHA solving and crew conversion
-- **City & data tools** — Advisor reports, trade tracking, auto-finish buildings, and more
+- **World scanner & minimap** — Scans the full world map, optional Full Scan also fetches per-island rich data (players, alliance tags, building/research/army/trader scores) and cultural treaty availability
+- **Rich island filtering** — In-game filter panel with predicates for alliance tag, player name, army score, cultural treaty, plus the usual tradegood/wonder/flag filters. Dims non-matching islands on the world map and non-matching cities on the island view.
+- **Custom JS queries** — Power-user textarea inside the filter panel where you can write arbitrary JS predicates against the scan data, e.g. `i._maxArmy > 50000 && i._allyTags.has("-DR-")`
+- **Cultural treaty tab** — Dedicated popup tab listing all players with available treaties, with live alliance filtering and click-to-filter chips
+- **JSON world export** — Download the full scanned world (map, islands, alliance index, CT results) as JSON for external analysis
+- **Piracy automation** — Automated raids with CAPTCHA solving (CRNN+CTC model, ~97% accuracy) and human-like timing
+- **City & data tools** — Advisor reports, trade tracking, auto-finish buildings, notes panel, wine timer, and more
 
 ## Installation
 
