@@ -500,6 +500,31 @@
     islandsByCoord = null; // invalidate dim-path lookup
   }
 
+  // Evaluate the filter-panel Custom JS predicate (if any) against the
+  // currently loaded world islands. Pre-computed results are stored in
+  // MapFilter as a Map<"x:y", boolean> so the synchronous matchFilter
+  // path can look them up without any bridge round-trips during render.
+  async function refreshCustomResults() {
+    if (!globalThis.CustomEval || !CustomEval.hasCode()) {
+      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
+      return;
+    }
+    if (!currentMapData || !currentMapData.islands || currentMapData.islands.length === 0) return;
+    const islands = currentMapData.islands;
+    // Ensure rich-data enrichment is current so user code sees _allyTags etc.
+    enrichIslandsWithRichData(islands);
+    const r = await CustomEval.evaluate(islands);
+    if (r.error) {
+      MapFilter.setCustomResults(null);
+      return;
+    }
+    const map = new Map();
+    for (let i = 0; i < islands.length; i++) {
+      map.set(islands[i].x + ":" + islands[i].y, !!r.matches[i]);
+    }
+    MapFilter.setCustomResults(map, (isl) => isl.x + ":" + isl.y);
+  }
+
   // Stamp rich-data fields onto each island so the filter engine can read
   // them without storage round-trips. Underscore fields are conventional
   // "computed-by-enrichment" markers consumed by mapfilter.matchFilter.
@@ -574,7 +599,8 @@
     if (!globalThis.MapFilter || !globalThis.IkFilterPanel) return;
     const hasFilters = filterConfig && filterConfig.enabled &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    const hasCustom = MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    const hasCustom = (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
+      (MapFilter.hasCustomResults && MapFilter.hasCustomResults());
     if (!hasFilters && !hasCustom) {
       IkFilterPanel.setMatchCount(null);
       return;
@@ -734,9 +760,12 @@
       // Has map data — show map
       currentMapData = data[key];
       await loadAllianceIndex();
+      // Pre-evaluate any restored custom JS predicate against the freshly loaded data
+      await refreshCustomResults();
       const hasFilters = filterConfig && filterConfig.enabled &&
         filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-      if (hasFilters || dimEmpty) startDimming();
+      const hasCustomResults = MapFilter.hasCustomResults && MapFilter.hasCustomResults();
+      if (hasFilters || hasCustomResults || dimEmpty) startDimming();
       readAndMergeTiles();
       showMapUI();
       drawMinimap();
@@ -820,7 +849,10 @@
   function applyDimming() {
     const hasFilters = filterConfig && filterConfig.enabled &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    const hasCustom = globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    const hasCustom = globalThis.MapFilter && (
+      (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
+      (MapFilter.hasCustomResults && MapFilter.hasCustomResults())
+    );
 
     if (!hasFilters && !hasCustom && !dimEmpty) return;
 
@@ -835,7 +867,9 @@
 
       if ((hasFilters || hasCustom) && globalThis.MapFilter) {
         const coord = m[1] + ":" + m[2];
-        // Prefer the enriched stored island — it has _allyTags, _maxArmy, etc.
+        // Prefer the enriched stored island — it has _allyTags, _maxArmy, etc.,
+        // AND the custom-predicate result lookup key (x:y) works naturally here
+        // because matchFilter reads isl.x/isl.y to build the same key.
         let isl = islandsByCoord && islandsByCoord[coord];
         if (!isl) {
           // Fallback: build a minimal object from the DOM for old-style filters
@@ -908,6 +942,24 @@
       currentLayer = layerBeforeFilter || "population";
       layerBeforeFilter = null;
       updateLayerBar();
+    }
+    drawMinimap();
+  });
+
+  // Filter-panel Custom JS was (re)applied — pre-evaluate against current
+  // data, then redraw. Async because we bridge to the page context for eval.
+  window.addEventListener("ik-custom-code-apply", async () => {
+    await refreshCustomResults();
+    cachedBaseMap = null;
+    islandsByCoord = null;
+    const hasResults = MapFilter.hasCustomResults && MapFilter.hasCustomResults();
+    if (hasResults) {
+      startDimming();
+      if (currentLayer !== "filter") {
+        layerBeforeFilter = currentLayer;
+        currentLayer = "filter";
+        updateLayerBar();
+      }
     }
     drawMinimap();
   });
@@ -989,7 +1041,7 @@
     const mapKey = "map_" + worldName;
     const queryIdxKey = "queryIndex_" + worldName;
     if (changes[allyIdxKey] || changes[mapKey] || changes[queryIdxKey]) {
-      chrome.storage.local.get([mapKey, allyIdxKey, queryIdxKey], (d) => {
+      chrome.storage.local.get([mapKey, allyIdxKey, queryIdxKey], async (d) => {
         if (d[mapKey]) currentMapData = d[mapKey];
         allianceIndex = d[allyIdxKey] || {};
         queryIndex = d[queryIdxKey] || null;
@@ -997,6 +1049,8 @@
         allyVersion++;
         cachedBaseMap = null;
         islandsByCoord = null; // invalidate dim-path lookup
+        // Data changed — re-evaluate custom predicate against the new islands
+        await refreshCustomResults();
         applyDimming();
         drawMinimap();
       });

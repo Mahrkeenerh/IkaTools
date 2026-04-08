@@ -3,6 +3,7 @@
 // Dispatches "ik-filter-change" CustomEvent on window
 (() => {
   const STORAGE_KEY = "mapFilters";
+  const CUSTOM_CODE_KEY = "mapCustomPredicateCode"; // source for the power-user JS predicate
   const DEFAULT_CONFIG = { enabled: true, globalOp: "and", groups: [] };
 
   let panelEl = null;
@@ -364,8 +365,10 @@
     if (lastMatchCount != null) {
       lines.push(`${lastMatchCount} islands match`);
     }
-    if (globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) {
-      lines.push("Custom JS predicate active (window.IkFilter.clear() to remove)");
+    const fnActive = globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    const resActive = globalThis.MapFilter && MapFilter.hasCustomResults && MapFilter.hasCustomResults();
+    if (fnActive || resActive) {
+      lines.push("Custom JS predicate active");
     }
     for (const line of lines) {
       const div = document.createElement("div");
@@ -379,6 +382,160 @@
   function setMatchCount(n) {
     lastMatchCount = n;
     renderStatus();
+  }
+
+  // --- Custom JS predicate section (power-user) ---
+  // Expandable block at the bottom of the panel body. User types a JS
+  // expression body that must evaluate to a boolean; wrapped as
+  // `new Function("i", <code>)` and installed via MapFilter.setCustomPredicate.
+  // Persisted to chrome.storage.local so it survives page reloads and works
+  // on both the world map and island views.
+  let customCollapsed = true;
+  let customCodeDraft = ""; // in-memory code buffer for the textarea
+  let customError = null; // last compile/runtime error message
+
+  // Compile user code via the page-context eval bridge (new Function() is
+  // blocked in the content-script isolated world by the MV3 CSP).
+  // On success, fire ik-custom-code-apply so minimap/islandfilter can
+  // evaluate the compiled predicate against their current data.
+  async function applyCustomCode(code) {
+    customError = null;
+    if (!globalThis.CustomEval) {
+      customError = "CustomEval module not loaded";
+      renderBody();
+      return false;
+    }
+    if (!code || !code.trim()) {
+      await CustomEval.compile("");
+      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
+      chrome.storage.local.remove(CUSTOM_CODE_KEY);
+      window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code: "" } }));
+      return true;
+    }
+    const r = await CustomEval.compile(code);
+    if (!r.ok) {
+      customError = r.error || "Compile failed";
+      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
+      renderBody();
+      return false;
+    }
+    chrome.storage.local.set({ [CUSTOM_CODE_KEY]: code });
+    // Notify consumers (minimap, islandfilter) that they should evaluate the
+    // new predicate against their current island/city data.
+    window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code } }));
+    return true;
+  }
+
+  function buildCustomSection() {
+    const section = document.createElement("div");
+    applyStyle(section, {
+      marginTop: "6px", padding: "6px 8px",
+      background: "rgba(20,35,55,0.6)", borderRadius: "4px",
+      border: "1px solid rgba(60,90,130,0.3)",
+    });
+
+    // Header with toggle + active indicator
+    const header = document.createElement("div");
+    applyStyle(header, { display: "flex", alignItems: "center", gap: "6px", cursor: "pointer" });
+
+    const caret = document.createElement("span");
+    caret.textContent = customCollapsed ? "\u25B6" : "\u25BC";
+    applyStyle(caret, { color: "#8890a0", fontSize: "10px" });
+    header.appendChild(caret);
+
+    const title = document.createElement("span");
+    title.textContent = "Custom JS";
+    applyStyle(title, { color: "#c0c8d8", fontSize: "11px", fontFamily: "sans-serif", flex: "1" });
+    header.appendChild(title);
+
+    const active = globalThis.MapFilter && (
+      (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
+      (MapFilter.hasCustomResults && MapFilter.hasCustomResults())
+    );
+    const indicator = document.createElement("span");
+    indicator.textContent = active ? "\u25CF active" : "";
+    applyStyle(indicator, { color: active ? "#5ab87a" : "#667", fontSize: "9px" });
+    header.appendChild(indicator);
+
+    header.addEventListener("click", (e) => {
+      e.stopPropagation();
+      customCollapsed = !customCollapsed;
+      renderBody();
+    });
+    section.appendChild(header);
+
+    if (customCollapsed) return section;
+
+    // Body
+    const body = document.createElement("div");
+    applyStyle(body, { marginTop: "6px" });
+
+    const hint = document.createElement("div");
+    hint.textContent = 'Return a boolean. Fields: _allyTags (Set), _ownerNamesText, _maxArmy, _ctAvailable, cities, tradegood, wonder, owner, x, y';
+    applyStyle(hint, { color: "#667", fontSize: "9px", lineHeight: "1.4", marginBottom: "4px", fontFamily: "sans-serif" });
+    body.appendChild(hint);
+
+    const textarea = document.createElement("textarea");
+    textarea.value = customCodeDraft;
+    textarea.placeholder = 'i._maxArmy > 50000 && !i._allyTags.has("-DR-")';
+    textarea.rows = 4;
+    textarea.spellcheck = false;
+    applyStyle(textarea, {
+      width: "100%", padding: "4px 6px",
+      background: "#0c1524", color: "#c0c8d8",
+      border: "1px solid rgba(60,90,130,0.5)", borderRadius: "3px",
+      fontFamily: "monospace", fontSize: "11px", lineHeight: "1.4",
+      resize: "vertical", boxSizing: "border-box",
+    });
+    textarea.addEventListener("input", () => {
+      customCodeDraft = textarea.value;
+    });
+    textarea.addEventListener("click", (e) => e.stopPropagation());
+    textarea.addEventListener("keydown", (e) => {
+      // Ctrl/Cmd+Enter to apply without reaching for the mouse
+      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+        e.preventDefault();
+        doApply();
+      }
+    });
+    body.appendChild(textarea);
+
+    const btnRow = document.createElement("div");
+    applyStyle(btnRow, { display: "flex", gap: "4px", marginTop: "4px" });
+
+    const applyBtn = document.createElement("button");
+    applyBtn.textContent = "Apply";
+    applyStyle(applyBtn, { ...S.btn, flex: "1" });
+    applyBtn.addEventListener("click", (e) => { e.stopPropagation(); doApply(); });
+    btnRow.appendChild(applyBtn);
+
+    const clearBtn = document.createElement("button");
+    clearBtn.textContent = "Clear";
+    applyStyle(clearBtn, { ...S.btn });
+    clearBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      customCodeDraft = "";
+      applyCustomCode("");
+      renderBody();
+    });
+    btnRow.appendChild(clearBtn);
+
+    body.appendChild(btnRow);
+
+    if (customError) {
+      const err = document.createElement("div");
+      err.textContent = "Error: " + customError;
+      applyStyle(err, { color: "#e66", fontSize: "10px", marginTop: "4px", fontFamily: "monospace", wordBreak: "break-word" });
+      body.appendChild(err);
+    }
+
+    section.appendChild(body);
+    return section;
+
+    async function doApply() {
+      await applyCustomCode(customCodeDraft);
+      renderBody();
+    }
   }
 
   // --- Render panel body ---
@@ -400,6 +557,8 @@
       renderBody();
     });
     bodyEl.appendChild(addGroupBtn);
+
+    bodyEl.appendChild(buildCustomSection());
 
     renderStatus();
   }
@@ -544,12 +703,18 @@
     if (!isSupportedView()) return;
     if (!globalThis.MapFilter) return;
 
-    const data = await chrome.storage.local.get([STORAGE_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
+    const data = await chrome.storage.local.get([STORAGE_KEY, CUSTOM_CODE_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
     if (!data.minimapEnabled) return;
 
     config = data[STORAGE_KEY] || { ...DEFAULT_CONFIG, groups: [] };
     collapsed = !!data.filterPanelCollapsed;
     updatePosition(data.minimapPosition || "right");
+
+    // Restore any saved custom JS predicate — draft + re-compile via bridge
+    const savedCode = data[CUSTOM_CODE_KEY] || "";
+    customCodeDraft = savedCode;
+    if (savedCode) { applyCustomCode(savedCode).catch(() => {}); }
+
     createPanel();
     await loadQueryIndex();
     emit(); // notify minimap of current config

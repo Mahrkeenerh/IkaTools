@@ -59,6 +59,61 @@ window.addEventListener("ik-convert-crew", () => {
   }
 });
 
+// --- Custom predicate eval runner (power-user JS filter) ---
+// The content script's isolated world is subject to the extension CSP, which
+// MV3 does not allow to include 'unsafe-eval'. Bridge runs in the page
+// context (Ikariam's page has no eval restriction), so new Function() works
+// here. Content script posts code/islands; we compile once, evaluate per
+// request, and respond via CustomEvent.
+(function () {
+  let fn = null;
+
+  function reconstructIsland(s) {
+    // Reconstruct Set<string> from the serialized array so user code can do
+    // i._allyTags.has("-DR-") naturally.
+    const out = Object.assign({}, s);
+    out._allyTags = new Set(s._allyTags || []);
+    return out;
+  }
+
+  window.addEventListener("ik-eval-cmd", (e) => {
+    const req = e.detail || {};
+    const resp = { reqId: req.reqId };
+    try {
+      if (req.cmd === "compile") {
+        const src = /\breturn\b/.test(req.code) ? req.code : "return (" + req.code + ");";
+        fn = new Function("i", src);
+        // Sanity probe on an empty island — catches most parse/runtime errors early
+        fn({ x: 0, y: 0, cities: 0, _allyTags: new Set(), _ownerNamesText: "", _maxArmy: 0, _ctAvailable: false, _ctChecked: false });
+        resp.ok = true;
+      } else if (req.cmd === "clear") {
+        fn = null;
+        resp.ok = true;
+      } else if (req.cmd === "eval") {
+        if (!fn) { resp.error = "No predicate compiled"; }
+        else {
+          const islands = req.islands || [];
+          const matches = new Array(islands.length);
+          for (let i = 0; i < islands.length; i++) {
+            try {
+              matches[i] = !!fn(reconstructIsland(islands[i]));
+            } catch (err) {
+              matches[i] = false;
+            }
+          }
+          resp.matches = matches;
+          resp.ok = true;
+        }
+      } else {
+        resp.error = "Unknown cmd: " + req.cmd;
+      }
+    } catch (err) {
+      resp.error = (err && err.message) || String(err);
+    }
+    window.dispatchEvent(new CustomEvent("ik-eval-response", { detail: resp }));
+  });
+})();
+
 // Read world map island ID mapping (available on worldmap_iso view)
 window.addEventListener("ik-read-world-islands", () => {
   let result = null;

@@ -38,10 +38,18 @@ globalThis.MapFilter = (() => {
     { type: "armyMin", value: null, label: "Player army ≥", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
   ];
 
-  // Custom predicate hook for power users — set via window.IkFilter.setCustomPredicate(fn).
-  // If set, the function is called with the enriched island and must return a boolean.
-  // Treated as a virtual filter group ANDed with the regular filter config.
+  // Two ways to install a power-user predicate:
+  // 1. `customPredicate` — a sync function installed via setCustomPredicate(fn).
+  //    Used by the DevTools-console API (IkFilter.set) where code lives in the
+  //    content-script isolated world and can be called per-island.
+  // 2. `customResultKey` — a lookup function from the filter panel's textarea.
+  //    The code there runs in the page context (via customeval.js) and the
+  //    pre-computed results are stored in a Map keyed by a string. The function
+  //    extracts the key from an island (e.g. "x:y" for world map, "id:pos" for
+  //    island view). Both are ANDed with the rest of the filter config.
   let customPredicate = null;
+  let customResultMap = null; // Map<string, boolean> of pre-computed matches
+  let customResultKeyFn = null; // (isl) -> string used to look up in the map
 
   function matchFilter(isl, filter) {
     switch (filter.type) {
@@ -91,6 +99,11 @@ globalThis.MapFilter = (() => {
       try { if (!customPredicate(isl)) return false; }
       catch (e) { /* swallow — bad predicate shouldn't kill rendering */ }
     }
+    // Pre-computed result map (from filter panel's Custom JS textarea)
+    if (customResultMap && customResultKeyFn) {
+      const key = customResultKeyFn(isl);
+      if (!customResultMap.get(key)) return false;
+    }
     if (!config || !config.enabled) return true;
     if (!config.groups || config.groups.length === 0) return true;
     // Only consider groups that have filters
@@ -110,7 +123,23 @@ globalThis.MapFilter = (() => {
 
   function getCustomPredicate() { return customPredicate; }
 
-  return { islandMatches, matchGroup, matchFilter, FILTER_OPTIONS, setCustomPredicate, getCustomPredicate };
+  // Install (or clear) a pre-computed result lookup for the filter-panel
+  // Custom JS feature. map === null clears. keyFn extracts the lookup key
+  // from an island object (so the same result map works across different
+  // view shapes — world map uses "x:y", island view uses "id:pos").
+  function setCustomResults(map, keyFn) {
+    customResultMap = map || null;
+    customResultKeyFn = map ? (keyFn || ((isl) => isl.x + ":" + isl.y)) : null;
+    window.dispatchEvent(new CustomEvent("ik-custom-predicate-change"));
+  }
+
+  function hasCustomResults() { return customResultMap != null; }
+
+  return {
+    islandMatches, matchGroup, matchFilter, FILTER_OPTIONS,
+    setCustomPredicate, getCustomPredicate,
+    setCustomResults, hasCustomResults,
+  };
 })();
 
 // Power-user hook: expose a tiny API on globalThis so a programmer can write

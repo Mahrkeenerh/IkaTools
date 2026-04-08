@@ -40,6 +40,34 @@
     return "";
   }
 
+  // Evaluate the filter-panel Custom JS predicate against the current
+  // virtual cities. Stores results in MapFilter keyed by position string
+  // so the sync matchFilter path can look them up without bridge traffic.
+  async function refreshCustomResults() {
+    if (!globalThis.CustomEval || !CustomEval.hasCode()) {
+      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
+      return;
+    }
+    if (!virtualCities) virtualCities = buildVirtualCities();
+    if (!virtualCities) return;
+    // Skip nulls (buildplaces) — they never match a predicate
+    const pairs = [];
+    for (let i = 0; i < virtualCities.length; i++) {
+      if (virtualCities[i]) pairs.push({ pos: i, isl: virtualCities[i] });
+    }
+    if (pairs.length === 0) return;
+    const r = await CustomEval.evaluate(pairs.map((p) => p.isl));
+    if (r.error) {
+      MapFilter.setCustomResults(null);
+      return;
+    }
+    const map = new Map();
+    for (let i = 0; i < pairs.length; i++) {
+      map.set(String(pairs[i].pos), !!r.matches[i]);
+    }
+    MapFilter.setCustomResults(map, (isl) => String(isl._position));
+  }
+
   // Build one virtual-island object per city slot on the current island view.
   function buildVirtualCities() {
     const bg = IkUtils.parseBackgroundData();
@@ -69,6 +97,7 @@
         x, y, cities: cityCount, tradegood, wonder,
         military: false, war: false, helios: false,
         // City-level fields
+        _position: i, // used as the lookup key for custom-predicate results
         owner: detectCityOwner(i),
         piracy: isPiracy,
         // Rich-data fields — stamped to match enrichIslandsWithRichData format
@@ -94,7 +123,10 @@
 
     const hasFilters = filterConfig && filterConfig.enabled &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    const hasCustom = globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    const hasCustom = globalThis.MapFilter && (
+      (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
+      (MapFilter.hasCustomResults && MapFilter.hasCustomResults())
+    );
 
     if (!hasFilters && !hasCustom) {
       // Clear all opacity — quick path, no need to build virtual cities
@@ -144,6 +176,8 @@
     filterConfig = data.mapFilters || null;
     await loadCtData();
     virtualCities = null;
+    // Re-evaluate any restored custom code against this island's cities
+    await refreshCustomResults();
     applyDimming();
     startTileObserver();
   }
@@ -154,7 +188,14 @@
     applyDimming();
   });
 
-  // Power-user JS predicate toggled
+  // Custom JS predicate (re)applied from filter panel — re-evaluate per city
+  window.addEventListener("ik-custom-code-apply", async () => {
+    virtualCities = null;
+    await refreshCustomResults();
+    applyDimming();
+  });
+
+  // Power-user JS predicate toggled via IkFilter (DevTools API) — redraw
   window.addEventListener("ik-custom-predicate-change", () => applyDimming());
 
   // View transitions (island ↔ world map)
@@ -173,8 +214,9 @@
     if (area !== "local") return;
     const worldName = IkUtils.getUrlWorldName() || "unknown";
     if (changes["ctScan_" + worldName]) {
-      loadCtData().then(() => {
+      loadCtData().then(async () => {
         virtualCities = null;
+        await refreshCustomResults();
         applyDimming();
       });
     }
