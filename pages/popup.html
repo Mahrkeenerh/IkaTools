@@ -122,6 +122,8 @@ body {
 .btn-primary:disabled { background: var(--primary-disabled); color: var(--text-dimmer); cursor: default; }
 .btn-danger { background: var(--danger-bg); color: #daa; font-size: 12px; }
 .btn-danger:hover { background: var(--danger-bg-hover); }
+.btn-secondary { background: rgba(60,90,130,0.35); color: var(--text); border: 1px solid rgba(60,90,130,0.5); }
+.btn-secondary:hover { background: rgba(60,90,130,0.55); }
 .btn-sm { padding: 4px 10px; font-size: 12px; }
 
 /* Controls row */
@@ -386,6 +388,7 @@ body {
   <h1>Ikariam Tools</h1>
   <div class="tab-bar">
     <button class="active" data-tab="maps">Maps</button>
+    <button data-tab="ct">CT</button>
     <button data-tab="pirate">Pirate</button>
     <button data-tab="notes">Notes</button>
     <button data-tab="settings">Settings</button>
@@ -406,17 +409,28 @@ body {
     <button class="btn btn-primary" id="scan-map-btn">Scan Map</button>
     <button class="btn btn-primary" id="ct-scan-btn">Full Scan</button>
     <button class="btn btn-danger btn-sm" id="ct-cancel-btn" style="display:none">Cancel</button>
-    <button class="btn btn-sm" id="export-data-btn" title="Download a JSON dump of the current world's data">Export</button>
+    <button class="btn btn-secondary btn-sm" id="export-data-btn" title="Download a JSON dump of the current world's data">Export</button>
   </div>
   <div id="ct-filter-row" style="margin-top:8px;display:flex;align-items:center;gap:8px;">
     <div class="control-group">
-      <label>Alliance filter</label>
-      <input type="text" id="ct-ally-filter" placeholder="e.g. -DR-" style="width:80px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--text);font-size:12px;">
+      <label>Narrow scan to alliance</label>
+      <input type="text" id="ct-ally-filter" placeholder="e.g. -DR-" style="width:110px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--text);font-size:12px;">
     </div>
   </div>
-  <div id="ct-results" style="display:none;margin-top:12px;padding:10px;background:var(--bg-panel);border-radius:6px;font-size:12px;color:var(--text-muted);max-height:200px;overflow-y:auto;"></div>
   <div id="scan-log"></div>
   <div id="gallery-list" class="gallery-grid"></div>
+</div>
+
+<div id="ct-panel" class="panel">
+  <div id="ct-header-bar" style="display:flex;align-items:center;gap:8px;margin-bottom:10px;">
+    <div class="control-group" style="flex:1;">
+      <label>Filter by alliance</label>
+      <input type="text" id="ct-display-filter" placeholder="e.g. -DR- (leave empty to show all)" style="width:100%;padding:4px 6px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--text);font-size:12px;">
+    </div>
+  </div>
+  <div id="ct-panel-results" style="padding:10px;background:var(--bg-panel);border-radius:6px;font-size:12px;color:var(--text-muted);">
+    No CT scan yet. Run a Full Scan on the Maps tab.
+  </div>
 </div>
 
 <div id="pirate-panel" class="panel">

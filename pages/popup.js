@@ -87,9 +87,13 @@
   const scanMapBtn = $("scan-map-btn");
   const ctScanBtn = $("ct-scan-btn");
   const ctCancelBtn = $("ct-cancel-btn");
-  const ctAllyFilter = $("ct-ally-filter");
-  const ctResults = $("ct-results");
+  const ctAllyFilter = $("ct-ally-filter"); // narrows scan, pre-fetch
+  const ctDisplayFilter = $("ct-display-filter"); // filters displayed list, post-scan
+  const ctResults = $("ct-panel-results");
   const allScanBtns = [scanMapBtn, ctScanBtn];
+
+  // Last CT result set kept in memory so the display filter can re-render without rescanning
+  let lastCtResult = null;
 
   function attachCtPort(port) {
     port.onMessage.addListener((msg) => {
@@ -194,7 +198,6 @@
     if (!ikariamTabId) return;
     allScanBtns.forEach((b) => (b.disabled = true));
     ctCancelBtn.style.display = "";
-    ctResults.style.display = "none";
     scanLog.innerHTML = "";
     phaseText.textContent = label;
     statusDetail.textContent = "";
@@ -316,33 +319,72 @@
   }
 
   function showCtResults(players, ctPlayers, allyCounts, timestamp) {
-    ctResults.style.display = "block";
+    lastCtResult = { players, ctPlayers, allyCounts, timestamp };
+    renderCtResults();
+  }
+
+  // Render the CT panel with the in-memory lastCtResult, applying the
+  // display-time alliance filter if the user has typed anything.
+  function renderCtResults() {
+    if (!ctResults) return;
+    if (!lastCtResult) {
+      ctResults.innerHTML = "No CT scan yet. Run a Full Scan on the Maps tab.";
+      return;
+    }
+    const { players, ctPlayers, allyCounts, timestamp } = lastCtResult;
     const ctLabels = { offer: "Can offer", accept: "Pending (accept)" };
     const age = timestamp ? formatAge(timestamp) : "";
 
-    let html = `<div style="margin-bottom:8px;color:var(--text-heading);font-weight:600;">${ctPlayers.length} players with CT available <span style="color:var(--text-dim);font-weight:400;">(${players.length} checked${age ? " \u2022 " + age : ""})</span></div>`;
+    // Display-time filter
+    const q = (ctDisplayFilter && ctDisplayFilter.value || "").trim().toLowerCase();
+    const match = (p) => !q || (p.allyTag || "").toLowerCase().includes(q);
+    const visibleCt = ctPlayers.filter(match);
+    const visibleChecked = players.filter(match);
 
-    if (ctPlayers.length > 0) {
+    const suffix = q ? ` (filtered by "${q}")` : "";
+    let html = `<div style="margin-bottom:8px;color:var(--text-heading);font-weight:600;">${visibleCt.length} players with CT available <span style="color:var(--text-dim);font-weight:400;">(${visibleChecked.length} checked${age ? " \u2022 " + age : ""}${suffix})</span></div>`;
+
+    if (visibleCt.length > 0) {
       html += '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-bottom:12px;">';
       html += '<tr style="color:var(--text-dim);"><th style="text-align:left;padding:2px 4px;">Player</th><th style="text-align:left;padding:2px 4px;">Alliance</th><th style="text-align:left;padding:2px 4px;">Status</th><th style="text-align:left;padding:2px 4px;">Islands</th></tr>';
-      for (const p of ctPlayers.sort((a, b) => a.name.localeCompare(b.name))) {
+      for (const p of visibleCt.sort((a, b) => a.name.localeCompare(b.name))) {
         const islandList = p.islands.map((i) => `${i.name} [${i.x}:${i.y}]`).join(", ");
         const statusColor = p.ct === "accept" ? "var(--success)" : "var(--accent)";
         html += `<tr style="border-top:1px solid var(--border-subtle);"><td style="padding:2px 4px;color:var(--text);">${p.name}</td><td style="padding:2px 4px;color:var(--accent);">${p.allyTag || "-"}</td><td style="padding:2px 4px;color:${statusColor};">${ctLabels[p.ct] || p.ct}</td><td style="padding:2px 4px;color:var(--text-dim);" title="${islandList}">${p.islands.length}</td></tr>`;
       }
       html += "</table>";
     } else {
-      html += '<div style="color:var(--text-dim);margin-bottom:8px;">No cultural treaty partners found in this area.</div>';
+      html += '<div style="color:var(--text-dim);margin-bottom:8px;">No cultural treaty partners match the current filter.</div>';
     }
 
-    // Alliance summary
-    const allyEntries = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
-    html += '<details style="margin-top:4px;"><summary style="cursor:pointer;color:var(--text-muted);font-size:11px;">All players by alliance (' + players.length + ')</summary><div style="margin-top:4px;">';
+    // Alliance summary — always computed from visible set
+    const visibleAllyCounts = {};
+    for (const p of visibleChecked) {
+      const tag = p.allyTag || "(none)";
+      visibleAllyCounts[tag] = (visibleAllyCounts[tag] || 0) + 1;
+    }
+    const allyEntries = Object.entries(visibleAllyCounts).sort((a, b) => b[1] - a[1]);
+    html += '<details style="margin-top:4px;"><summary style="cursor:pointer;color:var(--text-muted);font-size:11px;">All players by alliance (' + visibleChecked.length + ')</summary><div style="margin-top:4px;">';
     for (const [tag, count] of allyEntries) {
-      html += `<span style="display:inline-block;margin:2px 6px 2px 0;padding:1px 6px;background:var(--bg-active);border-radius:3px;font-size:11px;">${tag} (${count})</span>`;
+      html += `<span style="display:inline-block;margin:2px 6px 2px 0;padding:1px 6px;background:var(--bg-active);border-radius:3px;font-size:11px;cursor:pointer;" data-tag="${tag}">${tag} (${count})</span>`;
     }
     html += "</div></details>";
     ctResults.innerHTML = html;
+
+    // Click an alliance chip to filter by it
+    ctResults.querySelectorAll("[data-tag]").forEach((el) => {
+      el.addEventListener("click", () => {
+        if (!ctDisplayFilter) return;
+        const tag = el.dataset.tag;
+        ctDisplayFilter.value = tag === "(none)" ? "" : tag;
+        renderCtResults();
+      });
+    });
+  }
+
+  // Wire the display-time filter input — re-renders the CT panel on every keystroke
+  if (ctDisplayFilter) {
+    ctDisplayFilter.addEventListener("input", renderCtResults);
   }
 
   function formatAge(ts) {
