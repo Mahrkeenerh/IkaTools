@@ -27,13 +27,13 @@ async function solveCaptcha(dataUrl) {
   ctx.drawImage(bitmap, 0, 0);
   const imageData = ctx.getImageData(0, 0, bitmap.width, bitmap.height);
 
-  const { tensor, scale } = globalThis.inference.preprocess(imageData);
+  const { tensor } = globalThis.inference.preprocess(imageData);
   const inputName = sess.inputNames[0];
-  const inputTensor = new ort.Tensor("float32", tensor, [1, 3, 640, 640]);
+  const inputTensor = new ort.Tensor("float32", tensor, [1, 3, 48, 256]);
   const results = await sess.run({ [inputName]: inputTensor });
   const outputData = results[sess.outputNames[0]].data;
 
-  return globalThis.inference.postprocess(outputData, scale);
+  return globalThis.inference.postprocess(outputData);
 }
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
