@@ -11,7 +11,6 @@
   const $ = (id) => document.getElementById(id);
   const mapsPanel = $("maps-panel");
   const notIkariam = $("not-ikariam");
-  const scanBtn = $("scan-btn");
   const phaseText = $("phase-text");
   const progressBar = $("progress-bar");
   const statusDetail = $("status-detail");
@@ -73,7 +72,7 @@
     loadCleanupState();
     loadPirateState();
     loadNotes();
-    if (ikariamTabId) checkScanState();
+    if (ikariamTabId) { checkScanState(); checkCtState(); refreshButtonStates(); }
   });
 
   // --- Log helper ---
@@ -84,182 +83,287 @@
     scanLog.scrollTop = scanLog.scrollHeight;
   }
 
-  // --- Scan ---
-  const cancelBtn = document.createElement("button");
-  cancelBtn.className = "btn btn-danger btn-sm";
-  cancelBtn.textContent = "Cancel";
-  cancelBtn.style.display = "none";
-  scanBtn.parentElement.appendChild(cancelBtn);
+  // --- Cultural Treaty Scan ---
+  const scanMapBtn = $("scan-map-btn");
+  const ctScanBtn = $("ct-scan-btn");
+  const ctCancelBtn = $("ct-cancel-btn");
+  const ctAllyFilter = $("ct-ally-filter");
+  const ctResults = $("ct-results");
+  const allScanBtns = [scanMapBtn, ctScanBtn];
 
-  cancelBtn.addEventListener("click", () => {
-    if (!ikariamTabId) return;
-    chrome.tabs.sendMessage(ikariamTabId, { type: "cancel-scan" }).catch(() => {});
-    cancelBtn.style.display = "none";
-    scanBtn.disabled = false;
-    phaseText.textContent = "Cancelled";
-  });
-
-  scanBtn.addEventListener("click", startScan);
-
-  // On popup open, check if a scan is already running or has completed
-  function checkScanState() {
-    chrome.storage.local.get(["scanInProgress", "scanProgress", "scanResult"], (data) => {
-      if (data.scanResult) {
-        // Scan completed while popup was closed — process results
-        const { worldName, islands } = data.scanResult;
-        chrome.storage.local.remove("scanResult");
-        phaseText.textContent = "Rendering...";
-        log(`Scan completed in background: ${islands.length} islands`);
-        finishScan(worldName, islands);
-      } else if (data.scanInProgress && ikariamTabId) {
-        // Scan still running — reconnect for live updates
-        scanBtn.disabled = true;
-        cancelBtn.style.display = "";
-        if (data.scanProgress) {
-          showProgress(data.scanProgress);
-        } else {
-          phaseText.textContent = "Scanning...";
-        }
-        reconnectToScan();
-      }
-    });
-  }
-
-  function showProgress(msg) {
-    const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
-    progressBar.style.width = pct + "%";
-    const label = msg.phase === "probe" ? "Detecting viewport"
-      : msg.phase === "cross" ? "Scanning cross" : "Filling map";
-    phaseText.textContent = label;
-    statusDetail.textContent = `${msg.current}/${msg.total} jumps \u2022 ${msg.found} islands`;
-  }
-
-  function reconnectToScan() {
-    const port = chrome.tabs.connect(ikariamTabId, { name: "map-scan" });
-    port.postMessage({ action: "reconnect-scan" });
-    attachScanPort(port);
-
-    // Also watch storage for progress/completion in case port doesn't deliver
-    const storageListener = (changes) => {
-      if (changes.scanResult?.newValue) {
-        chrome.storage.onChanged.removeListener(storageListener);
-        const { worldName, islands } = changes.scanResult.newValue;
-        chrome.storage.local.remove("scanResult");
-        phaseText.textContent = "Rendering...";
-        log(`Done! ${islands.length} islands total`);
-        cancelBtn.style.display = "none";
-        finishScan(worldName, islands);
-      } else if (changes.scanProgress?.newValue) {
-        showProgress(changes.scanProgress.newValue);
-      } else if (changes.scanInProgress && !changes.scanInProgress.newValue) {
-        // Scan ended (cancelled or error) without result
-        chrome.storage.onChanged.removeListener(storageListener);
-        scanBtn.disabled = false;
-        cancelBtn.style.display = "none";
-      }
-    };
-    chrome.storage.onChanged.addListener(storageListener);
-  }
-
-  function startScan() {
-    if (!ikariamTabId) return;
-    scanBtn.disabled = true;
-    cancelBtn.style.display = "";
-    scanLog.innerHTML = "";
-    phaseText.textContent = "Connecting...";
-    statusDetail.textContent = "";
-    progressBar.style.width = "0%";
-
-    const port = chrome.tabs.connect(ikariamTabId, { name: "map-scan" });
-    port.postMessage({ action: "start-scan" });
-
-    attachScanPort(port);
-  }
-
-  function attachScanPort(port) {
+  function attachCtPort(port) {
     port.onMessage.addListener((msg) => {
       switch (msg.type) {
-        case "started":
-          phaseText.textContent = `Scanning: ${msg.worldName}`;
-          log(`World: ${msg.worldName}`);
+        case "phase":
+          phaseText.textContent = msg.text;
           break;
-
-        case "stride-detected":
-          log(`Viewport: ${msg.cols}x${msg.rows} tiles, stride: ${msg.strideX}x${msg.strideY}`);
+        case "progress": {
+          const pct = msg.total > 0 ? Math.round((msg.current / msg.total) * 100) : 0;
+          progressBar.style.width = pct + "%";
+          let label;
+          if (msg.phase === "map") label = "Scanning map";
+          else if (msg.phase === "ct-check") label = "Checking CT";
+          else label = "Fetching islands";
+          if (msg.paused) {
+            phaseText.textContent = `Cooldown (${msg.pauseSec}s)...`;
+            statusDetail.textContent = `${msg.current}/${msg.total} done`;
+          } else {
+            const eta = msg.eta > 0 ? ` \u2022 ~${msg.eta}s left` : "";
+            phaseText.textContent = `${label} (${msg.current}/${msg.total})`;
+            statusDetail.textContent = eta;
+          }
           break;
-
-        case "bounds-detected":
-          log(`Bounds: X[${msg.mapMinX}..${msg.mapMaxX}] Y[${msg.mapMinY}..${msg.mapMaxY}]`);
-          break;
-
-        case "progress":
-          showProgress(msg);
-          break;
-
+        }
         case "log":
           log(msg.message);
           break;
-
         case "complete":
-          phaseText.textContent = "Rendering...";
-          log(`Done! ${msg.islands.length} islands total`);
-          cancelBtn.style.display = "none";
-          // Clear the storage result since we got it via port
-          chrome.storage.local.remove("scanResult");
-          finishScan(msg.worldName, msg.islands);
+          phaseText.textContent = "Done!";
+          progressBar.style.width = "100%";
+          allScanBtns.forEach((b) => (b.disabled = false)); refreshButtonStates();
+          ctCancelBtn.style.display = "none";
+          if (msg.mapOnly) {
+            log(`Map scan: ${msg.totalIslands} islands found`);
+          } else if (msg.islandsOnly) {
+            log(`Islands scan: ${msg.players.length} players across ${msg.totalIslands} islands`);
+            showCtResults(msg.players, [], msg.allyCounts, msg.timestamp);
+          } else {
+            log(`${msg.players.length} players, ${msg.ctPlayers.length} with CT available across ${msg.totalIslands} islands`);
+            showCtResults(msg.players, msg.ctPlayers, msg.allyCounts, msg.timestamp);
+          }
+          loadGallery();
           break;
-
-        case "navigate-to-world":
-          log("Navigating to world map...");
-          phaseText.textContent = "Navigating...";
-          port.disconnect();
-          chrome.tabs.get(ikariamTabId, (tab) => {
-            const base = new URL(tab.url);
-            base.search = "?view=worldmap_iso";
-            chrome.tabs.update(ikariamTabId, { url: base.href }, () => {
-              function onUpdated(tabId, info) {
-                if (tabId === ikariamTabId && info.status === "complete") {
-                  chrome.tabs.onUpdated.removeListener(onUpdated);
-                  setTimeout(() => startScan(), 500);
-                }
-              }
-              chrome.tabs.onUpdated.addListener(onUpdated);
-            });
-          });
-          return;
-
         case "error":
           phaseText.textContent = "Error";
           statusDetail.textContent = msg.message;
-          log(`ERROR: ${msg.message}`);
-          scanBtn.disabled = false;
-          cancelBtn.style.display = "none";
+          log("ERROR: " + msg.message);
+          allScanBtns.forEach((b) => (b.disabled = false)); refreshButtonStates();
+          ctCancelBtn.style.display = "none";
           break;
       }
     });
+  }
 
-    port.onDisconnect.addListener(() => {
-      // Port disconnect no longer cancels — scan continues in content script
+  let bgStorageListener = null;
+  function attachBgStorageListener() {
+    if (bgStorageListener) chrome.storage.onChanged.removeListener(bgStorageListener);
+    bgStorageListener = (changes) => {
+      // Live progress updates during background phases
+      if (changes.ctScanProgress?.newValue) {
+        const p = changes.ctScanProgress.newValue;
+        const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+        progressBar.style.width = pct + "%";
+        if (p.paused) {
+          phaseText.textContent = `Cooldown (${p.pauseSec}s)...`;
+          statusDetail.textContent = p.total > 0 ? `${p.current}/${p.total} done` : "";
+        } else {
+          let plabel;
+          if (p.phase === "map") plabel = "Scanning map";
+          else if (p.phase === "ct-check") plabel = "Checking CT";
+          else plabel = "Fetching islands";
+          phaseText.textContent = `${plabel} (${p.current}/${p.total})`;
+          const eta = p.eta > 0 ? ` \u2022 ~${p.eta}s left` : "";
+          statusDetail.textContent = eta;
+        }
+      }
+      // Background scan finished — pull final results from storage
+      if (changes.ctScanRunning && changes.ctScanRunning.newValue === false) {
+        chrome.storage.onChanged.removeListener(bgStorageListener);
+        bgStorageListener = null;
+        if (!ikariamWorldName) return;
+        const storageKey = "ctScan_" + ikariamWorldName;
+        chrome.storage.local.get(storageKey, (d) => {
+          const r = d[storageKey];
+          if (r) {
+            phaseText.textContent = "Done!";
+            progressBar.style.width = "100%";
+            statusDetail.textContent = "";
+            log(`${r.players.length} players, ${r.ctPlayers.length} with CT available`);
+            showCtResults(r.players, r.ctPlayers, r.allyCounts, r.timestamp);
+            loadGallery();
+          }
+          allScanBtns.forEach((b) => (b.disabled = false));
+          ctCancelBtn.style.display = "none";
+        });
+      }
+    };
+    chrome.storage.onChanged.addListener(bgStorageListener);
+  }
+
+  function startScan(mode, label) {
+    if (!ikariamTabId) return;
+    allScanBtns.forEach((b) => (b.disabled = true));
+    ctCancelBtn.style.display = "";
+    ctResults.style.display = "none";
+    scanLog.innerHTML = "";
+    phaseText.textContent = label;
+    statusDetail.textContent = "";
+    progressBar.style.width = "0%";
+
+    const port = chrome.tabs.connect(ikariamTabId, { name: "ct-scan" });
+    port.postMessage({ action: "start-ct-scan", mode, allyFilter: ctAllyFilter.value.trim() });
+    attachCtPort(port);
+    if (mode === "full") attachBgStorageListener();
+  }
+
+  scanMapBtn.addEventListener("click", () => startScan("map", "Scanning map..."));
+  ctScanBtn.addEventListener("click", () => startScan("full", "Starting full scan..."));
+
+  // --- Export full world data as JSON ---
+  const exportBtn = $("export-data-btn");
+  if (exportBtn) {
+    exportBtn.addEventListener("click", async () => {
+      if (!ikariamWorldName) { log("No world detected"); return; }
+      const w = ikariamWorldName;
+      const all = await chrome.storage.local.get(null);
+      const islandPrefix = "island_" + w + "_";
+      const islands = [];
+      for (const k of Object.keys(all)) {
+        if (k.startsWith(islandPrefix)) islands.push(all[k]);
+      }
+      const payload = {
+        formatVersion: 1,
+        world: w,
+        exportedAt: new Date().toISOString(),
+        map: all["map_" + w] || null,
+        allianceIndex: all["allianceIndex_" + w] || null,
+        queryIndex: all["queryIndex_" + w] || null,
+        ctScan: all["ctScan_" + w] || null,
+        islands,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `ikariam-${w}-${new Date().toISOString().slice(0, 10)}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      log(`Exported ${islands.length} islands`);
     });
   }
 
-  async function finishScan(worldName, islands) {
-    const png = renderMap(islands);
-    await saveMap(worldName, islands, png);
-    phaseText.textContent = "Done!";
-    progressBar.style.width = "100%";
-    scanBtn.disabled = false;
-    cancelBtn.style.display = "none";
-    loadGallery();
+  // Both buttons always enabled — full scan does everything from scratch
+  async function refreshButtonStates() {}
 
-    if (ikariamTabId) {
-      chrome.tabs.sendMessage(ikariamTabId, { type: "map-updated" }).catch(() => {});
-    }
+  ctCancelBtn.addEventListener("click", () => {
+    if (ikariamTabId) chrome.tabs.sendMessage(ikariamTabId, { type: "ct-cancel" }).catch(() => {});
+    chrome.runtime.sendMessage({ type: "bg-cancel-scan" }).catch(() => {});
+    ctCancelBtn.style.display = "none";
+    allScanBtns.forEach((b) => (b.disabled = false)); refreshButtonStates();
+    phaseText.textContent = "Cancelled";
+  });
+
+  // On popup open: check for running CT scan or load previous results
+  function checkCtState() {
+    if (!ikariamWorldName) return;
+    const storageKey = "ctScan_" + ikariamWorldName;
+    chrome.storage.local.get([storageKey, "ctScanRunning", "ctScanProgress"], (data) => {
+      if (data.ctScanRunning && ikariamTabId) {
+        // Reconnect to running scan
+        allScanBtns.forEach((b) => (b.disabled = true));
+        ctCancelBtn.style.display = "";
+        if (data.ctScanProgress) {
+          const p = data.ctScanProgress;
+          const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+          progressBar.style.width = pct + "%";
+          let label;
+          if (p.phase === "map") label = "Scanning map";
+          else if (p.phase === "ct-check") label = "Checking CT";
+          else label = "Fetching islands";
+          phaseText.textContent = `${label} (${p.current}/${p.total})`;
+        } else {
+          phaseText.textContent = "Full scan running...";
+        }
+        const port = chrome.tabs.connect(ikariamTabId, { name: "ct-scan" });
+        attachCtPort(port);
+        // Watch storage for completion
+        const listener = (changes) => {
+          if (changes.ctScanRunning && !changes.ctScanRunning.newValue) {
+            chrome.storage.onChanged.removeListener(listener);
+            allScanBtns.forEach((b) => (b.disabled = false)); refreshButtonStates();
+            ctCancelBtn.style.display = "none";
+            // Load results from storage
+            chrome.storage.local.get(storageKey, (d) => {
+              const r = d[storageKey];
+              if (r) {
+                phaseText.textContent = "Done!";
+                progressBar.style.width = "100%";
+                showCtResults(r.players, r.ctPlayers, r.allyCounts, r.timestamp);
+              }
+            });
+          } else if (changes.ctScanProgress?.newValue) {
+            const p = changes.ctScanProgress.newValue;
+            const pct = p.total > 0 ? Math.round((p.current / p.total) * 100) : 0;
+            progressBar.style.width = pct + "%";
+            if (p.paused) {
+              phaseText.textContent = `Cooldown (${p.pauseSec}s)...`;
+            } else {
+              let label;
+              if (p.phase === "map") label = "Scanning map";
+              else if (p.phase === "ct-check") label = "Checking CT";
+              else label = "Fetching islands";
+              phaseText.textContent = `${label} (${p.current}/${p.total})`;
+            }
+          }
+        };
+        chrome.storage.onChanged.addListener(listener);
+      } else if (data[storageKey]) {
+        // Show previous results
+        const r = data[storageKey];
+        showCtResults(r.players, r.ctPlayers, r.allyCounts, r.timestamp);
+      }
+    });
   }
 
-  function renderMap(islands, layer) {
-    MapRender.render(ctx, islands, { layer: layer || "population" });
-    return canvas.toDataURL("image/png");
+  function showCtResults(players, ctPlayers, allyCounts, timestamp) {
+    ctResults.style.display = "block";
+    const ctLabels = { offer: "Can offer", accept: "Pending (accept)" };
+    const age = timestamp ? formatAge(timestamp) : "";
+
+    let html = `<div style="margin-bottom:8px;color:var(--text-heading);font-weight:600;">${ctPlayers.length} players with CT available <span style="color:var(--text-dim);font-weight:400;">(${players.length} checked${age ? " \u2022 " + age : ""})</span></div>`;
+
+    if (ctPlayers.length > 0) {
+      html += '<table style="width:100%;font-size:11px;border-collapse:collapse;margin-bottom:12px;">';
+      html += '<tr style="color:var(--text-dim);"><th style="text-align:left;padding:2px 4px;">Player</th><th style="text-align:left;padding:2px 4px;">Alliance</th><th style="text-align:left;padding:2px 4px;">Status</th><th style="text-align:left;padding:2px 4px;">Islands</th></tr>';
+      for (const p of ctPlayers.sort((a, b) => a.name.localeCompare(b.name))) {
+        const islandList = p.islands.map((i) => `${i.name} [${i.x}:${i.y}]`).join(", ");
+        const statusColor = p.ct === "accept" ? "var(--success)" : "var(--accent)";
+        html += `<tr style="border-top:1px solid var(--border-subtle);"><td style="padding:2px 4px;color:var(--text);">${p.name}</td><td style="padding:2px 4px;color:var(--accent);">${p.allyTag || "-"}</td><td style="padding:2px 4px;color:${statusColor};">${ctLabels[p.ct] || p.ct}</td><td style="padding:2px 4px;color:var(--text-dim);" title="${islandList}">${p.islands.length}</td></tr>`;
+      }
+      html += "</table>";
+    } else {
+      html += '<div style="color:var(--text-dim);margin-bottom:8px;">No cultural treaty partners found in this area.</div>';
+    }
+
+    // Alliance summary
+    const allyEntries = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
+    html += '<details style="margin-top:4px;"><summary style="cursor:pointer;color:var(--text-muted);font-size:11px;">All players by alliance (' + players.length + ')</summary><div style="margin-top:4px;">';
+    for (const [tag, count] of allyEntries) {
+      html += `<span style="display:inline-block;margin:2px 6px 2px 0;padding:1px 6px;background:var(--bg-active);border-radius:3px;font-size:11px;">${tag} (${count})</span>`;
+    }
+    html += "</div></details>";
+    ctResults.innerHTML = html;
+  }
+
+  function formatAge(ts) {
+    const mins = Math.round((Date.now() - ts) / 60000);
+    if (mins < 1) return "just now";
+    if (mins < 60) return mins + "m ago";
+    const hrs = Math.round(mins / 60);
+    if (hrs < 24) return hrs + "h ago";
+    return Math.round(hrs / 24) + "d ago";
+  }
+
+  // On popup open, check if a minimap-initiated scan completed while popup was closed
+  function checkScanState() {
+    chrome.storage.local.get("scanResult", (data) => {
+      if (data.scanResult) {
+        const { islands } = data.scanResult;
+        chrome.storage.local.remove("scanResult");
+        log(`Map scan completed in background: ${islands.length} islands`);
+        loadGallery();
+      }
+    });
   }
 
   // --- Storage ---
@@ -273,6 +377,24 @@
     const existing = index.findIndex((e) => e.key === key);
     if (existing >= 0) index[existing] = entry;
     else index.unshift(entry);
+
+    // Re-apply alliance data from the alliance index onto fresh scan islands
+    const allyKey = "allianceIndex_" + worldName;
+    const allyData = await chrome.storage.local.get(allyKey);
+    const allyIdx = allyData[allyKey] || {};
+    for (const isl of islands) {
+      const coordKey = `${isl.x}:${isl.y}`;
+      const entry2 = allyIdx[coordKey];
+      if (!entry2 || !entry2.counts) continue;
+      const allyCounts = {};
+      for (const [tag, count] of Object.entries(entry2.counts)) {
+        if (tag !== "(none)") allyCounts[tag] = count;
+      }
+      const sorted = Object.entries(allyCounts).sort((a, b) => b[1] - a[1]);
+      isl.alliances = allyCounts;
+      isl.dominantAlly = sorted.length > 0 ? sorted[0][0] : "";
+      isl.cities = Math.max(isl.cities, entry2.total || 0);
+    }
 
     await chrome.storage.local.set({
       [STORAGE_INDEX]: index,
@@ -303,18 +425,20 @@
       return;
     }
 
-    const allianceScopedKey = ikariamWorldName ? "allianceIndex_" + ikariamWorldName : "allianceIndex";
-    const extraData = await chrome.storage.local.get(["hideZeroCities", allianceScopedKey, "allianceIndex"]);
+    const allianceScopedKey = ikariamWorldName ? "allianceIndex_" + ikariamWorldName : null;
+    const extraData = await chrome.storage.local.get(
+      ["hideZeroCities", allianceScopedKey].filter(Boolean)
+    );
     const dimEmptyActive = !!extraData.hideZeroCities;
-    // Use world-scoped key if available, fall back to legacy global key
-    const allianceIndex = extraData[allianceScopedKey] || extraData.allianceIndex || {};
-    const allyColorMap = MapRender.buildAllianceColorMap(allianceIndex);
+    const allianceIndex = (allianceScopedKey && extraData[allianceScopedKey]) || {};
 
     galleryList.innerHTML = "";
     for (const entry of index) {
       const data = await chrome.storage.local.get(entry.key);
       const map = data[entry.key];
       if (!map) continue;
+
+      const allyColorMap = MapRender.buildAllianceColorMap(allianceIndex, map.islands);
 
       if (map.islands) {
         MapRender.enrichIslandsWithAlliances(map.islands, allianceIndex, allyColorMap);

@@ -35,6 +35,8 @@
   let cachedScale = null;
   let cachedIslandCount = 0;
   let cachedDimEmpty = null;
+  let allyVersion = 0; // bumped whenever allianceIndex changes
+  let cachedAllyVersion = -1;
   let filterConfig = null;
   let cachedFilterJSON = null;
 
@@ -117,7 +119,7 @@
     const newTiles = IkUtils.parseTilesFromDOM();
     if (newTiles.length === 0) return false;
 
-    const worldName = IkUtils.getWorldName();
+    const worldName = IkUtils.getUrlWorldName();
     if (!worldName) return false;
 
     // Skip writes while scanner is running to avoid storage races
@@ -234,7 +236,7 @@
         padding: "3px 5px", border: "1px solid rgba(42,58,85,0.7)", borderRadius: "3px",
         background: s === minimapScale ? "rgba(42,74,106,0.8)" : "rgba(10,22,40,0.6)",
         color: s === minimapScale ? "#e0e8f0" : "#6a7a8a",
-        cursor: "pointer", fontSize: "10px", fontFamily: "sans-serif",
+        cursor: "pointer", fontSize: "10px", fontFamily: "sans-serif", lineHeight: "12px",
         pointerEvents: "auto",
       });
       btn.addEventListener("click", (e) => {
@@ -250,6 +252,22 @@
       });
       topBar.appendChild(btn);
     }
+
+    // Fullscreen button — opens large render in a new tab (same style as scale buttons)
+    const fullBtn = document.createElement("button");
+    fullBtn.textContent = "\u26F6";
+    fullBtn.title = "Open full-size map in new tab";
+    Object.assign(fullBtn.style, {
+      padding: "3px 5px", border: "1px solid rgba(42,58,85,0.7)", borderRadius: "3px",
+      background: "rgba(10,22,40,0.6)", color: "#6a7a8a",
+      cursor: "pointer", fontSize: "8px", fontFamily: "sans-serif", lineHeight: "12px",
+      pointerEvents: "auto",
+    });
+    fullBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openFullMap();
+    });
+    topBar.appendChild(fullBtn);
 
     const spacer = document.createElement("div");
     spacer.style.flex = "1";
@@ -268,7 +286,7 @@
     Object.assign(collapseBtn.style, {
       padding: "3px 6px", border: "1px solid rgba(42,58,85,0.7)", borderRadius: "3px",
       background: "rgba(10,22,40,0.6)", color: "#667",
-      cursor: "pointer", fontSize: "10px", fontFamily: "sans-serif",
+      cursor: "pointer", fontSize: "10px", fontFamily: "sans-serif", lineHeight: "12px",
       pointerEvents: "auto",
     });
     topBar.appendChild(collapseBtn);
@@ -466,14 +484,54 @@
 
   let allianceIndex = null;
   let allianceColorMap = {};
+  let queryIndex = null; // derived rich-data blob (queryIndex_{world})
 
   async function loadAllianceIndex() {
-    const worldName = IkUtils.getWorldName() || "unknown";
-    const scopedKey = "allianceIndex_" + worldName;
-    // Fall back to legacy global key if world-scoped key is empty
-    const data = await chrome.storage.local.get([scopedKey, "allianceIndex"]);
-    allianceIndex = data[scopedKey] || data.allianceIndex || {};
-    allianceColorMap = MapRender.buildAllianceColorMap(allianceIndex);
+    const worldName = IkUtils.getUrlWorldName() || "unknown";
+    const data = await chrome.storage.local.get([
+      "allianceIndex_" + worldName,
+      "queryIndex_" + worldName,
+    ]);
+    allianceIndex = data["allianceIndex_" + worldName] || {};
+    queryIndex = data["queryIndex_" + worldName] || null;
+    const islands = currentMapData && currentMapData.islands;
+    allianceColorMap = MapRender.buildAllianceColorMap(allianceIndex, islands);
+    allyVersion++;
+    islandsByCoord = null; // invalidate dim-path lookup
+  }
+
+  // Stamp rich-data fields onto each island so the filter engine can read
+  // them without storage round-trips. Underscore fields are conventional
+  // "computed-by-enrichment" markers consumed by mapfilter.matchFilter.
+  function enrichIslandsWithRichData(islands) {
+    if (!queryIndex || !queryIndex.islandsByCoord) {
+      // Clear stale enrichment so old data doesn't leak through
+      for (const isl of islands) {
+        isl._allyTags = null;
+        isl._ownerNamesText = null;
+        isl._maxArmy = 0;
+        isl._ctAvailable = false;
+        isl._ctChecked = false;
+      }
+      return;
+    }
+    const byCoord = queryIndex.islandsByCoord;
+    for (const isl of islands) {
+      const entry = byCoord[isl.x + ":" + isl.y];
+      if (!entry) {
+        isl._allyTags = null;
+        isl._ownerNamesText = null;
+        isl._maxArmy = 0;
+        isl._ctAvailable = false;
+        isl._ctChecked = false;
+        continue;
+      }
+      isl._allyTags = new Set(entry.allyTags || []);
+      isl._ownerNamesText = entry.ownerNamesText || "";
+      isl._maxArmy = entry.maxArmy || 0;
+      isl._ctAvailable = !!entry.ctAvailable;
+      isl._ctChecked = !!entry.ctChecked;
+    }
   }
 
   function rebuildBaseMap() {
@@ -481,6 +539,8 @@
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
     MapRender.enrichIslandsWithAlliances(islands, allianceIndex || {}, allianceColorMap);
+    enrichIslandsWithRichData(islands);
+    pushMatchCount(islands);
 
     const tw = Math.max(1, Math.round(3 * minimapScale));
     const th = Math.max(1, Math.round(3 * minimapScale));
@@ -505,6 +565,43 @@
     cachedScale = minimapScale;
     cachedIslandCount = islands.length;
     cachedDimEmpty = dimEmpty;
+    cachedAllyVersion = allyVersion;
+  }
+
+  // Compute the active match count and push it to the filter panel for the
+  // status footer. Cheap — same predicate logic the renderer uses.
+  function pushMatchCount(islands) {
+    if (!globalThis.MapFilter || !globalThis.IkFilterPanel) return;
+    const hasFilters = filterConfig && filterConfig.enabled &&
+      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+    const hasCustom = MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    if (!hasFilters && !hasCustom) {
+      IkFilterPanel.setMatchCount(null);
+      return;
+    }
+    let n = 0;
+    for (const isl of islands) {
+      if (MapFilter.islandMatches(isl, filterConfig)) n++;
+    }
+    IkFilterPanel.setMatchCount(n);
+  }
+
+  function openFullMap() {
+    if (!currentMapData || !globalThis.MapRender) return;
+    const islands = currentMapData.islands;
+    if (!islands || islands.length === 0) return;
+    MapRender.enrichIslandsWithAlliances(islands, allianceIndex || {}, allianceColorMap);
+    enrichIslandsWithRichData(islands);
+    const canvas = document.createElement("canvas");
+    const ctx = canvas.getContext("2d");
+    MapRender.render(ctx, islands, {
+      layer: currentLayer, dimEmpty: dimEmpty, filterConfig: filterConfig,
+    });
+    canvas.toBlob((blob) => {
+      const url = URL.createObjectURL(blob);
+      window.open(url, "_blank");
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    });
   }
 
   function drawMinimap() {
@@ -516,7 +613,8 @@
     const filterJSON = filterConfig ? JSON.stringify(filterConfig) : null;
     if (!cachedBaseMap || cachedLayer !== currentLayer ||
         cachedScale !== minimapScale || cachedIslandCount !== islands.length ||
-        cachedDimEmpty !== dimEmpty || cachedFilterJSON !== filterJSON) {
+        cachedDimEmpty !== dimEmpty || cachedFilterJSON !== filterJSON ||
+        cachedAllyVersion !== allyVersion) {
       cachedFilterJSON = filterJSON;
       rebuildBaseMap();
     }
@@ -611,7 +709,7 @@
   async function loadAndShow() {
     if (!isWorldMapView()) return;
 
-    const worldName = IkUtils.getWorldName();
+    const worldName = IkUtils.getUrlWorldName();
     if (!worldName) return;
 
     const key = "map_" + worldName;
@@ -702,48 +800,62 @@
 
   // --- Dim islands on world map (filter-aware or zero-city fallback) ---
   let dimmingObserver = null;
+  let islandsByCoord = null; // coord "x:y" -> enriched stored island
+
+  // Rebuild the coord lookup from currentMapData + apply rich/alliance
+  // enrichment. Called whenever the underlying data or enrichment changes.
+  function rebuildIslandsByCoord() {
+    islandsByCoord = null;
+    if (!currentMapData || !currentMapData.islands) return;
+    const islands = currentMapData.islands;
+    if (globalThis.MapRender) {
+      MapRender.enrichIslandsWithAlliances(islands, allianceIndex || {}, allianceColorMap);
+    }
+    enrichIslandsWithRichData(islands);
+    const map = {};
+    for (const isl of islands) map[isl.x + ":" + isl.y] = isl;
+    islandsByCoord = map;
+  }
 
   function applyDimming() {
     const hasFilters = filterConfig && filterConfig.enabled &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+    const hasCustom = globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
 
-    if (!hasFilters && !dimEmpty) return;
+    if (!hasFilters && !hasCustom && !dimEmpty) return;
+
+    // Ensure the coord lookup exists — it's built lazily because currentMapData
+    // may arrive after the first dimming pass.
+    if (!islandsByCoord) rebuildIslandsByCoord();
 
     document.querySelectorAll(".islandTile, .oceanTile").forEach((tile) => {
       const title = tile.getAttribute("title") || "";
-      if (!title.match(/\[\d+:\d+\]$/)) { tile.style.opacity = ""; return; }
+      const m = title.match(/\[(\d+):(\d+)\]$/);
+      if (!m) { tile.style.opacity = ""; return; }
 
-      if (hasFilters && globalThis.MapFilter) {
-        // Build island object from DOM
-        const citiesEl = tile.querySelector(".cities");
-        const wonderEl = tile.querySelector('[class*="wonder wonder"]');
-        const tgEl = tile.querySelector('[class*="tradegood tradegood"]');
-        const piracyEl = tile.querySelector('[id^="piracy_"]');
-        const heliosEl = tile.querySelector('[id^="helios_"]');
-        const ownerEl = tile.querySelector('[id^="owner_"]');
-
-        const isl = {
-          cities: citiesEl ? parseInt(citiesEl.textContent, 10) || 0 : 0,
-          wonder: wonderEl ? parseInt(wonderEl.className.match(/wonder(\d+)/)?.[1], 10) || 0 : 0,
-          tradegood: tgEl ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0 : 0,
-          piracy: piracyEl ? piracyEl.className !== "" : false,
-          helios: heliosEl ? heliosEl.className !== "" : false,
-          owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
-          military: false,
-          war: false,
-        };
-
-        // Cross-reference military/war from stored map data
-        if (currentMapData && currentMapData.islands) {
-          const m = title.match(/\[(\d+):(\d+)\]$/);
-          if (m) {
-            const x = parseInt(m[1], 10), y = parseInt(m[2], 10);
-            const stored = currentMapData.islands.find((s) => s.x === x && s.y === y);
-            if (stored) {
-              isl.military = !!stored.military;
-              isl.war = !!stored.war;
-            }
-          }
+      if ((hasFilters || hasCustom) && globalThis.MapFilter) {
+        const coord = m[1] + ":" + m[2];
+        // Prefer the enriched stored island — it has _allyTags, _maxArmy, etc.
+        let isl = islandsByCoord && islandsByCoord[coord];
+        if (!isl) {
+          // Fallback: build a minimal object from the DOM for old-style filters
+          // (e.g. tiles outside the stored map — shouldn't normally happen).
+          const citiesEl = tile.querySelector(".cities");
+          const wonderEl = tile.querySelector('[class*="wonder wonder"]');
+          const tgEl = tile.querySelector('[class*="tradegood tradegood"]');
+          const piracyEl = tile.querySelector('[id^="piracy_"]');
+          const heliosEl = tile.querySelector('[id^="helios_"]');
+          const ownerEl = tile.querySelector('[id^="owner_"]');
+          isl = {
+            x: parseInt(m[1], 10), y: parseInt(m[2], 10),
+            cities: citiesEl ? parseInt(citiesEl.textContent, 10) || 0 : 0,
+            wonder: wonderEl ? parseInt(wonderEl.className.match(/wonder(\d+)/)?.[1], 10) || 0 : 0,
+            tradegood: tgEl ? parseInt(tgEl.className.match(/tradegood(\d+)/)?.[1], 10) || 0 : 0,
+            piracy: piracyEl ? piracyEl.className !== "" : false,
+            helios: heliosEl ? heliosEl.className !== "" : false,
+            owner: ownerEl ? ownerEl.className.replace("ownerState", "").trim() : "",
+            military: false, war: false,
+          };
         }
 
         tile.style.opacity = MapFilter.islandMatches(isl, filterConfig) ? "" : "0.35";
@@ -800,6 +912,31 @@
     drawMinimap();
   });
 
+  // Power-user JS predicate changed via window.IkFilter.set/clear — redraw
+  // and force the filter layer on if a predicate is now active.
+  window.addEventListener("ik-custom-predicate-change", () => {
+    cachedBaseMap = null;
+    const hasCustom = MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    if (hasCustom) {
+      startDimming();
+      if (currentLayer !== "filter") {
+        layerBeforeFilter = currentLayer;
+        currentLayer = "filter";
+        updateLayerBar();
+      }
+    } else {
+      const hasFilters = filterConfig && filterConfig.enabled &&
+        filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+      if (!hasFilters && currentLayer === "filter") {
+        currentLayer = layerBeforeFilter || "population";
+        layerBeforeFilter = null;
+        updateLayerBar();
+      }
+      if (!hasFilters && !dimEmpty) stopDimming();
+    }
+    drawMinimap();
+  });
+
   // Track scan progress/completion via storage changes
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
@@ -813,7 +950,7 @@
     if (changes.scanResult && changes.scanResult.newValue) {
       // Scan completed — save map data and switch to map view
       const result = changes.scanResult.newValue;
-      const worldName = IkUtils.getWorldName();
+      const worldName = IkUtils.getUrlWorldName();
       if (worldName && result.worldName === worldName) {
         const mapKey = "map_" + worldName;
         const scanDate = new Date().toISOString();
@@ -843,6 +980,26 @@
         });
 
       }
+    }
+
+    // Reload alliance colors / rich data when CT scan, island visits, or full
+    // scan commits update the underlying storage.
+    const worldName = IkUtils.getUrlWorldName() || "unknown";
+    const allyIdxKey = "allianceIndex_" + worldName;
+    const mapKey = "map_" + worldName;
+    const queryIdxKey = "queryIndex_" + worldName;
+    if (changes[allyIdxKey] || changes[mapKey] || changes[queryIdxKey]) {
+      chrome.storage.local.get([mapKey, allyIdxKey, queryIdxKey], (d) => {
+        if (d[mapKey]) currentMapData = d[mapKey];
+        allianceIndex = d[allyIdxKey] || {};
+        queryIndex = d[queryIdxKey] || null;
+        allianceColorMap = MapRender.buildAllianceColorMap(allianceIndex, currentMapData && currentMapData.islands);
+        allyVersion++;
+        cachedBaseMap = null;
+        islandsByCoord = null; // invalidate dim-path lookup
+        applyDimming();
+        drawMinimap();
+      });
     }
 
     if (changes.scanInProgress && !changes.scanInProgress.newValue) {

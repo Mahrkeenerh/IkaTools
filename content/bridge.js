@@ -59,6 +59,28 @@ window.addEventListener("ik-convert-crew", () => {
   }
 });
 
+// Read world map island ID mapping (available on worldmap_iso view)
+window.addEventListener("ik-read-world-islands", () => {
+  let result = null;
+  try {
+    const screen = ikariam.getScreen();
+    if (screen && screen.islands) {
+      // islands[x][y] = [islandId, ...] — flatten to {x:y: islandId}
+      const mapping = {};
+      const isl = screen.islands;
+      for (let x = 0; x < isl.length; x++) {
+        if (!isl[x]) continue;
+        for (let y = 0; y < isl[x].length; y++) {
+          if (!isl[x][y]) continue;
+          mapping[x + ":" + y] = isl[x][y][0];
+        }
+      }
+      result = mapping;
+    }
+  } catch (e) {}
+  window.dispatchEvent(new CustomEvent("ik-world-islands", { detail: result }));
+});
+
 // Guard: handlers below require ajaxHandlerCall — skip on non-game pages (forum, lobby, etc.)
 if (typeof ajaxHandlerCall === "function") {
 

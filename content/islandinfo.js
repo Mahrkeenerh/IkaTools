@@ -8,12 +8,14 @@
   let lastIslandId = null; // track current island to detect island-to-island navigation
 
   // World-scoped storage key helpers
-  const worldName = IkUtils.getWorldName() || "unknown";
+  // Map data (islands, alliances) is URL-based — stable across language settings.
+  // Friend data is title-based legacy — left as-is.
+  const titleWorldName = IkUtils.getWorldName() || "unknown";
+  const worldName = IkUtils.getUrlWorldName() || "unknown";
   const STORAGE_PREFIX = "island_" + worldName + "_";
-  const KEY_FRIEND_LIST = "friendList_" + worldName;
   const KEY_ALLIANCE_INDEX = "allianceIndex_" + worldName;
-
-  const KEY_FRIEND_SLOTS = "friendSlots_" + worldName;
+  const KEY_FRIEND_LIST = "friendList_" + titleWorldName;
+  const KEY_FRIEND_SLOTS = "friendSlots_" + titleWorldName;
   const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
   let friendCheckTimer = null;
 
@@ -221,35 +223,36 @@
     return island;
   }
 
-  // --- Alliance index: island coord → alliance counts ---
+  // --- Alliance index: island coord → { counts, members, total } ---
+  // Schema must match background.js bgBuildIslandWrites — same key, same shape.
   async function updateAllianceIndex(island) {
-    // Fall back to legacy global key if world-scoped key is empty
-    const data = await chrome.storage.local.get([KEY_ALLIANCE_INDEX, "allianceIndex"]);
-    const index = data[KEY_ALLIANCE_INDEX] || data.allianceIndex || {};
+    const data = await chrome.storage.local.get(KEY_ALLIANCE_INDEX);
+    const index = data[KEY_ALLIANCE_INDEX] || {};
     const key = `${island.x}:${island.y}`;
 
-    // Count cities per alliance on this island
     const counts = {};
+    const members = {}; // tag -> array of unique ownerIds
     for (const city of island.cities) {
       const tag = city.allyTag || "(none)";
       counts[tag] = (counts[tag] || 0) + 1;
+      const oid = String(city.ownerId || "");
+      if (!oid) continue;
+      if (!members[tag]) members[tag] = [];
+      if (!members[tag].includes(oid)) members[tag].push(oid);
     }
-    index[key] = { counts, total: island.cities.length };
+    index[key] = { counts, members, total: island.cities.length };
 
     await chrome.storage.local.set({ [KEY_ALLIANCE_INDEX]: index });
   }
 
   // Update the world map's island entry with alliance/city data from island view
   async function enrichWorldMapData(island) {
-    // Find the world map storage key
-    const indexData = await chrome.storage.local.get("mapIndex");
-    const mapIndex = indexData.mapIndex || [];
-    if (mapIndex.length === 0) return;
-
-    // Use the first (most recent) map
-    const mapEntry = mapIndex[0];
-    const mapData = await chrome.storage.local.get(mapEntry.key);
-    const worldMap = mapData[mapEntry.key];
+    // Use the *current* world's map, not the most recent one in mapIndex —
+    // a multi-world player can have several maps stored and mapIndex[0] could
+    // point at a different world entirely.
+    const mapKey = "map_" + worldName;
+    const mapData = await chrome.storage.local.get(mapKey);
+    const worldMap = mapData[mapKey];
     if (!worldMap || !worldMap.islands) return;
 
     // Find the matching world map island by coords
@@ -273,7 +276,7 @@
     target.cities = island.cities.length; // update city count too
 
     // Save back
-    await chrome.storage.local.set({ [mapEntry.key]: worldMap });
+    await chrome.storage.local.set({ [mapKey]: worldMap });
   }
 
   // --- Info panel overlay ---

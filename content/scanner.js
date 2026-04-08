@@ -168,156 +168,141 @@
     }
   });
 
-  async function scanWorldMap(port) {
-    if (scanning) return;
+  // Core scan logic — accepts a progress callback, returns { worldName, islands }
+  // or null if cancelled. Uses module-level cancelRequested flag.
+  async function doScan(progressCb) {
+    if (scanning) return null;
     scanning = true;
     cancelRequested = false;
-    activePort = port;
     chrome.storage.local.set({ scanInProgress: true });
     try {
-    const worldName = IkUtils.getWorldName() || "Unknown";
-    const allIslands = new Map();
-    const scannedCenters = new Set();
-    let requestsDone = 0;
-    let totalEstimate = 0;
+      const worldName = IkUtils.getUrlWorldName() || "unknown";
+      const allIslands = new Map();
+      const scannedCenters = new Set();
+      let requestsDone = 0;
+      let totalEstimate = 0;
 
-    // When popup closes, just clear the port reference — don't abort
-    port.onDisconnect.addListener(() => {
-      activePort = null;
-    });
-
-    function addIslands(parsed) {
-      for (const isl of parsed) {
-        const key = `${isl.x}:${isl.y}`;
-        const existing = allIslands.get(key);
-        if (!existing || isl.cities > existing.cities) {
-          allIslands.set(key, isl);
+      function addIslands(parsed) {
+        for (const isl of parsed) {
+          const key = `${isl.x}:${isl.y}`;
+          const existing = allIslands.get(key);
+          if (!existing || isl.cities > existing.cities) {
+            allIslands.set(key, isl);
+          }
         }
       }
-    }
 
-    function safeSend(msg) {
-      if (!activePort) return;
-      try {
-        activePort.postMessage(msg);
-      } catch (e) {
-        activePort = null;
+      function progress(phase) {
+        const progressData = {
+          type: "progress",
+          phase,
+          current: requestsDone,
+          total: totalEstimate,
+          found: allIslands.size,
+        };
+        progressCb(progressData);
       }
-    }
 
-    function progress(phase) {
-      const progressData = {
-        type: "progress",
-        phase,
-        current: requestsDone,
-        total: totalEstimate,
-        found: allIslands.size,
-      };
-      safeSend(progressData);
-      // Persist progress so popup can pick it up if reopened
-      chrome.storage.local.set({ scanProgress: progressData });
-    }
+      async function jumpAndRead(cx, cy, phase) {
+        if (cancelRequested) return null;
+        const key = `${cx}:${cy}`;
+        if (scannedCenters.has(key)) {
+          requestsDone++;
+          progress(phase);
+          return null;
+        }
+        scannedCenters.add(key);
 
-    async function jumpAndRead(cx, cy, phase) {
+        try {
+          const before = snapshotIslandCoords();
+          const gridBefore = snapshotTileGrid();
+          jumpTo(cx, cy);
+          await waitForTilesUpdate(before, gridBefore, cx, cy);
+          const result = readCurrentTiles();
+          addIslands(result.islands);
+          requestsDone++;
+          progress(phase);
+          return result;
+        } catch (err) {
+          progressCb({ type: "log", message: `Error at [${cx}:${cy}]: ${err.message}` });
+          requestsDone++;
+          progress(phase);
+          return null;
+        }
+      }
+
+      // --- Phase 1: Probe to detect viewport stride ---
+      progressCb({ type: "started", worldName, phase: "probe" });
+      totalEstimate = 1;
+
+      // Navigate to the world map if not already there
+      if (!document.getElementById("inputXCoord")) {
+        progressCb({ type: "navigate-to-world" });
+        return null;
+      }
+
+      // Save starting position to restore after scan
+      const xInput = document.getElementById("inputXCoord");
+      const yInput = document.getElementById("inputYCoord");
+      const startX = parseInt(xInput.value, 10) || 50;
+      const startY = parseInt(yInput.value, 10) || 50;
+
+      // Read current position as initial probe
+      const probe = readCurrentTiles();
+      if (probe.islands.length > 0) {
+        addIslands(probe.islands);
+      }
+      requestsDone++;
+
+      // Use 75% of viewport as stride — the game renders buffer tiles beyond the
+      // visible area, so the tile grid is wider than the actual data zone.
+      const strideX = Math.max(1, Math.floor((probe.cols + 1) * 0.75));
+      const strideY = Math.max(1, Math.floor((probe.rows + 1) * 0.75));
+
+      progressCb({
+        type: "stride-detected",
+        cols: probe.cols,
+        rows: probe.rows,
+        strideX,
+        strideY,
+      });
+
+      // --- Phase 2: Row-by-row fill from (0,0) to (100,100) ---
+      // Scan each row left-to-right, stop after passing through the island
+      // area. Stop scanning rows after 2 consecutive all-empty rows.
+      const MAP_MAX = 100;
+      const xSteps = Math.floor(MAP_MAX / strideX) + 1;
+      const ySteps = Math.floor(MAP_MAX / strideY) + 1;
+      totalEstimate = requestsDone + xSteps * ySteps;
+      progress("fill");
+
+      let emptyRows = 0;
+
+      for (let y = 0; y <= MAP_MAX; y += strideY) {
+        if (cancelRequested) return null;
+        let rowHasIslands = false;
+        let foundAny = false;
+
+        for (let x = 0; x <= MAP_MAX; x += strideX) {
+          if (cancelRequested) return null;
+          const key = `${x}:${y}`;
+          if (scannedCenters.has(key)) continue;
+          const r = await jumpAndRead(x, y, "fill");
+          if (r && r.islands.length > 0) {
+            foundAny = true;
+            rowHasIslands = true;
+          } else if (foundAny) {
+            break; // passed through island area on this row
+          }
+        }
+
+        if (rowHasIslands) emptyRows = 0;
+        else emptyRows++;
+        if (emptyRows >= 2) break; // past the map
+      }
+
       if (cancelRequested) return null;
-      const key = `${cx}:${cy}`;
-      if (scannedCenters.has(key)) {
-        requestsDone++;
-        progress(phase);
-        return null;
-      }
-      scannedCenters.add(key);
 
-      try {
-        const before = snapshotIslandCoords();
-        const gridBefore = snapshotTileGrid();
-        jumpTo(cx, cy);
-        await waitForTilesUpdate(before, gridBefore, cx, cy);
-        const result = readCurrentTiles();
-        addIslands(result.islands);
-        requestsDone++;
-        progress(phase);
-        return result;
-      } catch (err) {
-        safeSend({ type: "log", message: `Error at [${cx}:${cy}]: ${err.message}` });
-        requestsDone++;
-        progress(phase);
-        return null;
-      }
-    }
-
-    // --- Phase 1: Probe to detect viewport stride ---
-    safeSend({ type: "started", worldName, phase: "probe" });
-    totalEstimate = 1;
-
-    // Navigate to the world map if not already there
-    if (!document.getElementById("inputXCoord")) {
-      safeSend({ type: "navigate-to-world" });
-      return;
-    }
-
-    // Save starting position to restore after scan
-    const xInput = document.getElementById("inputXCoord");
-    const yInput = document.getElementById("inputYCoord");
-    const startX = parseInt(xInput.value, 10) || 50;
-    const startY = parseInt(yInput.value, 10) || 50;
-
-    // Read current position as initial probe
-    const probe = readCurrentTiles();
-    if (probe.islands.length > 0) {
-      addIslands(probe.islands);
-    }
-    requestsDone++;
-
-    // Use 75% of viewport as stride — the game renders buffer tiles beyond the
-    // visible area, so the tile grid is wider than the actual data zone.
-    // A fixed overlap of 3 was too thin and left gaps at buffer boundaries.
-    const strideX = Math.max(1, Math.floor((probe.cols + 1) * 0.75));
-    const strideY = Math.max(1, Math.floor((probe.rows + 1) * 0.75));
-
-    safeSend({
-      type: "stride-detected",
-      cols: probe.cols,
-      rows: probe.rows,
-      strideX,
-      strideY,
-    });
-
-    // --- Phase 2: Row-by-row fill from (0,0) to (100,100) ---
-    // Scan each row left-to-right, stop after passing through the island
-    // area. Stop scanning rows after 2 consecutive all-empty rows.
-    const MAP_MAX = 100;
-    const xSteps = Math.floor(MAP_MAX / strideX) + 1;
-    const ySteps = Math.floor(MAP_MAX / strideY) + 1;
-    totalEstimate = requestsDone + xSteps * ySteps;
-    progress("fill");
-
-    let emptyRows = 0;
-
-    for (let y = 0; y <= MAP_MAX; y += strideY) {
-      if (cancelRequested) return;
-      let rowHasIslands = false;
-      let foundAny = false;
-
-      for (let x = 0; x <= MAP_MAX; x += strideX) {
-        if (cancelRequested) return;
-        const key = `${x}:${y}`;
-        if (scannedCenters.has(key)) continue;
-        const r = await jumpAndRead(x, y, "fill");
-        if (r && r.islands.length > 0) {
-          foundAny = true;
-          rowHasIslands = true;
-        } else if (foundAny) {
-          break; // passed through island area on this row
-        }
-      }
-
-      if (rowHasIslands) emptyRows = 0;
-      else emptyRows++;
-      if (emptyRows >= 2) break; // past the map
-    }
-
-    if (!cancelRequested) {
       // Request game-side overlay data (military, war, barbarian)
       await enrichWithGameData(allIslands);
 
@@ -328,22 +313,33 @@
       );
 
       const islands = Array.from(allIslands.values());
-
-      // Save result to storage so popup can process it even if closed during scan
-      await chrome.storage.local.set({
-        scanResult: { worldName, islands },
-      });
-
-      safeSend({
-        type: "complete",
-        worldName,
-        islands,
-      });
-    }
+      return { worldName, islands };
     } finally {
       scanning = false;
-      activePort = null;
       chrome.storage.local.remove(["scanInProgress", "scanProgress"]);
+    }
+  }
+
+  function safeSendPort(port, msg) {
+    try { port.postMessage(msg); } catch (e) { activePort = null; }
+  }
+
+  async function scanWorldMap(port) {
+    activePort = port;
+    port.onDisconnect.addListener(() => {
+      if (activePort === port) activePort = null;
+    });
+    try {
+      const result = await doScan((msg) => {
+        if (activePort) safeSendPort(activePort, msg);
+        if (msg.type === "progress") chrome.storage.local.set({ scanProgress: msg });
+      });
+      if (result) {
+        await chrome.storage.local.set({ scanResult: result });
+        if (activePort) safeSendPort(activePort, { type: "complete", ...result });
+      }
+    } catch (e) {
+      if (activePort) safeSendPort(activePort, { type: "error", message: e.message });
     }
   }
 
@@ -362,15 +358,17 @@
     });
   });
 
-  // Expose scanner for minimap to trigger scans without popup
+  // Expose scanner for minimap and CT scanner to trigger scans without popup
   globalThis.IkScanner = {
+    async scan(progressCb) {
+      return doScan(progressCb || (() => {}));
+    },
     startScan() {
-      const fakePort = {
-        postMessage() {},
-        onDisconnect: { addListener() {} },
-      };
-      scanWorldMap(fakePort);
+      doScan(() => {}).then((result) => {
+        if (result) chrome.storage.local.set({ scanResult: result });
+      });
     },
     get scanning() { return scanning; },
+    cancel() { cancelRequested = true; },
   };
 })();

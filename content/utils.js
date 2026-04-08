@@ -114,5 +114,12 @@ globalThis.IkUtils = (() => {
     });
   }
 
-  return { ensureBridge, getWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems };
+  // URL-based world name (e.g. "s55-cz") — stable, works in content scripts and popup
+  function getUrlWorldName() {
+    const host = location.hostname;
+    const idx = host.indexOf(".ikariam");
+    return idx > 0 ? host.substring(0, idx) : null;
+  }
+
+  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems };
 })();

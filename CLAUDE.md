@@ -97,6 +97,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - `avatarScores` values are 100x the game's displayed scores — divide by 100
 - `viewAble: 2` does NOT mean own city — use `avatarId` from page script to detect own cities
 - Service worker can die; background.js pings offscreen doc to check if alive before routing
+- `console.log()` does nothing in the game's browser console — the game overrides `console` with no-op functions (line ~1369 in page HTML). Use `alert()` for quick checks, or save full responses to a file via Blob download for inspection
 
 ## Git Conventions
 

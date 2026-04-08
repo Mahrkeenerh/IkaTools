@@ -376,6 +376,7 @@
   function tryPirate() {
     try {
       if (raidInProgress) { reportStats(); return; }
+      if (scanActive) { reportStats(); return; }
       if (!enabled || !pirateCityId) {
         if (enabled && !pirateCityId) reportStats();
         return;
@@ -605,9 +606,11 @@
   // --- Storage ---
   const worldName = IkUtils.getWorldName() || "unknown";
   const KEY_PIRATE_CITY = "pirateCityId_" + worldName;
+  let scanActive = false;
 
   const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", KEY_PIRATE_CITY, "pirateCityId",
-    "pirateIdleTimeout", "pirateState", ...Object.values(CFG_KEYS).map((k) => k.storage)];
+    "pirateIdleTimeout", "pirateState", "scanInProgress",
+    ...Object.values(CFG_KEYS).map((k) => k.storage)];
 
   chrome.storage.local.get(allStorageKeys, (data) => {
     enabled = !!data.pirateEnabled;
@@ -628,6 +631,9 @@
     }
     if (Object.keys(toSave).length > 0) chrome.storage.local.set(toSave);
 
+    // Only the DOM map-jumping phase blocks pirates — background fetches don't
+    // need exclusive control of the page.
+    scanActive = !!data.scanInProgress;
     restoreState(data.pirateState);
     if (enabled && pirateCityId) start();
     injectPirateToggle();
@@ -663,7 +669,7 @@
     }
   });
 
-  // --- Watch storage changes (for minimap pirate toggle) ---
+  // --- Watch storage changes (for minimap pirate toggle + scan pausing) ---
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.pirateEnabled) {
       enabled = !!changes.pirateEnabled.newValue;
@@ -671,6 +677,9 @@
     }
     if (changes.pirateConvertEnabled) {
       convertEnabled = !!changes.pirateConvertEnabled.newValue;
+    }
+    if (changes.scanInProgress) {
+      scanActive = !!changes.scanInProgress.newValue;
     }
   });
 
