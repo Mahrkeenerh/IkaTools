@@ -490,12 +490,12 @@
         ${prodCell(om.wood)}
         ${workerCell(w.luxury.assigned, w.luxury.max, om.luxury)}
         ${prodCell(om.luxury)}
-        <td class="right">${w.scientists.assigned} / ${w.scientists.max}</td>
-        <td class="right">${w.priests.assigned} / ${w.priests.max}</td>
+        <td class="right"${w.scientists.assigned < w.scientists.max ? ' style="color:#e06060;"' : ""}>${w.scientists.assigned} / ${w.scientists.max}</td>
+        <td class="right"${w.priests.assigned < w.priests.max ? ' style="color:#e06060;"' : ""}>${w.priests.assigned} / ${w.priests.max}</td>
         <td class="right">${fmt(city.citizens)}</td>
         <td class="right">${city.occupiedSpace != null ? city.occupiedSpace : "—"} / ${city.maxInhabitants != null ? city.maxInhabitants : "—"}</td>
-        <td class="right">${city.growthPerHour != null ? fmtSignedFloat(city.growthPerHour) : "—"}</td>
-        <td class="right">${city.happiness != null ? fmt(city.happiness) : "—"}</td>
+        <td class="right"${city.growthPerHour != null && city.growthPerHour < 0 ? ' style="color:#e06060;"' : ""}>${city.growthPerHour != null ? fmtSignedFloat(city.growthPerHour) : "—"}</td>
+        <td class="right"${city.happiness != null && city.happiness < 0 ? ' style="color:#e06060;"' : ""}>${city.happiness != null ? fmt(city.happiness) : "—"}</td>
         <td class="right">${city.cityNetGold != null ? fmtSigned(city.cityNetGold) : "—"}</td>
       `;
       tbody.appendChild(tr);
