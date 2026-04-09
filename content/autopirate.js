@@ -44,7 +44,6 @@
   let nextActionTime = 0;
   let lastNavigateTime = 0;
   let checkTimer = null;
-  let windowFocused = document.hasFocus();
   let lastPopupHeartbeat = 0;
 
   // --- Humanized timing state ---
@@ -143,7 +142,7 @@
 
   // --- Idle detection ---
   function onActivity() {
-    if (!windowFocused || document.hidden) return;
+    if (!document.hasFocus() || document.hidden) return;
     lastActivity = Date.now();
     if (inControl) {
       handBack();
@@ -156,9 +155,7 @@
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden) onActivity();
   });
-  window.addEventListener("blur", () => { windowFocused = false; });
   window.addEventListener("focus", () => {
-    windowFocused = true;
     onActivity();
   });
 
@@ -172,7 +169,10 @@
 
   function isIdle() {
     if (Date.now() - lastPopupHeartbeat < 10000) return false;
-    return (document.hidden || !windowFocused) && Date.now() - lastActivity > idleTimeout;
+    // document.hasFocus() is true when any element in the page has focus,
+    // including iframes (e.g. the in-game shop) — so clicking an iframe
+    // won't falsely trigger idle detection like the old windowFocused flag did.
+    return (document.hidden || !document.hasFocus()) && Date.now() - lastActivity > idleTimeout;
   }
 
   function isInActiveHours() {
