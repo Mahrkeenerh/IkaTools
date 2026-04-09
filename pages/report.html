@@ -263,11 +263,11 @@ td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-le
   align-items: start;
 }
 .res-side-cols > div { min-width: 0; }
+@media (max-width: 1600px) {
+  .res-side-cols { grid-template-columns: 1fr; }
+}
 @media (max-width: 1200px) {
   .res-row-sides { grid-template-columns: 1fr; }
-}
-@media (max-width: 800px) {
-  .res-side-cols { grid-template-columns: 1fr; }
 }
 
 /* Trade History — Controls */

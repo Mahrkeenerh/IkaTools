@@ -22,11 +22,11 @@
   const PAD = { top: 20, right: 16, bottom: 40, left: 54 };
 
   // Set up canvas for high-DPI rendering
+  // Does not set inline style.width — CSS width:100% handles sizing
   function setupCanvas(canvas, width, height) {
     const dpr = window.devicePixelRatio || 1;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
-    canvas.style.width = width + "px";
     canvas.style.height = height + "px";
     const ctx = canvas.getContext("2d");
     ctx.scale(dpr, dpr);
