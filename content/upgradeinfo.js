@@ -8,6 +8,12 @@
     sulfur: "js_GlobalMenu_sulfur",
   };
 
+  // Workshop uses "glass" for crystal, "gold" for gold — map to their total elements
+  const WORKSHOP_RESOURCE_IDS = {
+    gold: "js_GlobalMenu_gold_Total",
+    glass: "js_GlobalMenu_crystal",
+  };
+
   const parseNum = (text) => IkUtils.parseNum(text);
 
   function formatNum(n) {
@@ -19,26 +25,71 @@
     return el ? parseNum(el.textContent) : 0;
   }
 
+  function getCurrentWorkshopResource(type) {
+    const el = document.getElementById(WORKSHOP_RESOURCE_IDS[type]);
+    return el ? parseNum(el.textContent) : 0;
+  }
+
+  function appendBuildingMissing(li, missing) {
+    li.style.height = "auto";
+    li.style.paddingBottom = "0";
+    li.style.marginBottom = "0";
+    const span = document.createElement("span");
+    span.className = "ik-missing";
+    span.style.cssText = "display:block; font-size:0.85em; opacity:0.8; line-height:1.2;";
+    span.textContent = `(-${formatNum(missing)})`;
+    li.appendChild(span);
+  }
+
+  function appendWorkshopMissing(li, missing) {
+    li.style.position = "relative";
+    const span = document.createElement("span");
+    span.className = "ik-missing";
+    span.style.cssText = "position:absolute; left:36px; top:100%; font-weight:bold; color:#aa0303; line-height:1.2;";
+    span.textContent = `(-${formatNum(missing)})`;
+    li.appendChild(span);
+    // Dim the card if you can't afford the upgrade
+    const box = li.closest(".highlightbox");
+    if (box && !box.dataset.ikDimmed) {
+      box.dataset.ikDimmed = "1";
+      box.style.opacity = "0.6";
+    }
+    // Expand both highlightbox cards in the row to keep them aligned
+    const row = li.closest(".units");
+    if (row && !row.dataset.ikExpanded) {
+      row.dataset.ikExpanded = "1";
+      for (const b of row.querySelectorAll(".highlightbox")) {
+        b.style.paddingBottom = (parseFloat(getComputedStyle(b).paddingBottom) + 16) + "px";
+      }
+    }
+  }
+
   function injectMissing() {
     const lists = document.querySelectorAll("ul.resources");
     for (const ul of lists) {
       for (const li of ul.children) {
-        if (!li.classList.contains("red") || !li.classList.contains("bold")) continue;
         if (li.querySelector(".ik-missing")) continue;
-        const type = Object.keys(RESOURCE_IDS).find((t) => li.classList.contains(t));
-        if (!type) continue;
+
+        // Building upgrades: red+bold items with resource class
+        if (li.classList.contains("red") && li.classList.contains("bold")) {
+          const type = Object.keys(RESOURCE_IDS).find((t) => li.classList.contains(t));
+          if (!type) continue;
+          const cost = parseNum(li.textContent);
+          const current = getCurrentResource(type);
+          const missing = cost - current;
+          if (missing <= 0) continue;
+          appendBuildingMissing(li, missing);
+          continue;
+        }
+
+        // Workshop upgrades: gold/glass items (no red/bold classes)
+        const wsType = Object.keys(WORKSHOP_RESOURCE_IDS).find((t) => li.classList.contains(t));
+        if (!wsType) continue;
         const cost = parseNum(li.textContent);
-        const current = getCurrentResource(type);
+        const current = getCurrentWorkshopResource(wsType);
         const missing = cost - current;
         if (missing <= 0) continue;
-        li.style.height = "auto";
-        li.style.paddingBottom = "0";
-        li.style.marginBottom = "0";
-        const span = document.createElement("span");
-        span.className = "ik-missing";
-        span.style.cssText = "display:block; font-size:0.85em; opacity:0.8; line-height:1.2;";
-        span.textContent = `(-${formatNum(missing)})`;
-        li.appendChild(span);
+        appendWorkshopMissing(li, missing);
       }
     }
   }
