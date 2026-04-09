@@ -1480,7 +1480,7 @@
         if (side === "ask") {
           // "Sell to" table — you're selling, high price = good
           if (ratio > 1.15) badges += '<span class="offer-badge badge-cheap">GOOD</span>';
-          else if (ratio < 0.85) badges += '<span class="offer-badge badge-expensive">LOW</span>';
+          else if (ratio < 0.85) badges += '<span class="offer-badge badge-expensive">LOWBALL</span>';
         } else {
           // "Buy from" table — you're buying, low price = good
           if (ratio < 0.85) badges += '<span class="offer-badge badge-cheap">CHEAP</span>';
