@@ -121,14 +121,16 @@
   function applyDimming() {
     if (!isIslandView()) return;
 
-    const hasFilters = filterConfig && filterConfig.enabled &&
+    const enabled = filterConfig && filterConfig.enabled;
+    const hasFilters = enabled &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    const hasCustom = globalThis.MapFilter && (
-      (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
-      (MapFilter.hasCustomResults && MapFilter.hasCustomResults())
-    );
+    const hasDevTools = globalThis.MapFilter &&
+      MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    // Textarea custom JS respects the panel's enabled toggle
+    const hasTextarea = enabled && globalThis.MapFilter &&
+      MapFilter.hasCustomResults && MapFilter.hasCustomResults();
 
-    if (!hasFilters && !hasCustom) {
+    if (!hasFilters && !hasDevTools && !hasTextarea) {
       // Clear all opacity — quick path, no need to build virtual cities
       document.querySelectorAll('[id^="cityLocation"]').forEach((el) => {
         el.style.opacity = "";

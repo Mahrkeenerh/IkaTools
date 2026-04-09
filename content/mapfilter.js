@@ -94,17 +94,19 @@ globalThis.MapFilter = (() => {
   }
 
   function islandMatches(isl, config) {
-    // Custom power-user predicate ANDs with everything else.
+    // DevTools power-user predicate — always active when set (independent of
+    // the filter panel's enabled toggle).
     if (customPredicate) {
       try { if (!customPredicate(isl)) return false; }
       catch (e) { /* swallow — bad predicate shouldn't kill rendering */ }
     }
+    // Filter panel disabled → skip both chip filters and Custom JS textarea.
+    if (!config || !config.enabled) return true;
     // Pre-computed result map (from filter panel's Custom JS textarea)
     if (customResultMap && customResultKeyFn) {
       const key = customResultKeyFn(isl);
       if (!customResultMap.get(key)) return false;
     }
-    if (!config || !config.enabled) return true;
     if (!config.groups || config.groups.length === 0) return true;
     // Only consider groups that have filters
     const active = config.groups.filter((g) => g.filters && g.filters.length > 0);

@@ -762,10 +762,7 @@
       await loadAllianceIndex();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
-      const hasFilters = filterConfig && filterConfig.enabled &&
-        filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-      const hasCustomResults = MapFilter.hasCustomResults && MapFilter.hasCustomResults();
-      if (hasFilters || hasCustomResults || dimEmpty) startDimming();
+      if (hasAnyActiveFilter() || dimEmpty) startDimming();
       readAndMergeTiles();
       showMapUI();
       drawMinimap();
@@ -847,14 +844,7 @@
   }
 
   function applyDimming() {
-    const hasFilters = filterConfig && filterConfig.enabled &&
-      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    const hasCustom = globalThis.MapFilter && (
-      (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
-      (MapFilter.hasCustomResults && MapFilter.hasCustomResults())
-    );
-
-    if (!hasFilters && !hasCustom && !dimEmpty) return;
+    if (!hasAnyActiveFilter() && !dimEmpty) return;
 
     // Ensure the coord lookup exists — it's built lazily because currentMapData
     // may arrive after the first dimming pass.
@@ -924,25 +914,59 @@
     });
   }
 
-  // Listen for filter changes from filter panel
+  // --- Shared helpers for filter/custom dimming decisions ---
   let layerBeforeFilter = null;
-  window.addEventListener("ik-filter-change", (e) => {
-    filterConfig = e.detail;
-    cachedBaseMap = null;
-    const hasFilters = filterConfig && filterConfig.enabled &&
+
+  // DevTools IkFilter.set() — always active, independent of the panel toggle.
+  function hasDevToolsPredicate() {
+    return globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+  }
+
+  // Filter panel textarea custom JS — only counts when filters are enabled.
+  function hasTextareaResults() {
+    return globalThis.MapFilter && MapFilter.hasCustomResults && MapFilter.hasCustomResults();
+  }
+
+  function filtersEnabled() {
+    return filterConfig && filterConfig.enabled;
+  }
+
+  function hasActiveChipFilters() {
+    return filtersEnabled() &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    if (hasFilters || dimEmpty) startDimming();
-    else stopDimming();
-    // Auto-switch to/from filter layer
-    if (hasFilters && currentLayer !== "filter") {
+  }
+
+  // Returns true when any filter-based dimming should be active (respects the
+  // enabled toggle for panel features, but DevTools predicate is independent).
+  function hasAnyActiveFilter() {
+    if (hasDevToolsPredicate()) return true;
+    if (!filtersEnabled()) return false;
+    return hasActiveChipFilters() || hasTextareaResults();
+  }
+
+  function syncDimmingAndLayer() {
+    const hasFilter = hasAnyActiveFilter();
+    if (hasFilter || dimEmpty) {
+      startDimming();
+    } else {
+      stopDimming();
+    }
+    if (hasFilter && currentLayer !== "filter") {
       layerBeforeFilter = currentLayer;
       currentLayer = "filter";
       updateLayerBar();
-    } else if (!hasFilters && currentLayer === "filter") {
+    } else if (!hasFilter && currentLayer === "filter") {
       currentLayer = layerBeforeFilter || "population";
       layerBeforeFilter = null;
       updateLayerBar();
     }
+  }
+
+  // Listen for filter changes from filter panel
+  window.addEventListener("ik-filter-change", (e) => {
+    filterConfig = e.detail;
+    cachedBaseMap = null;
+    syncDimmingAndLayer();
     drawMinimap();
   });
 
@@ -952,15 +976,7 @@
     await refreshCustomResults();
     cachedBaseMap = null;
     islandsByCoord = null;
-    const hasResults = MapFilter.hasCustomResults && MapFilter.hasCustomResults();
-    if (hasResults) {
-      startDimming();
-      if (currentLayer !== "filter") {
-        layerBeforeFilter = currentLayer;
-        currentLayer = "filter";
-        updateLayerBar();
-      }
-    }
+    syncDimmingAndLayer();
     drawMinimap();
   });
 
@@ -968,24 +984,7 @@
   // and force the filter layer on if a predicate is now active.
   window.addEventListener("ik-custom-predicate-change", () => {
     cachedBaseMap = null;
-    const hasCustom = MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
-    if (hasCustom) {
-      startDimming();
-      if (currentLayer !== "filter") {
-        layerBeforeFilter = currentLayer;
-        currentLayer = "filter";
-        updateLayerBar();
-      }
-    } else {
-      const hasFilters = filterConfig && filterConfig.enabled &&
-        filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-      if (!hasFilters && currentLayer === "filter") {
-        currentLayer = layerBeforeFilter || "population";
-        layerBeforeFilter = null;
-        updateLayerBar();
-      }
-      if (!hasFilters && !dimEmpty) stopDimming();
-    }
+    syncDimmingAndLayer();
     drawMinimap();
   });
 
@@ -1091,9 +1090,7 @@
     if (msg.type === "hide-zeros-toggle") {
       dimEmpty = msg.enabled;
       cachedBaseMap = null;
-      const hasFilters = filterConfig && filterConfig.enabled &&
-        filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-      if (hasFilters || dimEmpty) startDimming(); else stopDimming();
+      if (hasAnyActiveFilter() || dimEmpty) startDimming(); else stopDimming();
       if (container && container.style.display !== "none") drawMinimap();
     }
     if (msg.type === "vp-trim") {
@@ -1121,8 +1118,6 @@
   chrome.storage.local.get(["hideZeroCities", "mapFilters"], (data) => {
     dimEmpty = !!data.hideZeroCities;
     if (!filterConfig && data.mapFilters) filterConfig = data.mapFilters;
-    const hasFilters = filterConfig && filterConfig.enabled &&
-      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    if ((hasFilters || dimEmpty) && isWorldMapView()) startDimming();
+    if ((hasActiveChipFilters() || hasAnyCustom() || dimEmpty) && isWorldMapView()) startDimming();
   });
 })();
