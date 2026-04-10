@@ -448,8 +448,10 @@
     }
 
     // Build table
+    const wrap = document.createElement("div");
+    wrap.className = "table-wrap";
     const table = document.createElement("table");
-    table.className = "buildings-table";
+    table.className = "report-table";
 
     // Header: Building | City1 | City2 | ... | Avg
     const thead = document.createElement("thead");
@@ -457,9 +459,9 @@
     headerTr.innerHTML = "<th>Building</th>";
     for (const city of ownCities) {
       const cap = city.isCapital ? ' <span class="capital-badge">Cap</span>' : "";
-      headerTr.innerHTML += `<th>${city.name}${cap}</th>`;
+      headerTr.innerHTML += `<th class="right">${city.name}${cap}</th>`;
     }
-    headerTr.innerHTML += "<th>Avg</th>";
+    headerTr.innerHTML += '<th class="right">Avg</th>';
     thead.appendChild(headerTr);
     table.appendChild(thead);
 
@@ -521,7 +523,8 @@
     }
 
     table.appendChild(tbody);
-    container.appendChild(table);
+    wrap.appendChild(table);
+    container.appendChild(wrap);
   }
 
   // --- Workers tab ---
