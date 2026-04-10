@@ -400,53 +400,111 @@
   function renderBuildingsOverview(report) {
     const container = $("buildings-overview");
 
-    for (const city of report.cities) {
-      const cap = city.isCapital ? ' <span class="capital-badge">Cap</span>' : "";
-      const header = document.createElement("div");
-      header.className = "city-header";
-      header.innerHTML = `${city.name}${cap} <span class="coords">${city.coords}</span> <span class="island-name">${city.islandName}</span>`;
-      container.appendChild(header);
+    // Filter out allied (deployed) cities
+    const ownCities = report.cities.filter((c) => c.relationship !== "deployedCities");
+    if (ownCities.length === 0) return;
 
-      const grid = document.createElement("div");
-      grid.className = "building-grid";
-
-      // Group buildings by buildingId, combining duplicates
-      const shown = new Set();
-      const allBids = [...OVERVIEW_BUILDING_IDS];
-      // Add any building IDs not in the key list
+    // Collect all building IDs that exist across own cities, ordered by OVERVIEW_BUILDING_IDS first
+    const allBids = [...OVERVIEW_BUILDING_IDS];
+    for (const city of ownCities) {
       for (const b of city.buildings) {
         if (!allBids.includes(b.buildingId)) allBids.push(b.buildingId);
       }
+    }
 
-      for (const bid of allBids) {
-        const matches = city.buildings.filter((b) => b.buildingId === bid);
-        if (matches.length === 0) continue;
-
-        matches.forEach((m) => shown.add(m.position));
-        const name = matches[0].name;
-        const chip = document.createElement("div");
-        chip.className = "building-chip";
-
-        if (matches.length === 1) {
-          const b = matches[0];
-          const maxTag = b.isMaxLevel ? ' <span style="color:#6fce8c;font-size:9px">MAX</span>' : "";
-          chip.innerHTML = `<span class="chip-name">${name}</span><span class="chip-level">Lv ${b.level}${maxTag}</span>`;
-        } else {
-          // Group by level: "3x Lv5, 2x Lv6"
-          const byLevel = {};
-          for (const b of matches) {
-            byLevel[b.level] = (byLevel[b.level] || 0) + 1;
-          }
-          const parts = Object.entries(byLevel)
-            .sort((a, b) => parseInt(a[0]) - parseInt(b[0]))
-            .map(([lv, count]) => count + "x Lv" + lv);
-          chip.innerHTML = `<span class="chip-name">${name}</span><span class="chip-level">${parts.join(", ")}</span>`;
+    // Build a map: buildingId → { name, cities: Map<cityIdx, level[]> }
+    // Only include buildings that at least one city has
+    const buildingRows = [];
+    for (const bid of allBids) {
+      let name = null;
+      const cityLevels = new Map(); // cityIdx → { level, isMaxLevel }[]
+      for (let ci = 0; ci < ownCities.length; ci++) {
+        const matches = ownCities[ci].buildings.filter((b) => b.buildingId === bid);
+        if (matches.length > 0) {
+          if (!name) name = matches[0].name;
+          cityLevels.set(ci, matches.map((m) => ({ level: m.level, isMaxLevel: m.isMaxLevel })));
         }
-        grid.appendChild(chip);
+      }
+      if (cityLevels.size > 0) {
+        buildingRows.push({ bid, name, cityLevels });
+      }
+    }
+
+    // Build table
+    const table = document.createElement("table");
+    table.className = "buildings-table";
+
+    // Header: Building | City1 | City2 | ... | Avg
+    const thead = document.createElement("thead");
+    const headerTr = document.createElement("tr");
+    headerTr.innerHTML = "<th>Building</th>";
+    for (const city of ownCities) {
+      const cap = city.isCapital ? ' <span class="capital-badge">Cap</span>' : "";
+      headerTr.innerHTML += `<th>${city.name}${cap}</th>`;
+    }
+    headerTr.innerHTML += "<th>Avg</th>";
+    thead.appendChild(headerTr);
+    table.appendChild(thead);
+
+    // Body: one row per building
+    const tbody = document.createElement("tbody");
+    for (const row of buildingRows) {
+      const tr = document.createElement("tr");
+
+      // Per-city representative value: for single-instance buildings use the level,
+      // for multi-instance (e.g. warehouses) use the sum of levels
+      const cityValues = []; // one value per city that has the building
+      const cityValueMap = new Map(); // cityIdx → value
+      for (const [ci, entries] of row.cityLevels) {
+        const val = entries.length === 1 ? entries[0].level : entries.reduce((s, e) => s + e.level, 0);
+        cityValues.push(val);
+        cityValueMap.set(ci, val);
+      }
+      const avg = cityValues.reduce((a, b) => a + b, 0) / cityValues.length;
+      const maxVal = Math.max(...cityValues);
+
+      // Building name cell
+      tr.innerHTML = `<td class="building-name-cell">${row.name}</td>`;
+
+      // City cells
+      for (let ci = 0; ci < ownCities.length; ci++) {
+        const entries = row.cityLevels.get(ci);
+        if (!entries) {
+          tr.innerHTML += `<td class="right building-empty">—</td>`;
+        } else {
+          const td = document.createElement("td");
+          td.className = "right";
+          const parts = [];
+          for (const e of entries) {
+            const maxTag = e.isMaxLevel ? ' <span class="bld-max">MAX</span>' : "";
+            parts.push(`${e.level}${maxTag}`);
+          }
+          td.innerHTML = parts.join(", ");
+
+          // Color: green = best, red gradient = below average
+          const val = cityValueMap.get(ci);
+          if (cityValues.length > 1 && maxVal > 0) {
+            if (val >= maxVal) {
+              td.style.color = "#6fce8c";
+            } else if (val < avg) {
+              const ratio = avg > 0 ? val / avg : 1;
+              const r = Math.round(224 + (255 - 224) * (1 - ratio));
+              const g = Math.round(96 * ratio);
+              const b = Math.round(96 * ratio);
+              td.style.color = `rgb(${r},${g},${b})`;
+            }
+          }
+          tr.appendChild(td);
+        }
       }
 
-      container.appendChild(grid);
+      // Avg cell — average of per-city representative values
+      tr.innerHTML += `<td class="right building-avg">${avg % 1 === 0 ? avg : avg.toFixed(1)}</td>`;
+      tbody.appendChild(tr);
     }
+
+    table.appendChild(tbody);
+    container.appendChild(table);
   }
 
   // --- Workers tab ---

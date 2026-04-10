@@ -198,6 +198,9 @@ function bgBuildQueryIndex(writes, opts) {
     let maxArmyPlayerId = null;
     let maxArmyPlayerName = null;
 
+    // Per-player summary: deduplicated by ownerId, max scores across their cities on this island
+    const playerMap = new Map(); // ownerId -> aggregated player record
+
     for (const c of isl.cities) {
       const tag = c.allyTag || "";
       if (tag) {
@@ -209,11 +212,39 @@ function bgBuildQueryIndex(writes, opts) {
         ownerIds.add(oid);
         if (c.ownerName) ownerNames.push(String(c.ownerName).toLowerCase());
       }
-      const army = (c.scores && c.scores.army) || 0;
+      const scores = c.scores || {};
+      const army = scores.army || 0;
       if (army > maxArmy) {
         maxArmy = army;
         maxArmyPlayerId = oid || null;
         maxArmyPlayerName = c.ownerName || null;
+      }
+      if (oid) {
+        const prev = playerMap.get(oid);
+        if (prev) {
+          prev.cities++;
+          prev.maxLevel = Math.max(prev.maxLevel, c.level || 0);
+          prev.place = Math.max(prev.place, scores.place || 0);
+          prev.building = Math.max(prev.building, scores.building || 0);
+          prev.research = Math.max(prev.research, scores.research || 0);
+          prev.army = Math.max(prev.army, army);
+          prev.trader = Math.max(prev.trader, scores.trader || 0);
+        } else {
+          playerMap.set(oid, {
+            id: oid,
+            name: c.ownerName || "",
+            ally: tag,
+            allyId: c.allyId || "0",
+            state: c.state || "",
+            cities: 1,
+            maxLevel: c.level || 0,
+            place: scores.place || 0,
+            building: scores.building || 0,
+            research: scores.research || 0,
+            army,
+            trader: scores.trader || 0,
+          });
+        }
       }
     }
 
@@ -226,6 +257,7 @@ function bgBuildQueryIndex(writes, opts) {
       ownerIds: [...ownerIds],
       ownerNamesText: ownerNames.join("\n"),
       cityCount: isl.cities.length,
+      players: [...playerMap.values()],
       maxArmy,
       maxArmyPlayerId,
       maxArmyPlayerName,

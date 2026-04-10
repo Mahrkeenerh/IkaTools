@@ -172,20 +172,20 @@ body {
   font-size: 12px; color: var(--text-dim); margin-bottom: 12px;
 }
 
-.building-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-  gap: 6px; margin-bottom: 8px;
+.buildings-table {
+  width: 100%; border-collapse: collapse; font-size: 14px; margin-bottom: 8px;
 }
-.building-chip {
-  display: flex; align-items: center; justify-content: space-between;
-  padding: 4px 8px; background: var(--bg-subtle); border-radius: 4px;
-  border: 1px solid var(--border); font-size: 12px;
+.buildings-table th, .buildings-table td {
+  padding: 6px 10px; border: 1px solid var(--border); white-space: nowrap;
 }
-.chip-name { color: #a0aac0; }
-.chip-level { font-weight: 600; color: var(--text); }
-.chip-dim .chip-name { color: var(--text-dimmest); }
-.chip-dim .chip-level { color: #334; }
+.buildings-table th {
+  background: var(--bg-subtle); font-weight: 600; text-align: center; position: sticky; top: 0;
+}
+.buildings-table th:first-child { text-align: left; }
+.building-name-cell { color: #a0aac0; }
+.building-empty { color: var(--text-dimmest); }
+.building-avg { color: #a0aac0; font-style: italic; }
+.bld-max { color: #6fce8c; font-size: 9px; }
 
 .city-header {
   margin: 16px 0 6px; font-weight: 600; color: var(--text-heading);
@@ -438,7 +438,6 @@ td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-le
   <!-- Buildings -->
   <div id="panel-buildings" class="report-panel">
     <div class="panel-title">Buildings — All Cities</div>
-    <div class="section-subtitle">Complete building overview per city.</div>
     <div id="buildings-overview"></div>
   </div>
 

@@ -26,13 +26,14 @@ globalThis.MapFilter = (() => {
     { type: "flag", value: "war", label: "War", color: "#FF2020", group: "Flags" },
     { type: "flag", value: "piracy", label: "Piracy", color: "#FF4444", group: "Flags" },
     { type: "flag", value: "helios", label: "Helios", color: "#FFD700", group: "Flags" },
-    // Population / free space
-    { type: "pop", value: 15, label: "Pop < 15", color: "#5ab87a", group: "Population" },
-    { type: "pop", value: 16, label: "Pop < 16", color: "#7acc94", group: "Population" },
+    // Occupied slots
+    { type: "pop", value: 15, label: "Slots < 15", color: "#5ab87a", group: "Slots" },
+    { type: "pop", value: 16, label: "Slots < 16", color: "#7acc94", group: "Slots" },
     // Rich-data predicates — require a recent full scan (queryIndex_{world}).
     // `parameterized` filters render as rule rows, not chips, in the panel.
     // `requiresRich` flags filters that should be hidden when no query index exists.
     { type: "ctAvailable", value: true, label: "CT available", color: "#00FFAA", group: "Cultural Treaty", requiresRich: true },
+    { type: "hasInactive", value: true, label: "Has inactive", color: "#999966", group: "Players", requiresRich: true },
     { type: "allyTag", value: "", label: "Alliance tag", color: "#FFAA00", group: "Players", requiresRich: true, parameterized: true, paramKind: "allyTag", paramPlaceholder: "tag" },
     { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
     { type: "armyMin", value: null, label: "Player army ≥", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
@@ -66,6 +67,7 @@ globalThis.MapFilter = (() => {
         return !!isl[filter.value];
       // Rich predicates — read precomputed underscore fields stamped by enrichment
       case "ctAvailable": return !!isl._ctAvailable;
+      case "hasInactive": return isl._players && isl._players.some(p => p.state === "inactive");
       case "allyTag": {
         if (!filter.value || !isl._allyTags) return false;
         return isl._allyTags.has(String(filter.value));
@@ -109,7 +111,7 @@ globalThis.MapFilter = (() => {
     }
     if (!config.groups || config.groups.length === 0) return true;
     // Only consider groups that have filters
-    const active = config.groups.filter((g) => g.filters && g.filters.length > 0);
+    const active = config.groups.filter((g) => g.enabled !== false && g.filters && g.filters.length > 0);
     if (active.length === 0) return true;
     if (config.globalOp === "and") {
       return active.every((g) => matchGroup(isl, g));
@@ -137,10 +139,19 @@ globalThis.MapFilter = (() => {
 
   function hasCustomResults() { return customResultMap != null; }
 
+  function getCustomResultCoords() {
+    if (!customResultMap) return [];
+    const coords = [];
+    for (const [key, val] of customResultMap) {
+      if (val) coords.push(key);
+    }
+    return coords;
+  }
+
   return {
     islandMatches, matchGroup, matchFilter, FILTER_OPTIONS,
     setCustomPredicate, getCustomPredicate,
-    setCustomResults, hasCustomResults,
+    setCustomResults, hasCustomResults, getCustomResultCoords,
   };
 })();
 
@@ -153,12 +164,14 @@ globalThis.MapFilter = (() => {
 //   _allyTags        Set<string>     (alliance tags on the island)
 //   _ownerNamesText  string          ("\n"-joined lowercased owner names)
 //   _maxArmy         number          (max army score across cities)
+//   _players         Array<{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, trader}>
 //   _ctAvailable     boolean
 //   _ctChecked       boolean
 //
 // Examples:
 //   IkFilter.set(i => i._allyTags && i._allyTags.has("-DR-"))
 //   IkFilter.set(i => i._maxArmy > 50000 && !i._allyTags.has("-DR-"))
+//   IkFilter.set(i => i._players.some(p => p.ally === "BO-M" && p.army >= 30000))
 //   IkFilter.set(i => i._ownerNamesText.includes("bob"))
 //   IkFilter.clear()
 //

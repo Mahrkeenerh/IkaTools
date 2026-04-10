@@ -84,7 +84,7 @@ window.addEventListener("ik-convert-crew", () => {
         const src = /\breturn\b/.test(req.code) ? req.code : "return (" + req.code + ");";
         fn = new Function("i", src);
         // Sanity probe on an empty island — catches most parse/runtime errors early
-        fn({ x: 0, y: 0, cities: 0, _allyTags: new Set(), _ownerNamesText: "", _maxArmy: 0, _ctAvailable: false, _ctChecked: false });
+        fn({ x: 0, y: 0, cities: 0, _allyTags: new Set(), _ownerNamesText: "", _maxArmy: 0, _players: [], _ctAvailable: false, _ctChecked: false });
         resp.ok = true;
       } else if (req.cmd === "clear") {
         fn = null;

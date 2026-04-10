@@ -147,9 +147,9 @@
         if (m2) ownAvatarId = m2[1];
       });
 
-      // Hand off phases 2 + 3 to the background service worker — survives page navigation
+      // Hand off phases 2 (+ optionally 3) to the background service worker — survives page navigation
       const opts = {
-        mode: "full",
+        mode,
         originUrl: location.origin + location.pathname,
         worldName,
         idMapping,

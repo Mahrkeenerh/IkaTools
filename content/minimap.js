@@ -39,6 +39,7 @@
   let cachedAllyVersion = -1;
   let filterConfig = null;
   let cachedFilterJSON = null;
+  let dataLoading = false; // prevents stale cache during async load
 
   function getViewportCorners() {
     const worldview = document.getElementById("worldview");
@@ -535,6 +536,7 @@
         isl._allyTags = null;
         isl._ownerNamesText = null;
         isl._maxArmy = 0;
+        isl._players = [];
         isl._ctAvailable = false;
         isl._ctChecked = false;
       }
@@ -547,6 +549,7 @@
         isl._allyTags = null;
         isl._ownerNamesText = null;
         isl._maxArmy = 0;
+        isl._players = [];
         isl._ctAvailable = false;
         isl._ctChecked = false;
         continue;
@@ -554,6 +557,7 @@
       isl._allyTags = new Set(entry.allyTags || []);
       isl._ownerNamesText = entry.ownerNamesText || "";
       isl._maxArmy = entry.maxArmy || 0;
+      isl._players = entry.players || [];
       isl._ctAvailable = !!entry.ctAvailable;
       isl._ctChecked = !!entry.ctChecked;
     }
@@ -631,7 +635,7 @@
   }
 
   function drawMinimap() {
-    if (!currentMapData || !mapCtx || !globalThis.MapRender) return;
+    if (dataLoading || !currentMapData || !mapCtx || !globalThis.MapRender) return;
     const islands = currentMapData.islands;
     if (!islands || islands.length === 0) return;
 
@@ -757,11 +761,14 @@
     container.style.display = "";
 
     if (data[key]) {
-      // Has map data — show map
+      // Has map data — show map. Set dataLoading to prevent the scroll watcher
+      // from caching a stale render before alliance data is ready.
+      dataLoading = true;
       currentMapData = data[key];
       await loadAllianceIndex();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
+      dataLoading = false;
       if (hasAnyActiveFilter() || dimEmpty) startDimming();
       readAndMergeTiles();
       showMapUI();
@@ -855,7 +862,8 @@
       const m = title.match(/\[(\d+):(\d+)\]$/);
       if (!m) { tile.style.opacity = ""; return; }
 
-      if ((hasFilters || hasCustom) && globalThis.MapFilter) {
+      const activeFilter = hasAnyActiveFilter();
+      if (activeFilter && globalThis.MapFilter) {
         const coord = m[1] + ":" + m[2];
         // Prefer the enriched stored island — it has _allyTags, _maxArmy, etc.,
         // AND the custom-predicate result lookup key (x:y) works naturally here
@@ -1024,7 +1032,9 @@
 
           currentMapData = existing[mapKey] || mapData;
           cachedBaseMap = null;
+          dataLoading = true;
           loadAllianceIndex().then(() => {
+            dataLoading = false;
             showMapUI();
             drawMinimap();
           });
@@ -1118,6 +1128,6 @@
   chrome.storage.local.get(["hideZeroCities", "mapFilters"], (data) => {
     dimEmpty = !!data.hideZeroCities;
     if (!filterConfig && data.mapFilters) filterConfig = data.mapFilters;
-    if ((hasActiveChipFilters() || hasAnyCustom() || dimEmpty) && isWorldMapView()) startDimming();
+    if ((hasAnyActiveFilter() || dimEmpty) && isWorldMapView()) startDimming();
   });
 })();

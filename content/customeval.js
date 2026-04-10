@@ -57,6 +57,7 @@
       _allyTags: i._allyTags ? [...i._allyTags] : [],
       _ownerNamesText: i._ownerNamesText || "",
       _maxArmy: i._maxArmy || 0,
+      _players: i._players || [],
       _ctAvailable: !!i._ctAvailable,
       _ctChecked: !!i._ctChecked,
     };

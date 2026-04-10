@@ -278,6 +278,32 @@
     const header = document.createElement("div");
     applyStyle(header, { display: "flex", alignItems: "center", gap: "6px", marginBottom: "4px" });
 
+    // Group enable/disable toggle
+    const groupEnabled = group.enabled !== false;
+    const groupToggle = document.createElement("button");
+    groupToggle.textContent = groupEnabled ? "ON" : "OFF";
+    applyStyle(groupToggle, {
+      ...S.btn,
+      ...(groupEnabled ? S.btnActive : {}),
+      fontSize: "10px", padding: "2px 6px",
+    });
+    groupToggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      group.enabled = group.enabled === false ? true : false;
+      const on = group.enabled !== false;
+      groupToggle.textContent = on ? "ON" : "OFF";
+      applyStyle(groupToggle, {
+        ...S.btn,
+        ...(on ? S.btnActive : {}),
+        fontSize: "10px", padding: "2px 6px",
+      });
+      // Dim group content when disabled
+      if (chipsRow) chipsRow.style.opacity = on ? "" : "0.4";
+      if (rulesContainer) rulesContainer.style.opacity = on ? "" : "0.4";
+      update();
+    });
+    header.appendChild(groupToggle);
+
     const title = document.createElement("span");
     title.textContent = "Group " + (groupIdx + 1);
     applyStyle(title, { color: "#8890a0", fontSize: "11px", fontFamily: "sans-serif", flex: "1" });
@@ -331,6 +357,10 @@
       renderBody();
     }));
 
+    if (!groupEnabled) {
+      chipsRow.style.opacity = "0.4";
+      rulesContainer.style.opacity = "0.4";
+    }
     div.appendChild(chipsRow);
     if (rulesContainer.children.length > 0) div.appendChild(rulesContainer);
     return div;
@@ -471,7 +501,7 @@
     applyStyle(body, { marginTop: "6px" });
 
     const hint = document.createElement("div");
-    hint.textContent = 'Return a boolean. Fields: _allyTags (Set), _ownerNamesText, _maxArmy, _ctAvailable, cities, tradegood, wonder, owner, x, y';
+    hint.textContent = 'Return a boolean. Fields: _allyTags (Set), _ownerNamesText, _maxArmy, _players [{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, trader}], _ctAvailable, cities, tradegood, wonder, owner, x, y';
     applyStyle(hint, { color: "#667", fontSize: "9px", lineHeight: "1.4", marginBottom: "4px", fontFamily: "sans-serif" });
     body.appendChild(hint);
 
@@ -520,6 +550,26 @@
     });
     btnRow.appendChild(clearBtn);
 
+    const copyBtn = document.createElement("button");
+    copyBtn.textContent = "Copy coords";
+    applyStyle(copyBtn, { ...S.btn });
+    copyBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const coords = globalThis.MapFilter && MapFilter.getCustomResultCoords
+        ? MapFilter.getCustomResultCoords() : [];
+      if (coords.length === 0) {
+        copyBtn.textContent = "No matches";
+        setTimeout(() => { copyBtn.textContent = "Copy coords"; }, 1500);
+        return;
+      }
+      const text = coords.map((c) => "[" + c.replace(":", ":") + "]").join("\n");
+      navigator.clipboard.writeText(text).then(() => {
+        copyBtn.textContent = "Copied " + coords.length;
+        setTimeout(() => { copyBtn.textContent = "Copy coords"; }, 1500);
+      });
+    });
+    btnRow.appendChild(copyBtn);
+
     body.appendChild(btnRow);
 
     if (customError) {
@@ -533,7 +583,8 @@
     return section;
 
     async function doApply() {
-      await applyCustomCode(customCodeDraft);
+      const ok = await applyCustomCode(customCodeDraft);
+      if (ok && customCodeDraft.trim()) customCollapsed = false;
       renderBody();
     }
   }
@@ -713,7 +764,10 @@
     // Restore any saved custom JS predicate — draft + re-compile via bridge
     const savedCode = data[CUSTOM_CODE_KEY] || "";
     customCodeDraft = savedCode;
-    if (savedCode) { applyCustomCode(savedCode).catch(() => {}); }
+    if (savedCode) {
+      customCollapsed = false;
+      applyCustomCode(savedCode).catch(() => {});
+    }
 
     createPanel();
     await loadQueryIndex();

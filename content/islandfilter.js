@@ -89,6 +89,10 @@
       const ownerId = String(c.ownerId || "");
       const sc = scores[ownerId] || {};
       const army = Math.round(parseScore(sc.army_score_main) / 100);
+      const building = Math.round(parseScore(sc.building_score_main) / 100);
+      const research = Math.round(parseScore(sc.research_score_main) / 100);
+      const trader = Math.round(parseScore(sc.trader_score_secondary) / 100);
+      const place = parseScore(sc.place);
       const allyTag = c.ownerAllyTag || "";
       const isPiracy = !!(c.actions && c.actions.piracy_raid);
 
@@ -104,6 +108,16 @@
         _allyTags: new Set(allyTag ? [allyTag] : []),
         _ownerNamesText: (c.ownerName || "").toLowerCase(),
         _maxArmy: army,
+        _players: [{
+          id: ownerId,
+          name: c.ownerName || "",
+          ally: allyTag,
+          allyId: String(c.ownerAllyId || "0"),
+          state: c.state || "",
+          cities: 1,
+          maxLevel: parseInt(c.level || 0, 10),
+          place, building, research, army, trader,
+        }],
         _ctAvailable: ctPlayerIds ? ctPlayerIds.has(ownerId) : false,
         _ctChecked: ctCheckedIds ? ctCheckedIds.has(ownerId) : false,
       });
