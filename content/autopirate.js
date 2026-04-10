@@ -362,6 +362,10 @@
       const submitDelay = (500 + Math.random() * 1000);
       scheduleConvert(() => {
         if (!inControl || !isIdle()) return;
+        // Check we have at least 500 capture points before converting
+        const cpEl = document.querySelector(".pirateHeader .capturePoints .value");
+        const cpVal = cpEl ? parseInt(cpEl.textContent.replace(/\s/g, ""), 10) : 0;
+        if (isNaN(cpVal) || cpVal < 500) return;
         const submitBtn = document.getElementById("CPToCrewSubmit");
         if (!submitBtn || submitBtn.classList.contains("button_disabled")) return;
         submitBtn.click();
