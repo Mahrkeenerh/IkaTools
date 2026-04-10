@@ -16,9 +16,6 @@
       if (el.querySelector(".infoTip")?.textContent.trim() === "Obchod") el.remove();
     });
 
-    const trader = document.querySelector('li[onclick*="premiumTrader"]');
-    if (trader) trader.remove();
-
     const resourceShop = document.querySelector('li.resourceShop[onclick*="premiumResourceShop"]');
     if (resourceShop) resourceShop.remove();
 

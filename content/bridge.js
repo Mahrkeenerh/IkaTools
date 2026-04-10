@@ -46,6 +46,27 @@ window.addEventListener("ik-read-game-data", () => {
   try {
     if (typeof barbarianIslandsJS !== "undefined") result.barbarian = barbarianIslandsJS;
   } catch (e) { /* not available */ }
+  // Piracy data lives in worldmap.islands[x][y][8] (2=inRange, 1=notInRange, 0=none).
+  // Unlike military/war/barbarian which have top-level JS arrays, piracy is only
+  // stored inside the per-tile island data — and AJAX refetches zero it out, so
+  // we must read it before any jumping overwrites the initial page data.
+  try {
+    if (typeof worldmap !== "undefined" && worldmap.islands) {
+      const piracy = [];
+      for (let x = 0; x < worldmap.islands.length; x++) {
+        const row = worldmap.islands[x];
+        if (!row) continue;
+        for (let y = 0; y < row.length; y++) {
+          const isl = row[y];
+          if (isl && isl !== "ocean" && isl[8]) {
+            if (!piracy[x]) piracy[x] = [];
+            piracy[x][y] = isl[8];
+          }
+        }
+      }
+      result.piracy = piracy;
+    }
+  } catch (e) { /* not available */ }
   window.dispatchEvent(new CustomEvent("ik-game-data", { detail: result }));
 });
 
@@ -67,6 +88,7 @@ window.addEventListener("ik-convert-crew", () => {
 // request, and respond via CustomEvent.
 (function () {
   let fn = null;
+  const presets = new Map(); // keyed compiled preset functions
 
   function reconstructIsland(s) {
     // Reconstruct Set<string> from the serialized array so user code can do
@@ -104,6 +126,31 @@ window.addEventListener("ik-convert-crew", () => {
           resp.matches = matches;
           resp.ok = true;
         }
+      } else if (req.cmd === "compile-preset") {
+        const pSrc = /\breturn\b/.test(req.code) ? req.code : "return (" + req.code + ");";
+        const pFn = new Function("i", pSrc);
+        pFn({ x: 0, y: 0, cities: 0, _allyTags: new Set(), _ownerNamesText: "", _maxArmy: 0, _players: [], _ctAvailable: false, _ctChecked: false });
+        presets.set(req.key, pFn);
+        resp.ok = true;
+      } else if (req.cmd === "eval-preset") {
+        const pfn = presets.get(req.key);
+        if (!pfn) { resp.error = "Preset not compiled: " + req.key; }
+        else {
+          const pIslands = req.islands || [];
+          const pMatches = new Array(pIslands.length);
+          for (let i = 0; i < pIslands.length; i++) {
+            try { pMatches[i] = !!pfn(reconstructIsland(pIslands[i])); }
+            catch (err) { pMatches[i] = false; }
+          }
+          resp.matches = pMatches;
+          resp.ok = true;
+        }
+      } else if (req.cmd === "clear-preset") {
+        presets.delete(req.key);
+        resp.ok = true;
+      } else if (req.cmd === "clear-all-presets") {
+        presets.clear();
+        resp.ok = true;
       } else {
         resp.error = "Unknown cmd: " + req.cmd;
       }
@@ -163,6 +210,14 @@ window.addEventListener("ik-ajax-call", (e) => {
   try { ajaxHandlerCall(e.detail.url); } catch (err) {
     console.error("[IkBridge] ajaxHandlerCall failed:", err);
   }
+});
+
+// Refresh the custom scrollbar after content height changes (e.g. upgrade info injection)
+window.addEventListener("ik-refresh-scrollbar", () => {
+  try {
+    const sb = ikariam.templateView.mainbox.scrollbar;
+    if (sb) sb.adjustSize();
+  } catch (e) {}
 });
 
 } // end ajaxHandlerCall guard

@@ -18,6 +18,7 @@
   let canvasWrapper = null;
   let layerBarEl = null;
   let topBarEl = null;
+  let fullBtnEl = null;
   let currentMapData = null;
   let scanMode = null; // null | "scan" | "progress" | "map"
   let minimapScale = 1.25;
@@ -296,6 +297,7 @@
     container.appendChild(wrapper);
 
     topBarEl = topBar;
+    fullBtnEl = fullBtn;
 
     // Scan panel (shown when no map data or scan in progress)
     scanPanel = document.createElement("div");
@@ -428,6 +430,7 @@
         topBar.style.position = "static";
         topBar.style.pointerEvents = "auto";
         topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
+        fullBtn.style.display = "none";
         collapseLabel.style.display = "";
       } else {
         // Restore appropriate UI based on current mode
@@ -438,6 +441,7 @@
           topBar.style.position = "static";
           topBar.style.pointerEvents = "auto";
           topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
+          fullBtn.style.display = "none";
         } else {
           mapCanvas.style.display = "block";
           layerBar.style.display = "flex";
@@ -445,6 +449,7 @@
           topBar.style.position = "absolute";
           topBar.style.pointerEvents = "none";
           topBar.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = ""; });
+          fullBtn.style.display = "";
         }
         collapseLabel.style.display = "none";
       }
@@ -524,6 +529,30 @@
       map.set(islands[i].x + ":" + islands[i].y, !!r.matches[i]);
     }
     MapFilter.setCustomResults(map, (isl) => isl.x + ":" + isl.y);
+  }
+
+  // Evaluate saved JS preset chips against the current map data.
+  let activePresets = []; // [{id, code}] from the last ik-preset-change event
+
+  async function refreshPresetResults() {
+    if (!globalThis.CustomEval || !globalThis.MapFilter) return;
+    MapFilter.clearAllPresetResults();
+    if (activePresets.length === 0) return;
+    if (!currentMapData || !currentMapData.islands || currentMapData.islands.length === 0) return;
+    const islands = currentMapData.islands;
+    enrichIslandsWithRichData(islands);
+    const keyFn = (isl) => isl.x + ":" + isl.y;
+    for (const preset of activePresets) {
+      const cr = await CustomEval.compilePreset(preset.id, preset.code);
+      if (!cr.ok) continue;
+      const er = await CustomEval.evaluatePreset(preset.id, islands);
+      if (er.error || !er.matches) continue;
+      const map = new Map();
+      for (let i = 0; i < islands.length; i++) {
+        map.set(islands[i].x + ":" + islands[i].y, !!er.matches[i]);
+      }
+      MapFilter.setPresetResult(preset.id, map, keyFn);
+    }
   }
 
   // Stamp rich-data fields onto each island so the filter engine can read
@@ -691,6 +720,7 @@
       topBarEl.style.pointerEvents = "auto";
       topBarEl.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
     }
+    if (fullBtnEl) fullBtnEl.style.display = "none";
   }
 
   function showProgressUI(progress) {
@@ -708,6 +738,7 @@
       topBarEl.style.pointerEvents = "auto";
       topBarEl.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = "none"; });
     }
+    if (fullBtnEl) fullBtnEl.style.display = "none";
     updateProgressBar(progress);
   }
 
@@ -734,6 +765,7 @@
       topBarEl.style.pointerEvents = "none";
       topBarEl.querySelectorAll("[data-scale]").forEach((b) => { b.style.display = ""; });
     }
+    if (fullBtnEl) fullBtnEl.style.display = "";
   }
 
   async function loadAndShow() {
@@ -768,6 +800,7 @@
       await loadAllianceIndex();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
+      await refreshPresetResults();
       dataLoading = false;
       if (hasAnyActiveFilter() || dimEmpty) startDimming();
       readAndMergeTiles();
@@ -946,10 +979,14 @@
 
   // Returns true when any filter-based dimming should be active (respects the
   // enabled toggle for panel features, but DevTools predicate is independent).
+  function hasPresetResultsActive() {
+    return globalThis.MapFilter && MapFilter.hasPresetResults && MapFilter.hasPresetResults();
+  }
+
   function hasAnyActiveFilter() {
     if (hasDevToolsPredicate()) return true;
     if (!filtersEnabled()) return false;
-    return hasActiveChipFilters() || hasTextareaResults();
+    return hasActiveChipFilters() || hasTextareaResults() || hasPresetResultsActive();
   }
 
   function syncDimmingAndLayer() {
@@ -974,6 +1011,16 @@
   window.addEventListener("ik-filter-change", (e) => {
     filterConfig = e.detail;
     cachedBaseMap = null;
+    syncDimmingAndLayer();
+    drawMinimap();
+  });
+
+  // Preset chips changed — compile+evaluate active presets, then redraw.
+  window.addEventListener("ik-preset-change", async (e) => {
+    activePresets = (e.detail && e.detail.presets) || [];
+    await refreshPresetResults();
+    cachedBaseMap = null;
+    islandsByCoord = null;
     syncDimmingAndLayer();
     drawMinimap();
   });
@@ -1058,8 +1105,9 @@
         allyVersion++;
         cachedBaseMap = null;
         islandsByCoord = null; // invalidate dim-path lookup
-        // Data changed — re-evaluate custom predicate against the new islands
+        // Data changed — re-evaluate custom predicate and presets against the new islands
         await refreshCustomResults();
+        await refreshPresetResults();
         applyDimming();
         drawMinimap();
       });

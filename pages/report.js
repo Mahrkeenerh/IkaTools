@@ -74,6 +74,18 @@
     if (!visibleTabs || visibleTabs.includes("panel-storage")) renderStorage(report);
     if (!visibleTabs || visibleTabs.includes("panel-trading")) renderTrading(report);
     if (!visibleTabs || visibleTabs.includes("panel-spy")) renderSpy(report);
+
+    // Live-update all countdown timers every second
+    setInterval(() => {
+      for (const el of document.querySelectorAll("[data-end-ts]")) {
+        const ts = parseInt(el.dataset.endTs, 10);
+        const t = fmtTime(ts);
+        if (t) {
+          el.textContent = t.text;
+          el.className = t.cls;
+        }
+      }
+    }, 1000);
   });
 
   // --- Helpers ---
@@ -135,6 +147,12 @@
       cls = "time-short";
     }
     return { text, cls };
+  }
+
+  function timeHtml(endTimestamp) {
+    const t = fmtTime(endTimestamp);
+    if (!t) return "—";
+    return `<span class="${t.cls}" data-end-ts="${endTimestamp}">${t.text}</span>`;
   }
 
   function lvl(level, hi, mid) {
@@ -377,13 +395,12 @@
       const tr = document.createElement("tr");
       if (city.construction) {
         const c = city.construction;
-        const t = fmtTime(c.endTime);
         tr.innerHTML = `
           ${cityNameHtml(city)}
           <td class="coords">${city.coords}</td>
           <td><span class="building-active">${c.buildingName}</span></td>
           <td>${lvl(c.level)}</td>
-          <td>${t ? `<span class="${t.cls}">${t.text}</span>` : "—"}</td>
+          <td>${timeHtml(c.endTime)}</td>
         `;
       } else {
         tr.innerHTML = `
@@ -759,18 +776,6 @@
         ? "<span class=\"val-pos\">Building</span>"
         : "Queued #" + first.position;
 
-      let eta = "—";
-      if (first.enddate) {
-        const remaining = first.enddate - Math.floor(Date.now() / 1000);
-        if (remaining > 0) {
-          const h = Math.floor(remaining / 3600);
-          const m = Math.floor((remaining % 3600) / 60);
-          eta = h > 0 ? h + "h " + m + "m" : m + "m";
-        } else {
-          eta = "Done";
-        }
-      }
-
       const unitsParts = group.items.map((q) => {
         const icon = q.type === "ship" ? "🚢 " : "";
         return `${icon}${q.name} ×${q.count.toLocaleString()}`;
@@ -781,7 +786,7 @@
         `<td>${first.cityName}</td>` +
         `<td>${unitsParts.join(", ")}</td>` +
         `<td>${status}</td>` +
-        `<td>${eta}</td>`;
+        `<td>${timeHtml(first.enddate)}</td>`;
       tbody.appendChild(tr);
     }
     table.appendChild(tbody);
@@ -849,7 +854,7 @@
         <td><span class="${dirClass}">${dir}</span></td>
         <td>${m.origin.city}${m.origin.player ? " (" + m.origin.player + ")" : ""}</td>
         <td>${m.target.city}${m.target.player ? " (" + m.target.player + ")" : ""}</td>
-        <td>${m.countdown || m.arrivalTime || "—"}</td>
+        <td>${m.endTimestamp ? timeHtml(m.endTimestamp) : (m.arrivalTime || "—")}</td>
         <td>${unitStr}</td>
         <td class="right">${cargoStr}</td>`;
       tbody.appendChild(tr);
@@ -1019,7 +1024,7 @@
         <td><span class="${dirClass}">${dir}</span></td>
         <td>${m.origin.city}${m.origin.player ? ' <span style="color:#667">(' + m.origin.player + ')</span>' : ""}</td>
         <td>${m.target.city}${m.target.player ? ' <span style="color:#667">(' + m.target.player + ')</span>' : ""}</td>
-        <td>${m.countdown || m.arrivalTime || "—"}</td>
+        <td>${m.endTimestamp ? timeHtml(m.endTimestamp) : (m.arrivalTime || "—")}</td>
         ${resCell("wood")}
         ${resCell("wine")}
         ${resCell("marble")}
@@ -1122,7 +1127,7 @@
         <td><span class="${dirClass}">${label}${dir}</span></td>
         <td>${m.origin.city}${m.origin.player ? ' <span style="color:#667">(' + m.origin.player + ')</span>' : ""}</td>
         <td>${m.target.city}${m.target.player ? ' <span style="color:#667">(' + m.target.player + ')</span>' : ""}</td>
-        <td>${m.countdown || m.arrivalTime || "—"}</td>
+        <td>${m.endTimestamp ? timeHtml(m.endTimestamp) : (m.arrivalTime || "—")}</td>
         ${resCell("wood")}
         ${resCell("wine")}
         ${resCell("marble")}
@@ -1173,9 +1178,9 @@
   async function renderTradingAsync(report, container, RESOURCES, RES_LABELS, RES_CLASSES, RES_ICONS, RES_IDX, playerName) {
     // Load history (30 days covers both 7d and 30d views)
     let historySnapshots = [];
-    if (typeof TradeHistory !== "undefined" && report.world && report.avatarId) {
+    if (typeof TradeHistory !== "undefined" && report.urlWorld && report.avatarId) {
       try {
-        historySnapshots = await TradeHistory.loadHistory(report.world, report.avatarId, 30);
+        historySnapshots = await TradeHistory.loadHistory(report.urlWorld, report.avatarId, 30);
       } catch (e) {
         console.error("[Report] Failed to load trade history:", e);
       }
@@ -1750,6 +1755,7 @@
         <th>Coords</th>
         <th class="right">Spies</th>
         <th>Status</th>
+        <th>ETA</th>
       </tr>`;
       mTable.appendChild(mThead);
 
@@ -1763,6 +1769,7 @@
           <td class="coords">${m.targetCoords || "—"}</td>
           <td class="right">${m.spiesDeployed || "—"}</td>
           <td>${m.status || "—"}</td>
+          <td>${timeHtml(m.endTimestamp)}</td>
         `;
         mTbody.appendChild(tr);
       }
@@ -1771,5 +1778,121 @@
       mWrap.appendChild(mTable);
       container.appendChild(mWrap);
     }
+
+    // --- Spy Log (persistent report archive) ---
+    renderSpyLog(report, container);
+  }
+
+  function renderSpyLog(report, container) {
+    const urlWorld = report.urlWorld;
+    if (!urlWorld) return;
+
+    const storageKey = `spyLog_${urlWorld}`;
+    chrome.storage.local.get(storageKey, (data) => {
+      const log = data[storageKey];
+      if (!log || Object.keys(log).length === 0) return;
+
+      const reports = Object.values(log).sort((a, b) => {
+        // Sort by date descending (DD.MM.YYYY HH:MM:SS)
+        return (b.id || 0) - (a.id || 0);
+      });
+
+      const header = document.createElement("div");
+      header.className = "trade-section-header";
+      header.style.marginTop = "20px";
+      const countSpan = document.createElement("span");
+      countSpan.style.cssText = "font-size:12px;color:#889;";
+      countSpan.textContent = `(${reports.length} reports archived)`;
+      header.innerHTML = '<span class="spy-badge spy-badge-info">Spy Log</span> ';
+      header.appendChild(countSpan);
+      container.appendChild(header);
+
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      const table = document.createElement("table");
+      table.className = "report-table";
+
+      const thead = document.createElement("thead");
+      thead.innerHTML = `<tr>
+        <th>Date</th>
+        <th>Target Player</th>
+        <th>Target City</th>
+        <th>Coords</th>
+        <th>Mission</th>
+        <th>Result</th>
+        <th class="right">Agents</th>
+        <th>Details</th>
+        <th></th>
+      </tr>`;
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      for (const r of reports) {
+        const tr = document.createElement("tr");
+
+        let missionLabel = r.type === "resources" ? "Resources" : r.type === "units" ? "Military" : r.subject || "—";
+
+        let details = "—";
+        if (r.type === "resources" && r.resources) {
+          const parts = [];
+          const RES_ORDER = ["wood", "wine", "marble", "crystal", "sulfur"];
+          for (const key of RES_ORDER) {
+            if (r.resources[key] != null) {
+              parts.push(`<img class="res-icon" src="../icons/resources/${key}.png" alt="${key}"> ${r.resources[key].toLocaleString()}`);
+            }
+          }
+          details = parts.join("&nbsp; ") || "—";
+        } else if (r.type === "units") {
+          const parts = [];
+          if (r.units) {
+            for (const [name, count] of Object.entries(r.units)) {
+              if (count > 0) parts.push(`${name}: ${count}`);
+            }
+          }
+          if (r.ships) {
+            for (const [name, count] of Object.entries(r.ships)) {
+              if (count > 0) parts.push(`${name}: ${count}`);
+            }
+          }
+          details = parts.length > 0 ? parts.join(", ") : "No troops";
+        }
+
+        const resultShort = r.result
+          ? (r.result.toLowerCase().includes("fail") || r.result.toLowerCase().includes("ne"))
+            ? '<span class="val-neg">Failed</span>'
+            : '<span class="val-pos">OK</span>'
+          : "—";
+
+        tr.innerHTML = `
+          <td style="white-space:nowrap;font-size:12px;">${r.date || "—"}</td>
+          <td>${r.targetPlayer || "—"}</td>
+          <td class="city-name">${r.targetCity || "—"}</td>
+          <td class="coords">${r.targetCoords || "—"}</td>
+          <td>${missionLabel}</td>
+          <td>${resultShort}</td>
+          <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
+          <td style="font-size:12px;">${details}</td>
+          <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">x</button></td>
+        `;
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+
+      wrap.appendChild(table);
+      container.appendChild(wrap);
+
+      // Delete handler
+      wrap.addEventListener("click", (e) => {
+        const btn = e.target.closest(".spy-log-del");
+        if (!btn) return;
+        const id = btn.dataset.id;
+        delete log[id];
+        btn.closest("tr").remove();
+        chrome.storage.local.set({ [storageKey]: log });
+        // Update count
+        const count = Object.keys(log).length;
+        countSpan.textContent = `(${count} reports archived)`;
+      });
+    });
   }
 })();

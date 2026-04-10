@@ -64,7 +64,14 @@
     }
   }
 
+  function refreshGameScrollbar() {
+    // The game uses a custom scrollbar (ikariam.Scrollbar) that doesn't
+    // auto-update when content height changes. Poke adjustSize() via bridge.
+    window.dispatchEvent(new CustomEvent("ik-refresh-scrollbar"));
+  }
+
   function injectMissing() {
+    let workshopChanged = false;
     const lists = document.querySelectorAll("ul.resources");
     for (const ul of lists) {
       for (const li of ul.children) {
@@ -82,7 +89,8 @@
           continue;
         }
 
-        // Workshop upgrades: gold/glass items (no red/bold classes)
+        // Workshop upgrades: gold/glass items inside highlightbox cards
+        if (!li.closest(".highlightbox")) continue;
         const wsType = Object.keys(WORKSHOP_RESOURCE_IDS).find((t) => li.classList.contains(t));
         if (!wsType) continue;
         const cost = parseNum(li.textContent);
@@ -90,8 +98,10 @@
         const missing = cost - current;
         if (missing <= 0) continue;
         appendWorkshopMissing(li, missing);
+        workshopChanged = true;
       }
     }
+    if (workshopChanged) refreshGameScrollbar();
   }
 
   // Initial run

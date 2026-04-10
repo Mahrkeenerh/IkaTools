@@ -7,15 +7,12 @@
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
 
-  // World-scoped storage key helpers
-  // Map data (islands, alliances) is URL-based — stable across language settings.
-  // Friend data is title-based legacy — left as-is.
-  const titleWorldName = IkUtils.getWorldName() || "unknown";
+  // World-scoped storage key helpers — all URL-based (stable across language settings)
   const worldName = IkUtils.getUrlWorldName() || "unknown";
   const STORAGE_PREFIX = "island_" + worldName + "_";
   const KEY_ALLIANCE_INDEX = "allianceIndex_" + worldName;
-  const KEY_FRIEND_LIST = "friendList_" + titleWorldName;
-  const KEY_FRIEND_SLOTS = "friendSlots_" + titleWorldName;
+  const KEY_FRIEND_LIST = "friendList_" + worldName;
+  const KEY_FRIEND_SLOTS = "friendSlots_" + worldName;
   const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
   let friendCheckTimer = null;
 

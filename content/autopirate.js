@@ -604,7 +604,7 @@
   }
 
   // --- Storage ---
-  const worldName = IkUtils.getWorldName() || "unknown";
+  const worldName = IkUtils.getUrlWorldName() || "unknown";
   const KEY_PIRATE_CITY = "pirateCityId_" + worldName;
   let scanActive = false;
 

@@ -497,7 +497,7 @@
       const thumbStrip = document.createElement("div");
       thumbStrip.className = "thumb-strip";
 
-      const layerKeys = Object.keys(MapRender.LAYERS);
+      const layerKeys = Object.keys(MapRender.LAYERS).filter((k) => k !== "filter");
       for (const layerKey of layerKeys) {
         const thumbCanvas = document.createElement("canvas");
         const thumbCtx = thumbCanvas.getContext("2d");
@@ -735,7 +735,7 @@
     pirateBackToBack: "backToBackChance",
   };
 
-  // World name as known by the content script (page-title-based, e.g. "Svět Eurydike")
+  // World name as known by the content script (URL-based, e.g. "s55-cz")
   // This is the canonical name used for all pirate storage keys.
   let pirateWorldName = null;
 

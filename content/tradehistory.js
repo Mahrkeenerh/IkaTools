@@ -129,7 +129,7 @@
 
   // Persist a trading snapshot
   async function persistSnapshot(reportData) {
-    const world = reportData.world;
+    const world = reportData.urlWorld;
     const avatarId = reportData.avatarId;
     if (!world || !avatarId) {
       console.warn(P, "Missing world or avatarId, skipping history persist");

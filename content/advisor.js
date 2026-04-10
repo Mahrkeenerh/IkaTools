@@ -335,16 +335,21 @@
         if (avatarMatch) mission.targetAvatarId = parseInt(avatarMatch[1], 10);
       }
 
-      const cityLink = info.querySelector("li.city a");
-      if (cityLink) {
-        const title = cityLink.getAttribute("title") || "";
-        const text = cityLink.textContent.trim();
-        const coordMatch = text.match(/\((\d+:\d+)\)/);
-        mission.targetCoords = coordMatch ? coordMatch[0] : "";
-        mission.targetCity = title || text.replace(/\s*\(\d+:\d+\)/, "").trim();
-        const href = cityLink.getAttribute("href") || "";
-        const cityIdMatch = href.match(/cityId=(\d+)/);
-        if (cityIdMatch) mission.targetCityId = parseInt(cityIdMatch[1], 10);
+      const cityLi = info.querySelector("li.city");
+      if (cityLi) {
+        const cityLink = cityLi.querySelector("a");
+        const text = cityLink
+          ? (cityLink.textContent.trim())
+          : cityLi.textContent.trim();
+        const title = cityLink ? (cityLink.getAttribute("title") || "") : (cityLi.getAttribute("title") || "");
+        const coordMatch = text.match(/[\[(](\d+:\d+)[\])]/);
+        mission.targetCoords = coordMatch ? coordMatch[1] : "";
+        mission.targetCity = title || text.replace(/\s*[\[(]\d+:\d+[\])]\s*/, "").trim();
+        if (cityLink) {
+          const href = cityLink.getAttribute("href") || "";
+          const cityIdMatch = href.match(/cityId=(\d+)/);
+          if (cityIdMatch) mission.targetCityId = parseInt(cityIdMatch[1], 10);
+        }
       }
 
       // Spies deployed: li without .user, .city, .status classes
@@ -357,13 +362,132 @@
         }
       }
 
-      const statusEl = info.querySelector("li.status");
-      if (statusEl) mission.status = statusEl.textContent.trim();
+      const statusEls = info.querySelectorAll("li.status");
+      if (statusEls.length > 0) mission.status = statusEls[0].textContent.trim();
+
+      // ETA: second .status li may contain a getCountdown script with enddate
+      for (const sEl of statusEls) {
+        const script = sEl.querySelector("script");
+        if (script) {
+          const endMatch = script.textContent.match(/enddate:\s*(\d+)/);
+          const curMatch = script.textContent.match(/currentdate:\s*(\d+)/);
+          if (endMatch && curMatch) {
+            const remaining = parseInt(endMatch[1], 10) - parseInt(curMatch[1], 10);
+            if (remaining > 0) {
+              mission.etaSeconds = remaining;
+              mission.endTimestamp = Math.floor(Date.now() / 1000) + remaining;
+            }
+          }
+          break;
+        }
+      }
 
       result.missions.push(mission);
     }
 
     return result;
+  }
+
+  // Parse spy reports from safehouse Reports tab (tabReports) into an array.
+  // Each report has header metadata + detail content (units or resources).
+  const SPY_RES_MAP = { icon_wood: "wood", icon_wine: "wine", icon_marble: "marble", icon_glass: "crystal", icon_sulfur: "sulfur" };
+  function parseSpyReports(html) {
+    const viewHtml = extractChangeViewHtml(html);
+    const doc = new DOMParser().parseFromString(viewHtml || html, "text/html");
+    const headerRows = doc.querySelectorAll("tr.espionageReports");
+    const reports = [];
+    for (const row of headerRows) {
+      const id = parseInt(row.id.replace("message", ""), 10);
+
+      const targetPlayer = row.querySelector(".targetOwner")?.textContent.trim() || "";
+      const cityCell = row.querySelector(".targetCity");
+      let targetCity = "", targetCoords = "", targetCityId = null;
+      if (cityCell) {
+        const link = cityCell.querySelector("a");
+        const raw = (link || cityCell).textContent.replace(/\s+/g, " ").trim();
+        const cm = raw.match(/[\[(](\d+)\s*:\s*(\d+)[\])]/);
+        if (cm) {
+          targetCoords = `${cm[1]}:${cm[2]}`;
+          targetCity = raw.replace(/[\[(]\d+\s*:\s*\d+[\])]/, "").trim();
+        } else {
+          targetCity = raw;
+        }
+        if (link) {
+          const cidm = (link.getAttribute("href") || "").match(/selectCity=(\d+)/);
+          if (cidm) targetCityId = parseInt(cidm[1], 10);
+        }
+      }
+
+      const subject = row.querySelector(".subject")?.textContent.trim() || "";
+      const resultImg = row.querySelector(".resultImage img");
+      const resultText = resultImg?.getAttribute("title") || resultImg?.alt || "";
+      const am = (row.querySelector(".lostAgents")?.textContent.trim() || "").match(/(\d+)\s*\/\s*(\d+)/);
+      const dm = (row.querySelector(".lostDecoys")?.textContent.trim() || "").match(/(\d+)\s*\/\s*(\d+)/);
+      const dateText = row.querySelector(".date")?.textContent.trim() || "";
+
+      const report = {
+        id, targetPlayer, targetCity, targetCoords, date: dateText,
+        subject, result: resultText,
+        agentsLost: am ? parseInt(am[1], 10) : 0,
+        agentsDeployed: am ? parseInt(am[2], 10) : 0,
+        decoysLost: dm ? parseInt(dm[1], 10) : 0,
+        decoysDeployed: dm ? parseInt(dm[2], 10) : 0,
+      };
+      if (targetCityId) report.targetCityId = targetCityId;
+
+      // Parse detail content (always in DOM, hidden when collapsed)
+      const detailRow = doc.querySelector(`#tbl_mail${id}`);
+      const reportText = detailRow?.querySelector(".reportText");
+      if (reportText) {
+        // Resources
+        const resTable = reportText.querySelector("table.resourcesTable");
+        if (resTable) {
+          report.type = "resources";
+          report.resources = {};
+          for (const tr of resTable.querySelectorAll("tr")) {
+            const img = tr.querySelector("td.unitname img");
+            const countCell = tr.querySelector("td.count");
+            if (!img || !countCell) continue;
+            const src = img.getAttribute("src") || "";
+            for (const [frag, key] of Object.entries(SPY_RES_MAP)) {
+              if (src.includes(frag)) {
+                report.resources[key] = parseInt(countCell.textContent.replace(/[\s,.\u00a0]/g, ""), 10) || 0;
+                break;
+              }
+            }
+          }
+        }
+        // Units / ships
+        const unitTables = reportText.querySelectorAll("table.reportTable:not(.resourcesTable)");
+        if (unitTables.length > 0) {
+          report.type = "units";
+          report.units = {};
+          report.ships = {};
+          for (const tbl of unitTables) {
+            const isShip = !!tbl.querySelector("th.shipyard");
+            const target = isShip ? report.ships : report.units;
+            const headers = [...tbl.querySelectorAll("tr:first-child th")].slice(1); // skip building icon
+            const dataRow = tbl.querySelector("tr:nth-child(2)");
+            if (!dataRow) continue;
+            const countCells = [...dataRow.querySelectorAll("td")].filter(td => !td.classList.contains("category"));
+            if (countCells.length === 1 && countCells[0].hasAttribute("colspan")) {
+              for (const th of headers) {
+                const key = th.getAttribute("title") || "";
+                if (key) target[key] = 0;
+              }
+            } else {
+              for (let i = 0; i < headers.length && i < countCells.length; i++) {
+                const key = headers[i].getAttribute("title") || "";
+                if (key) target[key] = parseInt(countCells[i].textContent.replace(/[\s,.\u00a0]/g, ""), 10) || 0;
+              }
+            }
+          }
+        }
+      }
+
+      reports.push(report);
+    }
+    return reports;
   }
 
   // Parse warehouse page for safe/lootable resource data (regex-based)
@@ -861,12 +985,23 @@
         player: targetPlayer?.getAttribute("title") || targetPlayer?.textContent.replace(/[()]/g, "").trim() || "",
       };
 
+      // Compute absolute end timestamp from countdown text for live display
+      let endTimestamp = null;
+      if (countdown) {
+        const hM = countdown.match(/(\d+)h/);
+        const mM = countdown.match(/(\d+)m/);
+        const sM = countdown.match(/(\d+)s/);
+        const secs = (hM ? parseInt(hM[1], 10) * 3600 : 0) + (mM ? parseInt(mM[1], 10) * 60 : 0) + (sM ? parseInt(sM[1], 10) : 0);
+        if (secs > 0) endTimestamp = Math.floor(Date.now() / 1000) + secs;
+      }
+
       movements.push({
         missionType,
         missionLabel: arrowTitle,
         isReturning,
         countdown,
         arrivalTime,
+        endTimestamp,
         units,
         resources,
         origin,
@@ -901,6 +1036,7 @@
     }
     // Extract world name and avatarId for history persistence
     const world = IkUtils.getWorldName() || "";
+    const urlWorld = IkUtils.getUrlWorldName() || "";
     let avatarId = "";
     document.querySelectorAll("script").forEach((script) => {
       const m = script.textContent.match(/avatarId:\s*'(\d+)'/);
@@ -1061,6 +1197,7 @@
               boPos,
               safehouse: shHtml ? parseSafehouse(shHtml) : null,
               safehouseLevel: shPos !== null ? (positions[shPos]?.level || 0) : null,
+              shPos,
               trainingQueue: [
                 ...(bkHtml ? parseTrainingQueue(bkHtml) : []),
                 ...(syHtml ? parseTrainingQueue(syHtml) : []),
@@ -1132,6 +1269,20 @@
       }
     }
 
+    // Fetch spy reports once (global, not per-city) from first city with a safehouse
+    let spyReports = [];
+    if (wantSpy) {
+      const firstSh = results.find(r => r?.safehouse && r.shPos !== null);
+      if (firstSh) {
+        try {
+          const html = await fetchPage("view=safehouse&cityId=" + firstSh.city.id + "&position=" + firstSh.shPos + "&activeTab=tabReports");
+          if (html) spyReports = parseSpyReports(html);
+        } catch (e) {
+          console.error(P, "Error fetching spy reports:", e);
+        }
+      }
+    }
+
     // Global economy values — same from every city, extract once
     const firstHd = results.find((r) => r?.headerData)?.headerData || {};
     const global = {
@@ -1146,9 +1297,11 @@
       timestamp: new Date().toISOString(),
       mode,
       world,
+      urlWorld,
       avatarId,
       global,
       militaryMovements,
+      spyReports,
       cities: results.map((r) => {
         if (!r) return null;
         const b = r.buildingData || {};
@@ -1262,6 +1415,25 @@
     return reportData;
   }
 
+  // --- Spy log persistence ---
+  async function persistSpyLog(data) {
+    const world = data.urlWorld;
+    if (!world) return;
+    const allReports = data.spyReports || [];
+    if (allReports.length === 0) return;
+    const storageKey = `spyLog_${world}`;
+    const existing = await new Promise(r => chrome.storage.local.get(storageKey, r));
+    const log = existing[storageKey] || {};
+    let added = 0;
+    for (const r of allReports) {
+      if (!log[r.id]) { log[r.id] = r; added++; }
+    }
+    if (added > 0) {
+      await new Promise(r => chrome.storage.local.set({ [storageKey]: log }, r));
+    }
+    console.log(P, `Spy log: ${added} new / ${allReports.length} total reports (${Object.keys(log).length} archived)`);
+  }
+
   // --- Shared advisor run logic ---
   let advisorRunning = false;
 
@@ -1270,10 +1442,18 @@
     advisorRunning = true;
     try {
       const data = await collectData(mode);
-      const worldKey = "advisorReportData_" + (data.world || "unknown");
+      const worldKey = "advisorReportData_" + (data.urlWorld || "unknown");
       await new Promise((resolve) => {
         chrome.storage.local.set({ [worldKey]: data, advisorReportData: data }, resolve);
       });
+      // Persist spy reports additively
+      if (data.mode === "spy" || data.mode === "full") {
+        try {
+          await persistSpyLog(data);
+        } catch (e) {
+          console.error(P, "Failed to persist spy log:", e);
+        }
+      }
       if ((data.mode === "trading" || data.mode === "full") && typeof TradeHistory !== "undefined") {
         try {
           await TradeHistory.persistSnapshot(data);
@@ -1282,7 +1462,7 @@
         }
       }
       if (onDone) onDone();
-      chrome.runtime.sendMessage({ type: "open-advisor-report", worldName: data.world || "" });
+      chrome.runtime.sendMessage({ type: "open-advisor-report", worldName: data.urlWorld || "" });
     } catch (err) {
       console.error(P, err);
       if (onError) onError(err);

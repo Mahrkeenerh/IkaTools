@@ -126,35 +126,36 @@
     });
   }
 
-  // Parse game overlay arrays and tag matching islands.
-  // Game uses 2D sparse arrays: array[x][y] = 1 means flagged.
-  function enrichWithGameData(allIslands) {
-    return requestGameData().then((data) => {
-      function parseCoordSet(raw) {
-        const coords = new Set();
-        if (!raw || !Array.isArray(raw)) return coords;
-        for (let x = 0; x < raw.length; x++) {
-          const row = raw[x];
-          if (!Array.isArray(row)) continue;
-          for (let y = 0; y < row.length; y++) {
-            if (row[y]) coords.add(`${x}:${y}`);
-          }
-        }
-        return coords;
+  function parseCoordSet(raw) {
+    const coords = new Set();
+    if (!raw || !Array.isArray(raw)) return coords;
+    for (let x = 0; x < raw.length; x++) {
+      const row = raw[x];
+      if (!Array.isArray(row)) continue;
+      for (let y = 0; y < row.length; y++) {
+        if (row[y]) coords.add(`${x}:${y}`);
       }
+    }
+    return coords;
+  }
 
-      const militarySet = parseCoordSet(data.military);
-      const warSet = parseCoordSet(data.war);
-      const barbarianSet = parseCoordSet(data.barbarian);
+  // Apply game overlay data (military, war, barbarian, piracy) to scanned islands.
+  // `gameData` must be captured BEFORE jumping starts because the game's AJAX
+  // refetches overwrite piracy values in worldmap.islands with zeroes.
+  function applyGameData(allIslands, gameData) {
+    const militarySet = parseCoordSet(gameData.military);
+    const warSet = parseCoordSet(gameData.war);
+    const barbarianSet = parseCoordSet(gameData.barbarian);
+    const piracySet = parseCoordSet(gameData.piracy);
 
-      for (const [key, isl] of allIslands) {
-        isl.military = militarySet.has(key);
-        isl.war = warSet.has(key);
-        isl.barbarian = barbarianSet.has(key);
-      }
-    }).catch(() => {
-      // If bridge data unavailable, islands keep defaults (false)
-    });
+    for (const [key, isl] of allIslands) {
+      isl.military = militarySet.has(key);
+      isl.war = warSet.has(key);
+      isl.barbarian = barbarianSet.has(key);
+      // Piracy from bridge (worldmap.islands) is authoritative — DOM piracy
+      // is unreliable after jumps because AJAX refetches zero the values.
+      if (piracySet.has(key)) isl.piracy = true;
+    }
   }
 
   let scanning = false;
@@ -247,6 +248,12 @@
       const startX = parseInt(xInput.value, 10) || 50;
       const startY = parseInt(yInput.value, 10) || 50;
 
+      // Capture game overlay data (military, war, barbarian, piracy) BEFORE
+      // jumping — the game's AJAX refetches overwrite worldmap.islands piracy
+      // values with zeroes, so this must happen while the initial page data is
+      // still intact.
+      const gameData = await requestGameData();
+
       // Read current position as initial probe
       const probe = readCurrentTiles();
       if (probe.islands.length > 0) {
@@ -303,8 +310,8 @@
 
       if (cancelRequested) return null;
 
-      // Request game-side overlay data (military, war, barbarian)
-      await enrichWithGameData(allIslands);
+      // Apply game overlay data captured before jumping started
+      applyGameData(allIslands, gameData);
 
       // Jump back to starting position
       IkUtils.ensureBridge();

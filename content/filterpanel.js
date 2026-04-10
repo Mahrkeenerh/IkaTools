@@ -4,6 +4,8 @@
 (() => {
   const STORAGE_KEY = "mapFilters";
   const CUSTOM_CODE_KEY = "mapCustomPredicateCode"; // source for the power-user JS predicate
+  const CUSTOM_ENABLED_KEY = "mapCustomPredicateEnabled";
+  const PRESETS_KEY = "customJsPresets";
   const DEFAULT_CONFIG = { enabled: true, globalOp: "and", groups: [] };
 
   let panelEl = null;
@@ -14,6 +16,7 @@
   let saveTimer = null;
   let panelPosition = "left"; // opposite of minimap
   let queryIndex = null; // derived rich-data blob, or null if no full scan
+  let savedPresets = []; // [{id, name, code}] loaded from storage
 
   function uid() {
     return Math.random().toString(36).slice(2, 7);
@@ -33,6 +36,34 @@
   function update() {
     save();
     emit();
+    emitPresetChange();
+  }
+
+  function emitPresetChange() {
+    const active = [];
+    if (config && config.enabled && config.groups) {
+      for (const group of config.groups) {
+        if (group.enabled === false) continue;
+        for (const f of (group.filters || [])) {
+          if (f.type === "customJs" && !active.some((p) => p.id === f.value)) {
+            const preset = savedPresets.find((p) => p.id === f.value);
+            if (preset) active.push({ id: preset.id, code: preset.code });
+          }
+        }
+      }
+    }
+    window.dispatchEvent(new CustomEvent("ik-preset-change", { detail: { presets: active } }));
+  }
+
+  function removePresetFromConfig(presetId) {
+    if (!config || !config.groups) return;
+    let changed = false;
+    for (const group of config.groups) {
+      const before = group.filters.length;
+      group.filters = group.filters.filter((f) => !(f.type === "customJs" && f.value === presetId));
+      if (group.filters.length !== before) changed = true;
+    }
+    if (changed) update();
   }
 
   // --- Styling helpers ---
@@ -44,6 +75,9 @@
     },
     btnActive: {
       background: "rgba(42,74,106,0.8)", color: "#e0e8f0",
+    },
+    btnToggleActive: {
+      background: "rgba(90,184,122,0.35)", color: "#5ab87a",
     },
     chip: {
       display: "inline-flex", alignItems: "center", gap: "4px",
@@ -59,12 +93,12 @@
   function makeToggleBtn(labelA, labelB, active, onClick) {
     const btn = document.createElement("button");
     btn.textContent = active ? labelA : labelB;
-    applyStyle(btn, { ...S.btn, ...(active ? S.btnActive : {}) });
+    applyStyle(btn, { ...S.btn, ...(active ? S.btnToggleActive : {}) });
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       const nowActive = onClick();
       btn.textContent = nowActive ? labelA : labelB;
-      applyStyle(btn, { ...S.btn, ...(nowActive ? S.btnActive : {}) });
+      applyStyle(btn, { ...S.btn, ...(nowActive ? S.btnToggleActive : {}) });
     });
     return btn;
   }
@@ -87,6 +121,12 @@
   // Find option metadata for an active filter (matches by type, plus value
   // for non-parameterized filters where value is part of the identity).
   function findOption(filter) {
+    if (filter.type === "customJs") {
+      const preset = savedPresets.find((p) => p.id === filter.value);
+      return preset
+        ? { type: "customJs", value: filter.value, label: preset.name, color: "#AA88FF", parameterized: false }
+        : { type: "customJs", value: filter.value, label: "Unknown preset", color: "#666", parameterized: false };
+    }
     return globalThis.MapFilter.FILTER_OPTIONS.find((o) => {
       if (o.type !== filter.type) return false;
       if (o.parameterized) return true;
@@ -240,6 +280,21 @@
       select.lastChild.appendChild(o);
     }
 
+    // Add saved JS presets to the dropdown
+    if (savedPresets.length > 0) {
+      const presetGroup = document.createElement("optgroup");
+      presetGroup.label = "Custom JS Presets";
+      for (const preset of savedPresets) {
+        const exists = group.filters.some((f) => f.type === "customJs" && f.value === preset.id);
+        if (exists) continue;
+        const o = document.createElement("option");
+        o.value = JSON.stringify({ type: "customJs", value: preset.id });
+        o.textContent = preset.name;
+        presetGroup.appendChild(o);
+      }
+      if (presetGroup.children.length > 0) select.appendChild(presetGroup);
+    }
+
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
       btn.style.display = "none";
@@ -284,7 +339,7 @@
     groupToggle.textContent = groupEnabled ? "ON" : "OFF";
     applyStyle(groupToggle, {
       ...S.btn,
-      ...(groupEnabled ? S.btnActive : {}),
+      ...(groupEnabled ? S.btnToggleActive : {}),
       fontSize: "10px", padding: "2px 6px",
     });
     groupToggle.addEventListener("click", (e) => {
@@ -294,7 +349,7 @@
       groupToggle.textContent = on ? "ON" : "OFF";
       applyStyle(groupToggle, {
         ...S.btn,
-        ...(on ? S.btnActive : {}),
+        ...(on ? S.btnToggleActive : {}),
         fontSize: "10px", padding: "2px 6px",
       });
       // Dim group content when disabled
@@ -305,8 +360,37 @@
     header.appendChild(groupToggle);
 
     const title = document.createElement("span");
-    title.textContent = "Group " + (groupIdx + 1);
-    applyStyle(title, { color: "#8890a0", fontSize: "11px", fontFamily: "sans-serif", flex: "1" });
+    title.textContent = group.name || "Group " + (groupIdx + 1);
+    title.title = "Click to rename";
+    applyStyle(title, { color: "#8890a0", fontSize: "11px", fontFamily: "sans-serif", flex: "1", cursor: "text" });
+    title.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const input = document.createElement("input");
+      input.type = "text";
+      input.value = group.name || "";
+      input.placeholder = "Group " + (groupIdx + 1);
+      applyStyle(input, {
+        flex: "1", background: "#1a2a40", color: "#c0c8d8",
+        border: "1px solid rgba(60,90,130,0.5)", borderRadius: "3px",
+        fontSize: "11px", fontFamily: "sans-serif", padding: "0 4px",
+        outline: "none", width: "100%",
+      });
+      const commit = () => {
+        const val = input.value.trim();
+        group.name = val || undefined;
+        title.textContent = val || "Group " + (groupIdx + 1);
+        input.replaceWith(title);
+        save();
+      };
+      input.addEventListener("blur", commit);
+      input.addEventListener("keydown", (ke) => {
+        if (ke.key === "Enter") { ke.preventDefault(); input.blur(); }
+        if (ke.key === "Escape") { ke.preventDefault(); input.value = group.name || ""; input.blur(); }
+      });
+      title.replaceWith(input);
+      input.focus();
+      input.select();
+    });
     header.appendChild(title);
 
     const opBtn = makeOpBtn(group.op, () => {
@@ -399,6 +483,8 @@
     const resActive = globalThis.MapFilter && MapFilter.hasCustomResults && MapFilter.hasCustomResults();
     if (fnActive || resActive) {
       lines.push("Custom JS predicate active");
+    } else if (customCodeDraft.trim() && !customEnabled) {
+      lines.push("Custom JS predicate paused");
     }
     for (const line of lines) {
       const div = document.createElement("div");
@@ -423,6 +509,7 @@
   let customCollapsed = true;
   let customCodeDraft = ""; // in-memory code buffer for the textarea
   let customError = null; // last compile/runtime error message
+  let customEnabled = true; // toggle for the custom JS predicate
 
   // Compile user code via the page-context eval bridge (new Function() is
   // blocked in the content-script isolated world by the MV3 CSP).
@@ -450,6 +537,11 @@
       return false;
     }
     chrome.storage.local.set({ [CUSTOM_CODE_KEY]: code });
+    if (!customEnabled) {
+      // Code compiled OK but toggle is off — don't push results to consumers
+      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
+      return true;
+    }
     // Notify consumers (minimap, islandfilter) that they should evaluate the
     // new predicate against their current island/city data.
     window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code } }));
@@ -478,14 +570,30 @@
     applyStyle(title, { color: "#c0c8d8", fontSize: "11px", fontFamily: "sans-serif", flex: "1" });
     header.appendChild(title);
 
-    const active = globalThis.MapFilter && (
-      (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
-      (MapFilter.hasCustomResults && MapFilter.hasCustomResults())
-    );
-    const indicator = document.createElement("span");
-    indicator.textContent = active ? "\u25CF active" : "";
-    applyStyle(indicator, { color: active ? "#5ab87a" : "#667", fontSize: "9px" });
-    header.appendChild(indicator);
+    const toggle = document.createElement("button");
+    toggle.textContent = customEnabled ? "ON" : "OFF";
+    applyStyle(toggle, {
+      ...S.btn, fontSize: "10px", padding: "2px 6px",
+      ...(customEnabled ? S.btnToggleActive : {}),
+    });
+    toggle.addEventListener("click", (e) => {
+      e.stopPropagation();
+      customEnabled = !customEnabled;
+      chrome.storage.local.set({ [CUSTOM_ENABLED_KEY]: customEnabled });
+      toggle.textContent = customEnabled ? "ON" : "OFF";
+      applyStyle(toggle, {
+        ...S.btn, fontSize: "10px", padding: "2px 6px",
+        ...(customEnabled ? S.btnToggleActive : {}),
+      });
+      if (customEnabled && customCodeDraft.trim()) {
+        applyCustomCode(customCodeDraft);
+      } else if (!customEnabled) {
+        if (globalThis.MapFilter) MapFilter.setCustomResults(null);
+        window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code: "" } }));
+      }
+      renderBody();
+    });
+    header.appendChild(toggle);
 
     header.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -570,6 +678,20 @@
     });
     btnRow.appendChild(copyBtn);
 
+    const savePresetBtn = document.createElement("button");
+    savePresetBtn.textContent = "Save";
+    applyStyle(savePresetBtn, { ...S.btn });
+    savePresetBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (!customCodeDraft.trim()) return;
+      const name = prompt("Preset name:");
+      if (!name || !name.trim()) return;
+      savedPresets.push({ id: uid(), name: name.trim(), code: customCodeDraft.trim() });
+      chrome.storage.local.set({ [PRESETS_KEY]: savedPresets });
+      renderBody();
+    });
+    btnRow.appendChild(savePresetBtn);
+
     body.appendChild(btnRow);
 
     if (customError) {
@@ -577,6 +699,53 @@
       err.textContent = "Error: " + customError;
       applyStyle(err, { color: "#e66", fontSize: "10px", marginTop: "4px", fontFamily: "monospace", wordBreak: "break-word" });
       body.appendChild(err);
+    }
+
+    // Saved presets list
+    if (savedPresets.length > 0) {
+      const presetsDiv = document.createElement("div");
+      applyStyle(presetsDiv, { marginTop: "6px", borderTop: "1px solid rgba(60,90,130,0.2)", paddingTop: "4px" });
+
+      const presetsLabel = document.createElement("div");
+      presetsLabel.textContent = "Saved presets (" + savedPresets.length + ")";
+      applyStyle(presetsLabel, { color: "#8890a0", fontSize: "10px", marginBottom: "2px", fontFamily: "sans-serif" });
+      presetsDiv.appendChild(presetsLabel);
+
+      for (const preset of savedPresets) {
+        const row = document.createElement("div");
+        applyStyle(row, { display: "flex", alignItems: "center", gap: "4px", padding: "2px 0" });
+
+        const nameEl = document.createElement("span");
+        nameEl.textContent = preset.name;
+        nameEl.title = preset.code;
+        applyStyle(nameEl, { flex: "1", color: "#c0c8d8", fontSize: "10px", fontFamily: "sans-serif", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" });
+        row.appendChild(nameEl);
+
+        const loadBtn = document.createElement("button");
+        loadBtn.textContent = "Load";
+        applyStyle(loadBtn, { ...S.btn, fontSize: "9px", padding: "1px 4px" });
+        loadBtn.addEventListener("click", ((p) => (e) => {
+          e.stopPropagation();
+          customCodeDraft = p.code;
+          renderBody();
+        })(preset));
+        row.appendChild(loadBtn);
+
+        const delBtn = document.createElement("button");
+        delBtn.textContent = "\u00D7";
+        applyStyle(delBtn, { ...S.btn, color: "#aa6666", fontSize: "12px", padding: "1px 4px" });
+        delBtn.addEventListener("click", ((p) => (e) => {
+          e.stopPropagation();
+          savedPresets = savedPresets.filter((s) => s.id !== p.id);
+          chrome.storage.local.set({ [PRESETS_KEY]: savedPresets });
+          removePresetFromConfig(p.id);
+          renderBody();
+        })(preset));
+        row.appendChild(delBtn);
+
+        presetsDiv.appendChild(row);
+      }
+      body.appendChild(presetsDiv);
     }
 
     section.appendChild(body);
@@ -650,7 +819,7 @@
     toggleBtn.textContent = config.enabled ? "ON" : "OFF";
     applyStyle(toggleBtn, {
       ...S.btn,
-      ...(config.enabled ? S.btnActive : {}),
+      ...(config.enabled ? S.btnToggleActive : {}),
       fontSize: "10px", padding: "2px 6px",
     });
     toggleBtn.addEventListener("click", (e) => {
@@ -659,7 +828,7 @@
       toggleBtn.textContent = config.enabled ? "ON" : "OFF";
       applyStyle(toggleBtn, {
         ...S.btn,
-        ...(config.enabled ? S.btnActive : {}),
+        ...(config.enabled ? S.btnToggleActive : {}),
         fontSize: "10px", padding: "2px 6px",
       });
       update();
@@ -754,24 +923,27 @@
     if (!isSupportedView()) return;
     if (!globalThis.MapFilter) return;
 
-    const data = await chrome.storage.local.get([STORAGE_KEY, CUSTOM_CODE_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
+    const data = await chrome.storage.local.get([STORAGE_KEY, CUSTOM_CODE_KEY, PRESETS_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
     if (!data.minimapEnabled) return;
 
     config = data[STORAGE_KEY] || { ...DEFAULT_CONFIG, groups: [] };
     collapsed = !!data.filterPanelCollapsed;
+    savedPresets = data[PRESETS_KEY] || [];
     updatePosition(data.minimapPosition || "right");
 
     // Restore any saved custom JS predicate — draft + re-compile via bridge
     const savedCode = data[CUSTOM_CODE_KEY] || "";
+    customEnabled = data[CUSTOM_ENABLED_KEY] !== false; // default true
     customCodeDraft = savedCode;
     if (savedCode) {
       customCollapsed = false;
-      applyCustomCode(savedCode).catch(() => {});
+      if (customEnabled) applyCustomCode(savedCode).catch(() => {});
     }
 
     createPanel();
     await loadQueryIndex();
     emit(); // notify minimap of current config
+    emitPresetChange(); // notify minimap of active preset chips
   }
 
   // Expose hooks for the minimap to push match count + for the world data

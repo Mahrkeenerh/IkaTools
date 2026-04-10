@@ -90,5 +90,28 @@
   function hasCode() { return currentCode != null; }
   function getCode() { return currentCode; }
 
-  globalThis.CustomEval = { compile, evaluate, clear, hasCode, getCode };
+  async function compilePreset(key, code) {
+    if (!code || !code.trim()) {
+      await sendRequest("clear-preset", { key });
+      return { ok: true };
+    }
+    return sendRequest("compile-preset", { key, code });
+  }
+
+  async function evaluatePreset(key, islands) {
+    if (!islands || islands.length === 0) return { matches: [] };
+    const serialized = islands.map(serializeIsland);
+    return sendRequest("eval-preset", { key, islands: serialized }, 10000);
+  }
+
+  async function clearPreset(key) {
+    return sendRequest("clear-preset", { key });
+  }
+
+  async function clearAllPresets() {
+    return sendRequest("clear-all-presets");
+  }
+
+  globalThis.CustomEval = { compile, evaluate, clear, hasCode, getCode,
+    compilePreset, evaluatePreset, clearPreset, clearAllPresets };
 })();

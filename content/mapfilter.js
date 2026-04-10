@@ -51,6 +51,8 @@ globalThis.MapFilter = (() => {
   let customPredicate = null;
   let customResultMap = null; // Map<string, boolean> of pre-computed matches
   let customResultKeyFn = null; // (isl) -> string used to look up in the map
+  let presetResults = new Map(); // Map<presetId, Map<coordKey, boolean>>
+  let presetResultKeyFn = null; // (isl) -> string, shared across all presets
 
   function matchFilter(isl, filter) {
     switch (filter.type) {
@@ -82,6 +84,12 @@ globalThis.MapFilter = (() => {
         const n = Number(filter.value);
         if (!Number.isFinite(n)) return true;
         return (isl._maxArmy || 0) >= n;
+      }
+      case "customJs": {
+        const presetMap = presetResults.get(filter.value);
+        if (!presetMap) return false;
+        const key = presetResultKeyFn ? presetResultKeyFn(isl) : (isl.x + ":" + isl.y);
+        return !!presetMap.get(key);
       }
       default: return false;
     }
@@ -148,10 +156,28 @@ globalThis.MapFilter = (() => {
     return coords;
   }
 
+  function setPresetResult(presetId, map, keyFn) {
+    if (map) {
+      presetResults.set(presetId, map);
+    } else {
+      presetResults.delete(presetId);
+    }
+    if (keyFn) presetResultKeyFn = keyFn;
+  }
+
+  function clearAllPresetResults() {
+    presetResults.clear();
+  }
+
+  function hasPresetResults() {
+    return presetResults.size > 0;
+  }
+
   return {
     islandMatches, matchGroup, matchFilter, FILTER_OPTIONS,
     setCustomPredicate, getCustomPredicate,
     setCustomResults, hasCustomResults, getCustomResultCoords,
+    setPresetResult, clearAllPresetResults, hasPresetResults,
   };
 })();
 

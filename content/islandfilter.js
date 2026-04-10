@@ -68,6 +68,34 @@
     MapFilter.setCustomResults(map, (isl) => String(isl._position));
   }
 
+  // Evaluate saved JS preset chips against the current island's virtual cities.
+  let activePresets = []; // [{id, code}] from the last ik-preset-change event
+
+  async function refreshPresetResults() {
+    if (!globalThis.CustomEval || !globalThis.MapFilter) return;
+    MapFilter.clearAllPresetResults();
+    if (activePresets.length === 0) return;
+    if (!virtualCities) virtualCities = buildVirtualCities();
+    if (!virtualCities) return;
+    const pairs = [];
+    for (let i = 0; i < virtualCities.length; i++) {
+      if (virtualCities[i]) pairs.push({ pos: i, isl: virtualCities[i] });
+    }
+    if (pairs.length === 0) return;
+    const keyFn = (isl) => String(isl._position);
+    for (const preset of activePresets) {
+      const cr = await CustomEval.compilePreset(preset.id, preset.code);
+      if (!cr.ok) continue;
+      const er = await CustomEval.evaluatePreset(preset.id, pairs.map((p) => p.isl));
+      if (er.error || !er.matches) continue;
+      const map = new Map();
+      for (let i = 0; i < pairs.length; i++) {
+        map.set(String(pairs[i].pos), !!er.matches[i]);
+      }
+      MapFilter.setPresetResult(preset.id, map, keyFn);
+    }
+  }
+
   // Build one virtual-island object per city slot on the current island view.
   function buildVirtualCities() {
     const bg = IkUtils.parseBackgroundData();
@@ -144,7 +172,10 @@
     const hasTextarea = enabled && globalThis.MapFilter &&
       MapFilter.hasCustomResults && MapFilter.hasCustomResults();
 
-    if (!hasFilters && !hasDevTools && !hasTextarea) {
+    const hasPresets = enabled && globalThis.MapFilter &&
+      MapFilter.hasPresetResults && MapFilter.hasPresetResults();
+
+    if (!hasFilters && !hasDevTools && !hasTextarea && !hasPresets) {
       // Clear all opacity — quick path, no need to build virtual cities
       document.querySelectorAll('[id^="cityLocation"]').forEach((el) => {
         el.style.opacity = "";
@@ -192,8 +223,9 @@
     filterConfig = data.mapFilters || null;
     await loadCtData();
     virtualCities = null;
-    // Re-evaluate any restored custom code against this island's cities
+    // Re-evaluate any restored custom code and presets against this island's cities
     await refreshCustomResults();
+    await refreshPresetResults();
     applyDimming();
     startTileObserver();
   }
@@ -201,6 +233,14 @@
   // Filter panel updates
   window.addEventListener("ik-filter-change", (e) => {
     filterConfig = e.detail;
+    applyDimming();
+  });
+
+  // Preset chips changed — compile+evaluate active presets per city
+  window.addEventListener("ik-preset-change", async (e) => {
+    activePresets = (e.detail && e.detail.presets) || [];
+    virtualCities = null;
+    await refreshPresetResults();
     applyDimming();
   });
 
@@ -233,6 +273,7 @@
       loadCtData().then(async () => {
         virtualCities = null;
         await refreshCustomResults();
+        await refreshPresetResults();
         applyDimming();
       });
     }

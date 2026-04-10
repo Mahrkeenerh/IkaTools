@@ -80,7 +80,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - **Notes toolbar**: Button in `#GF_toolbar` (left of pirate toggle) opens floating panel with sidebar + editor. Syncs bidirectionally with popup notes via `chrome.storage.onChanged`. "Hide game notes" setting hides `#GF_toolbar li.notes`.
 - **CAPTCHA**: content.js detects → background.js routes → offscreen ONNX inference → fills input. Model is CRNN+BiLSTM with CTC decoding (48×256 grayscale input → 64 timesteps × 29 classes → greedy collapse).
 - **Storage**: `chrome.storage.local` — see Storage Keys section below.
-  - Key convention: feature toggles/settings use camelCase with feature prefix (e.g. `pirateEnabled`, `minimapScale`) and are **global** (not world-scoped). Per-world data uses underscore separator with the **URL-based** world name (e.g. `s55-cz`) for the map subsystem, and the **title-based** world name for legacy subsystems (friend list, pirate city, advisor, trade history) that predate the migration.
+  - Key convention: feature toggles/settings use camelCase with feature prefix (e.g. `pirateEnabled`, `minimapScale`) and are **global** (not world-scoped). Per-world data uses underscore separator with the **URL-based** world name (e.g. `s55-cz`) from `getUrlWorldName()`. The title-based `getWorldName()` is only used for display (e.g. `reportData.world`).
 
 ## Storage Keys
 
@@ -91,17 +91,21 @@ No dev server — load unpacked extension directly from this directory in `chrom
 | `allianceIndex_{world}` | URL world | background full-scan commit, islandinfo | Coord → `{counts, members, total}` |
 | `queryIndex_{world}` | URL world | background full-scan commit, bgApplyCtToQueryIndex | Denormalized filter-ready blob used by rich-data filters |
 | `ctScan_{world}` | URL world | background CT phase | Last CT scan result set (players, ctPlayers, allyCounts, timestamp, allyFilter, ownExcluded) |
+| `spyLog_{world}` | URL world | spylog | Additive archive of espionage reports (units + resources), keyed by report ID |
 | `mapIndex` | global | CT orchestrator | Gallery ordering (newest first) |
 | `mapFilters` | global | filter panel | Filter config (groups, ops, enabled) |
+| `customJsPresets` | global | filter panel | Saved JS preset chips `[{id, name, code}]` |
 | `mapCustomPredicateCode` | global | filter panel | Source of the Custom JS predicate |
+| `mapCustomPredicateEnabled` | global | filter panel | Custom JS toggle (default true) |
 | `filterPanelCollapsed` | global | filter panel | UI state |
 | `minimapEnabled` / `minimapPosition` / `minimapScale` / `minimapLayer` / `hideZeroCities` / `vpTrimRight` / `vpTrimBottom` | global | minimap | Minimap UI state |
 | `scanInProgress` / `scanProgress` / `scanResult` | global (transient) | scanner | DOM scan coordination with popup |
 | `ctScanRunning` / `ctScanProgress` | global (transient) | background | Background scan coordination |
-| `island_{titleWorld}_*` (friend list / slots) | title world | islandinfo | `friendList_{titleWorld}`, `friendSlots_{titleWorld}` — legacy title-based, not migrated |
-| `pirateCityId_{titleWorld}` / `pirateCities_{titleWorld}` | title world | autopirate | Pirate city selection — legacy title-based |
-| `tradeHistory_{titleWorld}_{avatarId}_{YYYY-MM}` | title world | tradehistory | Monthly trade history chunks |
-| `tradeHistoryIdx_{titleWorld}_{avatarId}` | title world | tradehistory | Index of available months |
+| `friendList_{world}` / `friendSlots_{world}` | URL world | islandinfo | Friend player ID→name map and slot snapshots |
+| `pirateCityId_{world}` / `pirateCities_{world}` | URL world | autopirate | Pirate city selection and cached city list |
+| `advisorReportData_{world}` | URL world | advisor | Last advisor report data |
+| `tradeHistory_{world}_{avatarId}_{YYYY-MM}` | URL world | tradehistory | Monthly trade history chunks |
+| `tradeHistoryIdx_{world}_{avatarId}` | URL world | tradehistory | Index of available months |
 | `pirateEnabled` / `pirateConvertEnabled` / `pirateSleepStart` / `pirateSleepEnd` / `pirateState` / `pirateIdleTimeout` + advanced timing params | global | autopirate | Pirate toggles and config |
 | `cleanupEnabled` / `autoFinishEnabled` / `hideGameNotes` | global | settings | Feature toggles |
 | `notes` | global | gamenotes / popup | Notes content |
