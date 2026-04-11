@@ -923,7 +923,7 @@
     if (!isSupportedView()) return;
     if (!globalThis.MapFilter) return;
 
-    const data = await chrome.storage.local.get([STORAGE_KEY, CUSTOM_CODE_KEY, PRESETS_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
+    const data = await chrome.storage.local.get([STORAGE_KEY, CUSTOM_CODE_KEY, CUSTOM_ENABLED_KEY, PRESETS_KEY, "minimapPosition", "minimapEnabled", "filterPanelCollapsed"]);
     if (!data.minimapEnabled) return;
 
     config = data[STORAGE_KEY] || { ...DEFAULT_CONFIG, groups: [] };

@@ -294,7 +294,7 @@ globalThis.MapRender = (() => {
 
       let dimmed = false;
       const hasActiveFilters = opts.filterConfig && opts.filterConfig.enabled &&
-        opts.filterConfig.groups && opts.filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+        opts.filterConfig.groups && opts.filterConfig.groups.some((g) => g.enabled !== false && g.filters && g.filters.length > 0);
       if (hasActiveFilters && globalThis.MapFilter) {
         dimmed = !MapFilter.islandMatches(isl, opts.filterConfig);
       } else if (dimEmpty) {

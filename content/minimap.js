@@ -631,7 +631,7 @@
   function pushMatchCount(islands) {
     if (!globalThis.MapFilter || !globalThis.IkFilterPanel) return;
     const hasFilters = filterConfig && filterConfig.enabled &&
-      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+      filterConfig.groups && filterConfig.groups.some((g) => g.enabled !== false && g.filters && g.filters.length > 0);
     const hasCustom = (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
       (MapFilter.hasCustomResults && MapFilter.hasCustomResults());
     if (!hasFilters && !hasCustom) {
@@ -974,7 +974,7 @@
 
   function hasActiveChipFilters() {
     return filtersEnabled() &&
-      filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
+      filterConfig.groups && filterConfig.groups.some((g) => g.enabled !== false && g.filters && g.filters.length > 0);
   }
 
   // Returns true when any filter-based dimming should be active (respects the
