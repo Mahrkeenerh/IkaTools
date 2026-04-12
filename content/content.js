@@ -8,15 +8,26 @@
   let lastCaptchaSrc = null;
 
   function findCaptcha() {
-    const img = document.querySelector("img.captchaImage");
-    if (!img) return null;
+    // Pirate captcha
+    const pirateImg = document.querySelector("img.captchaImage");
+    if (pirateImg) {
+      const input = document.querySelector("input#captcha");
+      const submit = document.querySelector(
+        "#pirateCaptureBox input.button[type='submit']"
+      );
+      return input ? { img: pirateImg, input, submit } : null;
+    }
 
-    const input = document.querySelector("input#captcha");
-    const submit = document.querySelector(
-      "#pirateCaptureBox input.button[type='submit']"
-    );
+    // Demolition captcha (building destroy confirmation)
+    const demolitionForm = document.querySelector("#demolitionForm");
+    if (demolitionForm) {
+      const img = demolitionForm.querySelector("img");
+      const input = demolitionForm.querySelector("input#captcha");
+      // No submit — solve only, user confirms manually
+      return img && input ? { img, input, submit: null } : null;
+    }
 
-    return input ? { img, input, submit } : null;
+    return null;
   }
 
   async function getImageDataUrl(imgEl) {
