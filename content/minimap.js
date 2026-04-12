@@ -388,11 +388,12 @@
       flexWrap: "wrap",
     });
 
-    const layerKeys = Object.keys(globalThis.MapRender?.LAYERS || {});
+    const layerKeys = Object.keys(globalThis.MapRender?.LAYERS || {}).filter((k) => !globalThis.MapRender.LAYERS[k].galleryOnly);
     for (const key of layerKeys) {
       const btn = document.createElement("button");
-      btn.textContent = (globalThis.MapRender.LAYERS[key].name || key).slice(0, 3);
-      btn.title = globalThis.MapRender.LAYERS[key].name || key;
+      const layerDef = globalThis.MapRender.LAYERS[key];
+      btn.textContent = layerDef.short || (layerDef.name || key).slice(0, 3);
+      btn.title = layerDef.name || key;
       btn.dataset.layer = key;
       Object.assign(btn.style, {
         padding: "2px 5px",
@@ -1027,8 +1028,8 @@
 
   // Filter-panel Custom JS was (re)applied — pre-evaluate against current
   // data, then redraw. Async because we bridge to the page context for eval.
-  window.addEventListener("ik-custom-code-apply", async () => {
-    await refreshCustomResults();
+  window.addEventListener("ik-custom-code-apply", async (e) => {
+    if (!e.detail?.disabled) await refreshCustomResults();
     cachedBaseMap = null;
     islandsByCoord = null;
     syncDimmingAndLayer();

@@ -82,11 +82,13 @@ globalThis.MapRender = (() => {
     },
     military: {
       name: "Military",
+      galleryOnly: true,
       color: (isl) => isl.military ? "#FF6B6B" : DIM,
       sort: (a, b) => (a.military ? 1 : 0) - (b.military ? 1 : 0),
     },
     war: {
       name: "War zones",
+      galleryOnly: true,
       color: (isl) => isl.war ? "#FF2020" : DIM,
       sort: (a, b) => (a.war ? 1 : 0) - (b.war ? 1 : 0),
     },
@@ -102,16 +104,18 @@ globalThis.MapRender = (() => {
     },
     tradegoods: {
       name: "Tradegoods",
+      galleryOnly: true,
       color: (isl) => TRADEGOOD_COLORS[isl.tradegood] || DIM,
       sort: (a, b) => a.tradegood - b.tradegood,
     },
     wonders: {
       name: "Wonders",
+      galleryOnly: true,
       color: (isl) => WONDER_COLORS[isl.wonder] || DIM,
       sort: (a, b) => a.wonder - b.wonder,
     },
     alliances: {
-      name: "Alliances",
+      name: "Alliances", short: "Ali",
       color: (isl) => isl._allyColor || DIM,
       sort: (a, b) => (a._allyCount || 0) - (b._allyCount || 0),
     },

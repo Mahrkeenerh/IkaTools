@@ -1112,6 +1112,103 @@
     }
   });
 
+  // --- Developer mode toggle ---
+  const devmodeToggle = $("devmode-toggle");
+  const captchaTabBtn = $("captcha-tab-btn");
+
+  function applyDevMode(on) {
+    captchaTabBtn.style.display = on ? "" : "none";
+    // If captcha tab is active but dev mode turned off, switch to settings
+    if (!on && captchaTabBtn.classList.contains("active")) {
+      captchaTabBtn.click(); // deselect
+      document.querySelector('[data-tab="settings"]').click();
+    }
+  }
+
+  async function loadDevModeState() {
+    const data = await chrome.storage.local.get("devModeEnabled");
+    const on = !!data.devModeEnabled;
+    devmodeToggle.checked = on;
+    applyDevMode(on);
+  }
+  loadDevModeState();
+
+  devmodeToggle.addEventListener("change", () => {
+    const on = devmodeToggle.checked;
+    chrome.storage.local.set({ devModeEnabled: on });
+    applyDevMode(on);
+  });
+
+  // --- Captcha data tab ---
+  const captchaCollectToggle = $("captcha-collect-toggle");
+  const captchaCount = $("captcha-count");
+  const captchaSize = $("captcha-size");
+  const captchaStats = $("captcha-stats");
+
+  async function loadCaptchaCollectState() {
+    const data = await chrome.storage.local.get("captchaCollectEnabled");
+    captchaCollectToggle.checked = !!data.captchaCollectEnabled;
+  }
+  loadCaptchaCollectState();
+
+  captchaCollectToggle.addEventListener("change", () => {
+    chrome.storage.local.set({ captchaCollectEnabled: captchaCollectToggle.checked });
+  });
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1048576).toFixed(1) + " MB";
+  }
+
+  async function refreshCaptchaPanel() {
+    const data = await chrome.storage.local.get("captchaLog");
+    const log = data.captchaLog || [];
+    const jsonStr = JSON.stringify(log);
+    const bytes = new Blob([jsonStr]).size;
+    const total = log.length;
+    const success = log.filter((e) => e.success).length;
+    const fail = total - success;
+    const rate = total > 0 ? ((success / total) * 100).toFixed(1) : "—";
+
+    captchaCount.textContent = total + " captcha" + (total !== 1 ? "s" : "");
+    captchaSize.textContent = "(" + formatBytes(bytes) + ")";
+
+    if (total === 0) {
+      captchaStats.textContent = "No data collected yet. Enable collection above and solve some captchas.";
+    } else {
+      const newest = new Date(log[log.length - 1].timestamp);
+      const oldest = new Date(log[0].timestamp);
+      const fmt = (d) => d.toLocaleDateString() + " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+      captchaStats.innerHTML =
+        `<b>Success:</b> ${success} &nbsp; <b>Failed:</b> ${fail} &nbsp; <b>Rate:</b> ${rate}%<br>` +
+        `<b>First:</b> ${fmt(oldest)}<br>` +
+        `<b>Latest:</b> ${fmt(newest)}`;
+    }
+  }
+
+  // Refresh when captcha tab is opened
+  document.querySelector('[data-tab="captcha"]').addEventListener("click", refreshCaptchaPanel);
+
+  $("captcha-export-btn").addEventListener("click", async () => {
+    const data = await chrome.storage.local.get("captchaLog");
+    const log = data.captchaLog || [];
+    if (log.length === 0) return;
+    const blob = new Blob([JSON.stringify(log, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "captcha-log-" + new Date().toISOString().slice(0, 10) + ".json";
+    a.click();
+    URL.revokeObjectURL(url);
+  });
+
+  $("captcha-clear-btn").addEventListener("click", async () => {
+    if (!confirm("Delete all collected captcha data?")) return;
+    await chrome.storage.local.remove("captchaLog");
+    refreshCaptchaPanel();
+  });
+
   // --- Hide game notes toggle ---
   const hideGameNotesToggle = $("hide-game-notes-toggle");
 

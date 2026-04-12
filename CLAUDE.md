@@ -109,6 +109,9 @@ No dev server — load unpacked extension directly from this directory in `chrom
 | `tradeHistory_{world}_{avatarId}_{YYYY-MM}` | URL world | tradehistory | Monthly trade history chunks |
 | `tradeHistoryIdx_{world}_{avatarId}` | URL world | tradehistory | Index of available months |
 | `pirateEnabled` / `pirateConvertEnabled` / `pirateSleepStart` / `pirateSleepEnd` / `pirateState` / `pirateIdleTimeout` + advanced timing params | global | autopirate | Pirate toggles and config |
+| `devModeEnabled` | global | settings | Developer mode toggle (off by default, shows Captcha tab) |
+| `captchaCollectEnabled` | global | captcha tab | Captcha data collection toggle (off by default) |
+| `captchaLog` | global | content.js | Array of `{dataUrl, answer, success, timestamp}` entries |
 | `cleanupEnabled` / `autoFinishEnabled` / `hideGameNotes` | global | settings | Feature toggles |
 | `notes` | global | gamenotes / popup | Notes content |
 

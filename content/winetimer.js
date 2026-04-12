@@ -11,6 +11,7 @@
 
   function formatDuration(hours) {
     if (hours <= 0) return "0h";
+    if (hours > 24) return (hours / 24).toFixed(1) + "d";
     return hours.toFixed(1) + "h";
   }
 

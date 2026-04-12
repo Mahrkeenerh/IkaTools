@@ -108,7 +108,7 @@
             result.construction = {
               position: i,
               buildingName: pos.name || "Unknown",
-              level: pos.level,
+              level: pos.level + 1,
               endTime,
               startTime: bgData.startUpgradeTime,
             };
@@ -127,7 +127,7 @@
         result.construction = {
           position: bgData.underConstruction,
           buildingName: pos?.name || "Unknown",
-          level: (pos?.level ?? 0),
+          level: (pos?.level ?? 0) + 1,
           endTime: bgData.endUpgradeTime,
           startTime: bgData.startUpgradeTime,
         };

@@ -218,11 +218,63 @@
     if (tilesObserver) { tilesObserver.disconnect(); tilesObserver = null; }
   }
 
+  // Wait for island DOM to be fully ready (background data scripts + #cities
+  // container). The body.id changes to "island" before the game injects the
+  // island content, so init() must not assume the DOM is populated yet.
+  function waitForIslandDOM() {
+    return new Promise((resolve) => {
+      let attempts = 0;
+      function check() {
+        if (!isIslandView()) { resolve(false); return; }
+        if (IkUtils.parseBackgroundData() && document.getElementById("cities")) {
+          resolve(true);
+          return;
+        }
+        if (++attempts > 40) { resolve(false); return; } // 2s max
+        setTimeout(check, 50);
+      }
+      check();
+    });
+  }
+
   async function init() {
-    const data = await chrome.storage.local.get("mapFilters");
+    const data = await chrome.storage.local.get([
+      "mapFilters", "mapCustomPredicateCode", "mapCustomPredicateEnabled",
+      "customJsPresets",
+    ]);
     filterConfig = data.mapFilters || null;
     await loadCtData();
     virtualCities = null;
+
+    const ready = await waitForIslandDOM();
+    if (!ready) return;
+
+    // The filter panel compiles saved custom JS asynchronously (fire-and-forget)
+    // so it may not be ready when we reach this point. Compile it ourselves to
+    // guarantee custom-JS dimming applies on first render.
+    if (globalThis.CustomEval) {
+      const savedCode = data.mapCustomPredicateCode || "";
+      const customOn = data.mapCustomPredicateEnabled !== false;
+      if (savedCode && customOn && !CustomEval.hasCode()) {
+        await CustomEval.compile(savedCode);
+      }
+      // Same for preset chips — extract active presets from filter config
+      if (filterConfig && filterConfig.enabled && filterConfig.groups) {
+        const presets = data.customJsPresets || [];
+        const active = [];
+        for (const group of filterConfig.groups) {
+          if (group.enabled === false) continue;
+          for (const f of (group.filters || [])) {
+            if (f.type === "customJs" && !active.some((p) => p.id === f.value)) {
+              const preset = presets.find((p) => p.id === f.value);
+              if (preset) active.push({ id: preset.id, code: preset.code });
+            }
+          }
+        }
+        if (active.length > 0) activePresets = active;
+      }
+    }
+
     // Re-evaluate any restored custom code and presets against this island's cities
     await refreshCustomResults();
     await refreshPresetResults();
@@ -245,9 +297,9 @@
   });
 
   // Custom JS predicate (re)applied from filter panel — re-evaluate per city
-  window.addEventListener("ik-custom-code-apply", async () => {
+  window.addEventListener("ik-custom-code-apply", async (e) => {
     virtualCities = null;
-    await refreshCustomResults();
+    if (!e.detail?.disabled) await refreshCustomResults();
     applyDimming();
   });
 

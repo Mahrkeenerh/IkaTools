@@ -589,7 +589,7 @@
         applyCustomCode(customCodeDraft);
       } else if (!customEnabled) {
         if (globalThis.MapFilter) MapFilter.setCustomResults(null);
-        window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code: "" } }));
+        window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code: "", disabled: true } }));
       }
       renderBody();
     });

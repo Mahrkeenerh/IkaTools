@@ -6,6 +6,50 @@
   let autoSubmitCount = 0;
   let solving = false;
   let lastCaptchaSrc = null;
+  let pendingIndex = -1; // index of the last entry we wrote to captchaLog
+
+  function userPresent() {
+    return document.hasFocus() && !document.hidden;
+  }
+
+  // Write entry to storage immediately (assumes success).
+  // If a retry captcha appears, markLastFailed() downgrades it.
+  function saveEntry(dataUrl, answer) {
+    pendingIndex = -1;
+    chrome.storage.local.get(["captchaCollectEnabled", "captchaLog"], (data) => {
+      if (!data.captchaCollectEnabled) return;
+      const log = data.captchaLog || [];
+      log.push({ dataUrl, answer, success: true, timestamp: Date.now() });
+      pendingIndex = log.length - 1;
+      chrome.storage.local.set({ captchaLog: log });
+    });
+  }
+
+  // Remove the pending entry (user came back, data is tainted)
+  function discardPending() {
+    if (pendingIndex < 0) return;
+    const idx = pendingIndex;
+    pendingIndex = -1;
+    chrome.storage.local.get("captchaLog", (data) => {
+      const log = data.captchaLog;
+      if (!log || idx >= log.length) return;
+      log.splice(idx, 1);
+      chrome.storage.local.set({ captchaLog: log });
+    });
+  }
+
+  function markLastFailed() {
+    if (pendingIndex < 0) return;
+    if (userPresent()) { discardPending(); return; }
+    const idx = pendingIndex;
+    pendingIndex = -1;
+    chrome.storage.local.get("captchaLog", (data) => {
+      const log = data.captchaLog;
+      if (!log || idx >= log.length) return;
+      log[idx].success = false;
+      chrome.storage.local.set({ captchaLog: log });
+    });
+  }
 
   function findCaptcha() {
     // Pirate captcha
@@ -15,7 +59,7 @@
       const submit = document.querySelector(
         "#pirateCaptureBox input.button[type='submit']"
       );
-      return input ? { img: pirateImg, input, submit } : null;
+      return input ? { img: pirateImg, input, submit, type: "pirate" } : null;
     }
 
     // Demolition captcha (building destroy confirmation)
@@ -24,7 +68,7 @@
       const img = demolitionForm.querySelector("img");
       const input = demolitionForm.querySelector("input#captcha");
       // No submit — solve only, user confirms manually
-      return img && input ? { img, input, submit: null } : null;
+      return img && input ? { img, input, submit: null, type: "demolition" } : null;
     }
 
     return null;
@@ -82,11 +126,17 @@
         autoSubmitCount++;
         els.input.style.outline = "2px solid #FF9800";
 
+        // Save immediately — pirate only, user must be away
+        if (els.type === "pirate" && !userPresent()) {
+          saveEntry(dataUrl, response.answer);
+        }
+
         // Brief delay so the UI updates, then submit
         await new Promise((r) => setTimeout(r, 300));
         if (els.submit) els.submit.click();
       } else {
-        // Manual mode — fill only, green highlight, wait for user
+        // Manual mode — user took over
+        pendingIndex = -1;
         els.input.style.outline = "2px solid #4CAF50";
       }
     } catch (err) {
@@ -102,10 +152,12 @@
   function check() {
     const els = findCaptcha();
     if (!els) {
-      // Captcha gone — reset for next time
+      // Captcha gone — success already recorded by saveEntry
       if (lastCaptchaSrc !== null) {
+        if (userPresent()) discardPending();
         autoSubmitCount = 0;
         lastCaptchaSrc = null;
+        pendingIndex = -1;
       }
       return;
     }
@@ -114,6 +166,8 @@
 
     // New captcha image appeared (or refreshed after failed attempt)
     if (currentSrc !== lastCaptchaSrc) {
+      // New image means the previous solve failed
+      if (lastCaptchaSrc !== null) markLastFailed();
       lastCaptchaSrc = currentSrc;
       solve(els);
     }
