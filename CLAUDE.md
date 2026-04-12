@@ -63,6 +63,8 @@ No dev server — load unpacked extension directly from this directory in `chrom
 - `src/offscreen.js` — ONNX runtime entry point (bundled by esbuild to dist/)
 - `model/model.onnx` — CAPTCHA solver model (6.4 MB CRNN+CTC binary)
 - `icons/` — Extension icons and resource images
+- `docs/` — User-facing guides
+  - `custom-js-filtering.md` — Custom JS filtering guide: available fields, examples, tips
 - `dist/` — Build output (WASM binaries, bundled JS) — gitignored, regenerate with `npm run build`
 
 ## Architecture
