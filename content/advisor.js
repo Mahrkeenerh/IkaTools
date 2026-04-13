@@ -669,6 +669,100 @@
     return offers;
   }
 
+  // Parse branchOfficeSoldier page for army trade offers using DOMParser.
+  // Table cols: City | Goods/min | Qty | Unit | Price | Distance | Trade  (7)
+  // Returns array of { cityName, playerName, goodsPerMin, quantity, unitId, unitName, price, currency, distance }
+  function parseArmyTrading(text) {
+    const offers = [];
+    const viewHtml = extractChangeViewFromAjax(text) || extractChangeViewHtml(text);
+    const doc = new DOMParser().parseFromString(viewHtml || text, "text/html");
+
+    function parseCityPlayer(td) {
+      let city = "", player = "";
+      let pastBr = false;
+      for (const node of td.childNodes) {
+        if (node.nodeName === "BR") { pastBr = true; continue; }
+        if (node.nodeType === 3) {
+          const t = node.textContent.trim();
+          if (!pastBr) { if (t) city = t; }
+          else { if (t) player = t.replace(/[()]/g, "").trim(); }
+        }
+      }
+      return { cityName: city, playerName: player };
+    }
+
+    const tables = doc.querySelectorAll("table.table01");
+    for (const table of tables) {
+      if (table.classList.contains("search")) continue;
+      for (const row of table.querySelectorAll("tr")) {
+        if (row.querySelector("th") || row.querySelector(".paginator") || row.querySelector("[colspan]")) continue;
+        const tds = row.querySelectorAll("td");
+        if (tds.length < 7) continue;
+
+        const { cityName, playerName } = parseCityPlayer(tds[0]);
+        const goodsPerMin = parseInt(tds[1]?.textContent.trim(), 10) || 0;
+        const qtyText = tds[2]?.childNodes[0]?.textContent || tds[2]?.textContent || "";
+        const quantity = parseInt(qtyText.replace(/\s/g, ""), 10) || 0;
+
+        // Unit: extract from div class "unitDropDownSlot army_small normal sXXX"
+        const unitDiv = tds[3]?.querySelector(".unitDropDownSlot");
+        let unitId = "";
+        let unitName = unitDiv?.title || unitDiv?.getAttribute("title") || "";
+        if (unitDiv) {
+          for (const cls of unitDiv.classList) {
+            if (/^s\d+$/.test(cls)) { unitId = cls; break; }
+          }
+        }
+
+        // Price + currency icon class
+        const priceText = (tds[4]?.textContent || "").replace(/\s/g, "");
+        const price = parseInt(priceText, 10) || 0;
+        const currIcon = tds[4]?.querySelector("img");
+        let currency = "gold";
+        if (currIcon) {
+          const cls = currIcon.className || "";
+          if (cls.includes("icon_wood") || cls.includes("icon_resource")) currency = "wood";
+          else if (cls.includes("icon_wine") || cls.includes("tradegood1")) currency = "wine";
+          else if (cls.includes("icon_marble") || cls.includes("tradegood2")) currency = "marble";
+          else if (cls.includes("icon_crystal") || cls.includes("tradegood3")) currency = "crystal";
+          else if (cls.includes("icon_sulfur") || cls.includes("tradegood4")) currency = "sulfur";
+          else if (cls.includes("icon_gold")) currency = "gold";
+        }
+
+        const distance = parseInt(tds[5]?.textContent.trim(), 10) || 0;
+
+        if (quantity > 0) {
+          offers.push({ cityName, playerName, goodsPerMin, quantity, unitId, unitName, price, currency, distance });
+        }
+      }
+    }
+    return offers;
+  }
+
+  // Parse branchOfficeOwnOffers page for the player's own standing offers.
+  // Returns array of { resource, type ("buy"|"sell"), qty, price }
+  function parseOwnOffers(text) {
+    const viewHtml = extractChangeViewFromAjax(text) || extractChangeViewHtml(text);
+    const doc = new DOMParser().parseFromString(viewHtml || text, "text/html");
+
+    const RES_IDS = ["resource", "tradegood1", "tradegood2", "tradegood3", "tradegood4"];
+    const RES_NAMES = ["wood", "wine", "marble", "crystal", "sulfur"];
+    const offers = [];
+    for (let i = 0; i < RES_IDS.length; i++) {
+      const id = RES_IDS[i];
+      const typeId = id === "resource" ? "resourceTradeType" : id + "TradeType";
+      const priceId = id === "resource" ? "resourcePrice" : id + "Price";
+      const typeEl = doc.getElementById(typeId);
+      const qtyEl = doc.getElementById(id);
+      const priceEl = doc.getElementById(priceId);
+      const type = typeEl?.value === "333" ? "buy" : "sell";
+      const qty = parseInt(qtyEl?.value || "0", 10) || 0;
+      const price = parseInt(priceEl?.value || "0", 10) || 0;
+      offers.push({ resource: RES_NAMES[i], type, qty, price });
+    }
+    return offers;
+  }
+
   // Unit group classification by ID
   const UNIT_GROUPS = {
     s303: "Infantry", s315: "Infantry", s302: "Infantry", s319: "Infantry", s308: "Infantry",
@@ -1156,6 +1250,8 @@
             const isDeployed = city.relationship === "deployedCities";
 
             // Fetch extra views based on mode
+            // Deployed city military is deferred — relatedCities uses server session
+            // context, so parallel fetches would all get the same city's data.
             const fetches = [
               !isDeployed && (wantDetails || wantWorkers)
                 ? fetchPage("view=townHall&cityId=" + city.id)
@@ -1163,10 +1259,8 @@
               !isDeployed && (wantDetails || wantStorage) && whPos !== null
                 ? fetchPage("view=warehouse&cityId=" + city.id + "&position=" + whPos)
                 : Promise.resolve(null),
-              wantArmy
-                ? fetchPage(isDeployed
-                    ? "view=relatedCities&activeTab=tabUnits&cityId=" + city.id
-                    : "view=cityMilitary&activeTab=tabUnits&cityId=" + city.id)
+              wantArmy && !isDeployed
+                ? fetchPage("view=cityMilitary&activeTab=tabUnits&cityId=" + city.id)
                 : Promise.resolve(null),
               !isDeployed && wantSpy && shPos !== null
                 ? fetchPage("view=safehouse&cityId=" + city.id + "&position=" + shPos)
@@ -1191,9 +1285,7 @@
               ownerName: cityData.bgData?.ownerName || "",
               townHall: thHtml ? parseTownHall(thHtml) : null,
               warehouse: whHtml ? parseWarehouse(whHtml) : null,
-              military: milHtml
-                ? (isDeployed ? parseRelatedCitiesMilitary(milHtml) : parseMilitary(milHtml))
-                : { units: [] },
+              military: milHtml ? parseMilitary(milHtml) : { units: [] },
               boPos,
               safehouse: shHtml ? parseSafehouse(shHtml) : null,
               safehouseLevel: shPos !== null ? (positions[shPos]?.level || 0) : null,
@@ -1211,6 +1303,23 @@
           }
         })
       );
+    }
+
+    // Phase 2.5: fetch deployed city military data sequentially.
+    // The relatedCities endpoint uses the server session context, so each
+    // deployed city needs a view=city fetch first to switch context.
+    if (wantArmy) {
+      const deployed = results.filter((r) => r && r.city.relationship === "deployedCities");
+      for (const r of deployed) {
+        try {
+          sendProgress(completed, total, "Fetching deployed military...");
+          await fetchPage("view=city&cityId=" + r.city.id);
+          const milHtml = await fetchPage("view=relatedCities&activeTab=tabUnits&cityId=" + r.city.id);
+          r.military = milHtml ? parseRelatedCitiesMilitary(milHtml) : { units: [] };
+        } catch (e) {
+          console.error(P, "Error fetching deployed military for", r.city.name, e);
+        }
+      }
     }
 
     // Phase 3: fetch trading data for cities with markets
@@ -1250,10 +1359,46 @@
               );
             }
           }
+          // Also fetch own offers for this city's market
+          fetches.push(
+            fetchPage("view=branchOfficeOwnOffers&cityId=" + r.city.id + "&position=" + r.boPos)
+              .then((html) => { r.ownOffers = parseOwnOffers(html); })
+              .catch(() => {})
+          );
           await Promise.all(fetches);
           r.trading = tradingOffers;
           completed++;
           sendProgress(completed, total, "Fetching trading...");
+        })
+      );
+
+      // Fetch army (soldier) offers — land (222) + sea (111) from each city's market
+      await Promise.all(
+        results.map(async (r) => {
+          if (!r || r.boPos == null) return;
+          const armyOffers = [];
+          const armyFetches = [];
+          for (const type of [222, 111]) {
+            armyFetches.push(
+              fetchPagePost({
+                view: "branchOfficeSoldier",
+                activeTab: "tradePartners",
+                cityId: r.city.id,
+                position: r.boPos,
+                type,
+                searchResource: "all",
+                range: 99,
+                currency: "all",
+              })
+                .then((html) => {
+                  const offers = parseArmyTrading(html);
+                  for (const o of offers) armyOffers.push(o);
+                })
+                .catch(() => {})
+            );
+          }
+          await Promise.all(armyFetches);
+          r.armyTrading = armyOffers;
         })
       );
     }
@@ -1403,6 +1548,8 @@
           trainingQueue: r.trainingQueue || [],
           // Trading
           trading: r.trading || [],
+          armyTrading: r.armyTrading || [],
+          ownOffers: r.ownOffers || [],
           // Spy
           spy: r.safehouse ? {
             ...r.safehouse,

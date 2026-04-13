@@ -72,7 +72,11 @@
     if (!visibleTabs || visibleTabs.includes("panel-workers")) renderWorkers(report);
     if (!visibleTabs || visibleTabs.includes("panel-army")) renderArmy(report);
     if (!visibleTabs || visibleTabs.includes("panel-storage")) renderStorage(report);
-    if (!visibleTabs || visibleTabs.includes("panel-trading")) renderTrading(report);
+    if (!visibleTabs || visibleTabs.includes("panel-trading")) {
+      renderTrading(report);
+      renderArmyTrading(report);
+      setupTradingToggle();
+    }
     if (!visibleTabs || visibleTabs.includes("panel-spy")) renderSpy(report);
 
     // Live-update all countdown timers every second
@@ -1170,6 +1174,86 @@
     container.appendChild(wrap);
   }
 
+  function renderOwnOffers(report, container, RES_LABELS, RES_CLASSES, RES_ICONS) {
+    // Collect own offers from all cities that have them
+    const rows = [];
+    for (const city of report.cities) {
+      if (!city.ownOffers || city.ownOffers.length === 0) continue;
+      for (const o of city.ownOffers) {
+        if (o.qty <= 0) continue;
+        rows.push({ city: city.name, ...o });
+      }
+    }
+    if (rows.length === 0) return;
+
+    const selling = rows.filter((r) => r.type === "sell");
+    const buying = rows.filter((r) => r.type === "buy");
+
+    const header = document.createElement("div");
+    header.className = "trade-section-header";
+    header.innerHTML = '<span class="trade-type-badge" style="background:rgba(100,180,100,0.15);color:#5a9a5a;border:1px solid rgba(100,180,100,0.3);">My Offers (' + rows.length + ')</span>';
+    container.appendChild(header);
+
+    function buildTable(title, offers, isSelling) {
+      if (offers.length === 0) return;
+      const goldCls = isSelling ? "val-pos" : "val-neg";
+      const label = document.createElement("div");
+      label.style.cssText = "margin:8px 0 4px;font-size:13px;font-weight:600;color:#aab;";
+      label.textContent = title;
+      container.appendChild(label);
+
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      const table = document.createElement("table");
+      table.className = "report-table";
+
+      const thead = document.createElement("thead");
+      thead.innerHTML = `<tr>
+        <th>City</th>
+        <th>Resource</th>
+        <th class="right">Qty</th>
+        <th class="right">Price</th>
+        <th class="right">Gold</th>
+      </tr>`;
+      table.appendChild(thead);
+
+      const tbody = document.createElement("tbody");
+      let totalGold = 0;
+      for (const o of offers) {
+        const resLabel = RES_LABELS[o.resource] || o.resource;
+        const resCls = RES_CLASSES[o.resource] || "";
+        const icon = RES_ICONS[o.resource] || "";
+        const gold = o.qty * o.price;
+        totalGold += gold;
+        const tr = document.createElement("tr");
+        tr.innerHTML = `
+          <td>${o.city}</td>
+          <td class="${resCls}">${icon ? '<img src="' + icon + '" style="width:14px;height:14px;vertical-align:-2px;margin-right:4px">' : ""}${resLabel}</td>
+          <td class="right">${fmt(o.qty)}</td>
+          <td class="right">${o.price}</td>
+          <td class="right ${goldCls}">${fmt(gold)}</td>
+        `;
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+
+      const tfoot = document.createElement("tfoot");
+      const footTr = document.createElement("tr");
+      footTr.innerHTML = `
+        <td colspan="4">Total</td>
+        <td class="right ${goldCls}">${fmt(totalGold)}</td>
+      `;
+      tfoot.appendChild(footTr);
+      table.appendChild(tfoot);
+
+      wrap.appendChild(table);
+      container.appendChild(wrap);
+    }
+
+    buildTable("Selling", selling, true);
+    buildTable("Buying", buying, false);
+  }
+
   function renderTrading(report) {
     const container = $("trading-container");
     const RESOURCES = ["wood", "wine", "marble", "crystal", "sulfur"];
@@ -1225,6 +1309,9 @@
 
     // Convoys go above the two-column layout
     renderConvoys(report, container, RES_LABELS, RES_CLASSES);
+
+    // Own standing offers across all cities
+    renderOwnOffers(report, container, RES_LABELS, RES_CLASSES, RES_ICONS);
 
     // Collect and dedup current offers
     const allOffers = [];
@@ -1633,6 +1720,274 @@
 
     container.innerHTML =
       `<div class="hs-card"><div class="hs-label">${label}</div><div class="hs-value">${bestForUser}</div><div class="hs-sub">${sub}</div></div>`;
+  }
+
+  // --- Army Trading ---
+
+  function setupTradingToggle() {
+    const btnRes = $("btn-trade-resources");
+    const btnArmy = $("btn-trade-army");
+    const resCont = $("trading-container");
+    const armyCont = $("army-trading-container");
+    if (!btnRes || !btnArmy) return;
+
+    function activate(mode) {
+      const isArmy = mode === "army";
+      btnRes.style.background = isArmy ? "#1a2535" : "#2a3a50";
+      btnRes.style.color = isArmy ? "#778" : "#e0e8f0";
+      btnArmy.style.background = isArmy ? "#2a3a50" : "#1a2535";
+      btnArmy.style.color = isArmy ? "#e0e8f0" : "#778";
+      if (resCont) resCont.style.display = isArmy ? "none" : "";
+      if (armyCont) armyCont.style.display = isArmy ? "" : "none";
+    }
+
+    btnRes.addEventListener("click", () => activate("resources"));
+    btnArmy.addEventListener("click", () => activate("army"));
+  }
+
+  function renderArmyTrading(report) {
+    const container = $("army-trading-container");
+    if (!container) return;
+
+    const playerName = (report.global.playerName || "").toLowerCase();
+    const CURRENCY_LABELS = { gold: "Gold", wood: "Wood", wine: "Wine", marble: "Marble", crystal: "Crystal", sulfur: "Sulfur" };
+
+    // Collect and dedup army offers
+    const allOffers = [];
+    for (const city of report.cities) {
+      if (!city.armyTrading || city.armyTrading.length === 0) continue;
+      for (const offer of city.armyTrading) {
+        allOffers.push({ ...offer, fromCity: city.name });
+      }
+    }
+
+    const dedupMap = new Map();
+    for (const o of allOffers) {
+      const key = o.cityName + "|" + o.playerName + "|" + o.quantity + "|" + o.price + "|" + o.unitId + "|" + o.currency;
+      if (dedupMap.has(key)) {
+        const ex = dedupMap.get(key);
+        if (!ex.fromCities.includes(o.fromCity)) ex.fromCities.push(o.fromCity);
+      } else {
+        dedupMap.set(key, { ...o, fromCities: [o.fromCity] });
+      }
+    }
+    const offers = [...dedupMap.values()];
+
+    // Group by unitId
+    const unitGroups = new Map();
+    for (const o of offers) {
+      const uid = o.unitId || "unknown";
+      if (!unitGroups.has(uid)) unitGroups.set(uid, { unitName: o.unitName || uid, offers: [] });
+      unitGroups.get(uid).offers.push(o);
+    }
+    // Sort each group by price (cheapest first)
+    for (const g of unitGroups.values()) g.offers.sort((a, b) => a.price - b.price);
+
+    renderArmyTradingAsync(report, container, unitGroups, offers, playerName, CURRENCY_LABELS);
+  }
+
+  async function renderArmyTradingAsync(report, container, unitGroups, offers, playerName, CURRENCY_LABELS) {
+    // Load history
+    let historySnapshots = [];
+    if (typeof TradeHistory !== "undefined" && report.urlWorld && report.avatarId) {
+      try {
+        historySnapshots = await TradeHistory.loadHistory(report.urlWorld, report.avatarId, 30);
+      } catch (e) {
+        console.error("[Report] Failed to load army trade history:", e);
+      }
+    }
+    const hasHistory = historySnapshots.length > 0 && typeof TradeChart !== "undefined";
+
+    // Compute history stats per unit for badges
+    const historyStats = {};
+    if (hasHistory) {
+      for (const [unitId] of unitGroups) {
+        const seriesData = TradeChart.extractArmySeriesData(historySnapshots, unitId, "bid", false, { minQty: 1 });
+        if (seriesData.length > 0) {
+          const allMedians = seriesData.map((s) => s.median).sort((a, b) => a - b);
+          const allPlayers = new Set();
+          seriesData.forEach((s) => s.offers.forEach((o) => { if (o.pl) allPlayers.add(o.pl); }));
+          const histBest = Math.min(...seriesData.map((s) => s.min));
+          historyStats[unitId] = {
+            medians: allMedians,
+            overallMedian: TradeHistory.percentile(allMedians, 50),
+            players: allPlayers,
+            histBest,
+          };
+        }
+      }
+    }
+
+    if (unitGroups.size === 0 && !hasHistory) {
+      container.innerHTML = '<div class="no-data"><strong>No army offers</strong>No soldier offers found. Run the trading advisor to collect data.</div>';
+      return;
+    }
+
+    // Controls bar (shared for all unit charts)
+    let timeframeDays = 7;
+    let timeframeRaw = false;
+    let showScatter = false;
+    let includeOwn = false;
+    const refreshFns = [];
+
+    if (hasHistory) {
+      const controls = document.createElement("div");
+      controls.className = "history-controls";
+
+      const tfWrap = document.createElement("div");
+      tfWrap.className = "timeframe-btns";
+      for (const tf of [{ days: 1, label: "24h", raw: true }, { days: 7, label: "7d", raw: false }, { days: 30, label: "30d", raw: false }]) {
+        const btn = document.createElement("button");
+        btn.className = "tf-btn" + (tf.days === timeframeDays && tf.raw === timeframeRaw ? " active" : "");
+        btn.textContent = tf.label;
+        btn.addEventListener("click", () => {
+          timeframeDays = tf.days;
+          timeframeRaw = tf.raw;
+          tfWrap.querySelectorAll(".tf-btn").forEach((b) => b.classList.remove("active"));
+          btn.classList.add("active");
+          refreshFns.forEach((fn) => fn());
+        });
+        tfWrap.appendChild(btn);
+      }
+      controls.appendChild(tfWrap);
+
+      const scatterLabel = document.createElement("label");
+      scatterLabel.className = "history-toggle";
+      const scatterCb = document.createElement("input");
+      scatterCb.type = "checkbox";
+      scatterCb.addEventListener("change", () => { showScatter = scatterCb.checked; refreshFns.forEach((fn) => fn()); });
+      scatterLabel.appendChild(scatterCb);
+      scatterLabel.appendChild(document.createTextNode("Show offers"));
+      controls.appendChild(scatterLabel);
+
+      container.appendChild(controls);
+    }
+
+    // Per-unit rows (same layout as resource rows)
+    for (const [unitId, group] of unitGroups) {
+      const unitOffers = group.offers;
+      const hStats = historyStats[unitId];
+
+      const row = document.createElement("div");
+      row.className = "res-row";
+
+      const header = document.createElement("div");
+      header.className = "res-row-header";
+      header.style.color = "#b8c8e0";
+      header.textContent = group.unitName;
+      row.appendChild(header);
+
+      const sides = document.createElement("div");
+      sides.className = "res-row-sides";
+
+      // Chart side
+      const chartSide = document.createElement("div");
+      chartSide.className = "res-side";
+      const chartTitle = document.createElement("div");
+      chartTitle.className = "res-side-title";
+      chartTitle.innerHTML = '<span class="trade-type-badge trade-type-buy">Buy from</span> — prices you can buy at';
+      chartSide.appendChild(chartTitle);
+
+      const cols = document.createElement("div");
+      cols.className = "res-side-cols";
+
+      const chartCol = document.createElement("div");
+      if (hasHistory) {
+        const wrap = document.createElement("div");
+        wrap.className = "chart-wrap";
+        const canvas = document.createElement("canvas");
+        canvas.style.display = "block";
+        const tooltip = document.createElement("div");
+        tooltip.className = "chart-tooltip";
+        wrap.appendChild(canvas);
+        wrap.appendChild(tooltip);
+        chartCol.appendChild(wrap);
+
+        const refreshChart = () => {
+          const cutoff = Date.now() - timeframeDays * 24 * 60 * 60 * 1000;
+          const filtered = historySnapshots.filter((s) => s.ts >= cutoff);
+          const opts = { showScatter, includeOwn, minQty: 1, raw: timeframeRaw, extractFn: TradeChart.extractArmySeriesData };
+          const hits = TradeChart.drawIQRChart(canvas, filtered, unitId, "bid", opts);
+          TradeChart.setupHover(canvas, hits, tooltip);
+        };
+        refreshFns.push(refreshChart);
+      }
+      cols.appendChild(chartCol);
+
+      // Offer table
+      const tableCol = document.createElement("div");
+      const histMedian = hStats?.overallMedian;
+      const histBest = hStats?.histBest;
+
+      if (unitOffers.length === 0) {
+        const empty = document.createElement("div");
+        empty.style.cssText = "color:#445;font-size:11px;padding:8px 0;";
+        empty.textContent = "No offers";
+        tableCol.appendChild(empty);
+      } else {
+        const wrap = document.createElement("div");
+        wrap.className = "table-wrap";
+        const table = document.createElement("table");
+        table.className = "report-table";
+
+        const thead = document.createElement("thead");
+        thead.innerHTML = `<tr>
+          <th>Player</th>
+          <th class="right">Qty</th>
+          <th class="right">Price</th>
+          <th>Currency</th>
+          <th class="right">Dist</th>
+          <th class="right">G/min</th>
+          <th>My City</th>
+        </tr>`;
+        table.appendChild(thead);
+
+        const tbody = document.createElement("tbody");
+        for (const o of unitOffers) {
+          const tr = document.createElement("tr");
+
+          // Highlight if matching or beating historical best
+          if (histBest != null && o.price <= histBest) {
+            tr.style.cssText = "background:rgba(111,206,140,0.08);";
+          }
+
+          let badges = "";
+          if (histMedian != null && histMedian > 0) {
+            const ratio = o.price / histMedian;
+            if (ratio < 0.85) badges += '<span class="offer-badge badge-cheap">CHEAP</span>';
+            else if (ratio > 1.15) badges += '<span class="offer-badge badge-expensive">EXPENSIVE</span>';
+          }
+          if (hStats && o.playerName && !hStats.players.has(o.playerName)) {
+            badges += '<span class="offer-badge badge-new">NEW</span>';
+          }
+
+          tr.innerHTML = `
+            <td>${o.cityName}${o.playerName ? ' <span style="color:#667">(' + o.playerName + ')</span>' : ""}${badges}</td>
+            <td class="right">${fmt(o.quantity)}</td>
+            <td class="right">${fmt(o.price)}</td>
+            <td>${CURRENCY_LABELS[o.currency] || o.currency}</td>
+            <td class="right">${o.distance}</td>
+            <td class="right">${o.goodsPerMin || "—"}</td>
+            <td>${o.fromCities.join(", ")}</td>
+          `;
+          tbody.appendChild(tr);
+        }
+        table.appendChild(tbody);
+        wrap.appendChild(table);
+        tableCol.appendChild(wrap);
+      }
+
+      cols.appendChild(tableCol);
+      chartSide.appendChild(cols);
+      sides.appendChild(chartSide);
+      row.appendChild(sides);
+      container.appendChild(row);
+    }
+
+    // Deferred chart render
+    if (refreshFns.length > 0) {
+      requestAnimationFrame(() => refreshFns.forEach((fn) => fn()));
+    }
   }
 
   // --- Spy ---

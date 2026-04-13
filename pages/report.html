@@ -493,7 +493,12 @@ td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-le
   <div id="panel-trading" class="report-panel">
     <div class="panel-title">Trading — Market Offers</div>
     <div class="section-subtitle">Buy and sell offers visible from your cities' markets.</div>
+    <div id="trading-mode-toggle" style="display:flex;justify-content:center;gap:0;margin:8px 0 12px;">
+      <button id="btn-trade-resources" class="trade-toggle active" style="padding:6px 24px;border:1px solid #3a506b;border-radius:4px 0 0 4px;background:#2a3a50;color:#e0e8f0;cursor:pointer;font-size:13px;font-weight:bold;">Resources</button>
+      <button id="btn-trade-army" class="trade-toggle" style="padding:6px 24px;border:1px solid #3a506b;border-left:none;border-radius:0 4px 4px 0;background:#1a2535;color:#778;cursor:pointer;font-size:13px;font-weight:bold;">Army</button>
+    </div>
     <div id="trading-container"></div>
+    <div id="army-trading-container" style="display:none;"></div>
   </div>
 
   <!-- Spy -->

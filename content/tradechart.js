@@ -182,7 +182,8 @@
 
     const ctx = setupCanvas(canvas, width, height);
     const colors = SIDE_COLORS[side];
-    const series = extractSeriesData(snapshots, resource, side, includeOwn, options);
+    const extractFn = options?.extractFn || extractSeriesData;
+    const series = extractFn(snapshots, resource, side, includeOwn, options);
 
     // Clear
     ctx.fillStyle = BG_COLOR;
@@ -478,11 +479,90 @@
     return { uniquePlayers, effectivePlayers, topShare };
   }
 
+  // Extract series data for army unit offers from snapshot.armyOffers
+  // unitId is e.g. "s302". Only "bid" side exists for army.
+  // Signature matches extractSeriesData: (snapshots, resource, side, includeOwn, options)
+  // but `side` is ignored (always "bid").
+  function extractArmySeriesData(snapshots, unitId, _side, includeOwn, options) {
+    const minQty = options?.minQty || 0;
+    const raw = options?.raw || false;
+
+    function filterOffers(snap) {
+      let offers = (snap.armyOffers || []).filter((o) => o.u === unitId);
+      if (!includeOwn) offers = offers.filter((o) => !o.self);
+      if (minQty > 0) offers = offers.filter((o) => o.q >= minQty);
+      return offers;
+    }
+
+    if (raw) {
+      const series = [];
+      for (const snap of snapshots) {
+        const offers = filterOffers(snap);
+        if (offers.length === 0) continue;
+        const prices = offers.map((o) => o.p).sort((a, b) => a - b);
+        const totalQty = offers.reduce((sum, o) => sum + o.q, 0);
+        const playerSet = new Set(offers.map((o) => o.pl).filter(Boolean));
+        series.push({
+          ts: snap.ts,
+          min: prices[0],
+          max: prices[prices.length - 1],
+          p25: TradeHistory.percentile(prices, 25),
+          median: TradeHistory.percentile(prices, 50),
+          p75: TradeHistory.percentile(prices, 75),
+          totalQty,
+          uniquePlayers: playerSet.size,
+          offers,
+        });
+      }
+      series.sort((a, b) => a.ts - b.ts);
+      return series;
+    }
+
+    // Group by day
+    const dayMap = new Map();
+    for (const snap of snapshots) {
+      const offers = filterOffers(snap);
+      if (offers.length === 0) continue;
+      const d = new Date(snap.ts);
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      if (!dayMap.has(dayKey)) dayMap.set(dayKey, { ts: snap.ts, offers: [] });
+      const day = dayMap.get(dayKey);
+      day.ts = Math.max(day.ts, snap.ts);
+      for (const o of offers) {
+        const key = `${o.pl}|${o.p}|${o.q}|${o.c}`;
+        if (!day.offers.some((e) => `${e.pl}|${e.p}|${e.q}|${e.c}` === key)) {
+          day.offers.push(o);
+        }
+      }
+    }
+
+    const series = [];
+    for (const [, day] of dayMap) {
+      const prices = day.offers.map((o) => o.p).sort((a, b) => a - b);
+      const totalQty = day.offers.reduce((sum, o) => sum + o.q, 0);
+      const playerSet = new Set(day.offers.map((o) => o.pl).filter(Boolean));
+      series.push({
+        ts: day.ts,
+        min: prices[0],
+        max: prices[prices.length - 1],
+        p25: TradeHistory.percentile(prices, 25),
+        median: TradeHistory.percentile(prices, 50),
+        p75: TradeHistory.percentile(prices, 75),
+        totalQty,
+        uniquePlayers: playerSet.size,
+        offers: day.offers,
+      });
+    }
+    series.sort((a, b) => a.ts - b.ts);
+    return series;
+  }
+
   globalThis.TradeChart = {
     drawIQRChart,
     drawSparkline,
     setupHover,
     computeConcentration,
     extractSeriesData,
+    extractArmySeriesData,
   };
 })();

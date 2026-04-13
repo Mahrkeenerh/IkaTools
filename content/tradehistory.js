@@ -127,6 +127,32 @@
     };
   }
 
+  // Deduplicate army offers — same offer visible from multiple scanning cities
+  function deduplicateArmyOffers(allOffers, playerName) {
+    const map = new Map();
+    const pn = (playerName || "").toLowerCase();
+
+    for (const o of allOffers) {
+      const key = `${o.unitId}|${o.price}|${o.quantity}|${o.playerName}|${o.cityName}|${o.currency}`;
+      if (map.has(key)) continue;
+
+      const isSelf = pn && o.playerName && o.playerName.toLowerCase() === pn;
+      map.set(key, {
+        s: "bid",
+        u: o.unitId || "",
+        un: o.unitName || "",
+        p: o.price,
+        q: o.quantity,
+        pl: o.playerName || "",
+        c: o.cityName || "",
+        cur: o.currency || "gold",
+        self: isSelf ? 1 : 0,
+      });
+    }
+
+    return [...map.values()];
+  }
+
   // Persist a trading snapshot
   async function persistSnapshot(reportData) {
     const world = reportData.urlWorld;
@@ -151,6 +177,16 @@
     const dedupedOffers = deduplicateOffers(allOffers, playerName);
     const stats = computeStats(dedupedOffers);
 
+    // Flatten army offers across cities
+    const allArmyOffers = [];
+    for (const city of reportData.cities) {
+      if (!city.armyTrading || city.armyTrading.length === 0) continue;
+      for (const offer of city.armyTrading) {
+        allArmyOffers.push(offer);
+      }
+    }
+    const dedupedArmyOffers = deduplicateArmyOffers(allArmyOffers, playerName);
+
     const snapshot = {
       ts: Date.now(),
       complete: true,
@@ -159,6 +195,9 @@
       offers: dedupedOffers,
       stats,
     };
+    if (dedupedArmyOffers.length > 0) {
+      snapshot.armyOffers = dedupedArmyOffers;
+    }
 
     // Append to current month chunk
     const key = chunkKey(world, avatarId);
