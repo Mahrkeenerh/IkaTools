@@ -4,6 +4,17 @@
 
   const TRADEGOOD_NAMES = { 1: "Wine", 2: "Marble", 3: "Crystal", 4: "Sulfur" };
 
+  function timeAgo(ts) {
+    const s = Math.floor((Date.now() - ts) / 1000);
+    if (s < 60) return "just now";
+    const m = Math.floor(s / 60);
+    if (m < 60) return `${m}m ago`;
+    const h = Math.floor(m / 60);
+    if (h < 24) return `${h}h ago`;
+    const d = Math.floor(h / 24);
+    return `${d}d ago`;
+  }
+
   // Key building IDs for the buildings grid
   const OVERVIEW_BUILDING_IDS = [0, 4, 6, 3, 7, 8, 16, 11, 28, 30, 12, 9, 34, 24, 18, 23, 21, 13];
 
@@ -1341,11 +1352,7 @@
       return [...map.values()];
     }
 
-    function isSelf(o) {
-      return playerName && o.playerName && o.playerName.toLowerCase() === playerName;
-    }
-    const selfOffers = dedup(allOffers.filter(isSelf));
-    const otherOffers = dedup(allOffers.filter((o) => !isSelf(o)));
+    const otherOffers = dedup(allOffers.filter((o) => !(playerName && o.playerName && o.playerName.toLowerCase() === playerName)));
 
     // Controls bar (shared state for all resource charts)
     let timeframeDays = 7;
@@ -1526,54 +1533,6 @@
       disclaimer.className = "chart-disclaimer";
       disclaimer.textContent = "History reflects listed market offers seen during scans, not completed transactions. Offers under 1,000 qty excluded from charts.";
       container.appendChild(disclaimer);
-    }
-
-    // My offers section
-    if (selfOffers.length > 0) {
-      const header = document.createElement("div");
-      header.className = "trade-section-header";
-      header.style.marginTop = "20px";
-      header.innerHTML = '<span class="trade-type-badge" style="background:rgba(160,136,80,0.15);color:#a08850;border:1px solid rgba(160,136,80,0.3);">My Offers</span>';
-      container.appendChild(header);
-
-      const wrap = document.createElement("div");
-      wrap.className = "table-wrap";
-      const table = document.createElement("table");
-      table.className = "report-table";
-
-      const thead = document.createElement("thead");
-      thead.innerHTML = `<tr>
-        <th>Type</th>
-        <th>Resource</th>
-        <th>City</th>
-        <th class="right">Quantity</th>
-        <th class="right">Price/unit</th>
-        <th class="right">Total Gold</th>
-        <th>Seen from</th>
-      </tr>`;
-      table.appendChild(thead);
-
-      const tbody = document.createElement("tbody");
-      for (const o of selfOffers) {
-        const typeBadge = o.type === "buy"
-          ? '<span class="trade-type-badge trade-type-buy">Buy</span>'
-          : '<span class="trade-type-badge trade-type-sell">Sell</span>';
-        const tr = document.createElement("tr");
-        tr.innerHTML = `
-          <td>${typeBadge}</td>
-          <td class="${RES_CLASSES[o.resource]}">${RES_LABELS[o.resource]}</td>
-          <td>${o.cityName}</td>
-          <td class="right">${fmt(o.quantity)}</td>
-          <td class="right">${fmt(o.price)}</td>
-          <td class="right">${fmt(o.quantity * o.price)}</td>
-          <td>${o.fromCities.join(", ")}</td>
-        `;
-        tbody.appendChild(tr);
-      }
-      table.appendChild(tbody);
-
-      wrap.appendChild(table);
-      container.appendChild(wrap);
     }
 
     // Deferred initial chart render — DOM must have layout first
@@ -2186,6 +2145,7 @@
         <th class="right">Agents</th>
         <th>Details</th>
         <th></th>
+        <th></th>
       </tr>`;
       table.appendChild(thead);
 
@@ -2226,6 +2186,13 @@
             : '<span class="val-pos">OK</span>'
           : "—";
 
+        if (r.type === "units") tr.classList.add("spy-military");
+        if (r.looted) tr.classList.add("spy-looted");
+
+        const lootCell = r.type === "resources"
+          ? `<button class="spy-log-loot${r.looted ? " looted" : ""}" data-id="${r.id}" title="${r.looted ? "Unmark" : "Mark as looted"}">${r.looted ? "✓" : "💰"}</button>${r.looted ? `<span class="spy-loot-time" title="${new Date(r.looted).toLocaleString()}">${timeAgo(r.looted)}</span>` : ""}`
+          : "";
+
         tr.innerHTML = `
           <td style="white-space:nowrap;font-size:12px;">${r.date || "—"}</td>
           <td>${r.targetPlayer || "—"}</td>
@@ -2235,7 +2202,8 @@
           <td>${resultShort}</td>
           <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
           <td style="font-size:12px;">${details}</td>
-          <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">x</button></td>
+          <td class="spy-loot-cell">${lootCell}</td>
+          <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">del</button></td>
         `;
         tbody.appendChild(tr);
       }
@@ -2243,6 +2211,38 @@
 
       wrap.appendChild(table);
       container.appendChild(wrap);
+
+      // Looted toggle handler
+      wrap.addEventListener("click", (e) => {
+        const btn = e.target.closest(".spy-log-loot");
+        if (!btn) return;
+        const id = btn.dataset.id;
+        const entry = log[id];
+        if (!entry) return;
+        const tr = btn.closest("tr");
+        const cell = btn.closest(".spy-loot-cell");
+        if (entry.looted) {
+          delete entry.looted;
+          btn.classList.remove("looted");
+          btn.textContent = "💰";
+          btn.title = "Mark as looted";
+          tr.classList.remove("spy-looted");
+          const ts = cell.querySelector(".spy-loot-time");
+          if (ts) ts.remove();
+        } else {
+          entry.looted = Date.now();
+          btn.classList.add("looted");
+          btn.textContent = "✓";
+          btn.title = "Unmark";
+          tr.classList.add("spy-looted");
+          const ts = document.createElement("span");
+          ts.className = "spy-loot-time";
+          ts.textContent = timeAgo(entry.looted);
+          ts.title = new Date(entry.looted).toLocaleString();
+          cell.appendChild(ts);
+        }
+        chrome.storage.local.set({ [storageKey]: log });
+      });
 
       // Delete handler
       wrap.addEventListener("click", (e) => {

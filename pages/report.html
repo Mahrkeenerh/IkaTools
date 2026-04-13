@@ -232,6 +232,14 @@ td.sub-rate { text-align: left; font-size: 12px; white-space: nowrap; padding-le
 .spy-badge-info { background: rgba(180, 160, 80, 0.15); color: #b9a44c; border: 1px solid rgba(180, 160, 80, 0.3); }
 .spy-log-del { background: none; border: 1px solid rgba(224, 96, 96, 0.3); color: var(--danger); border-radius: 4px; cursor: pointer; font-size: 11px; padding: 1px 6px; opacity: 0.5; }
 .spy-log-del:hover { opacity: 1; background: rgba(224, 96, 96, 0.15); }
+.spy-log-loot { background: none; border: 1px solid rgba(80, 180, 80, 0.3); color: #6a6; border-radius: 4px; cursor: pointer; font-size: 14px; padding: 1px 4px; opacity: 0.5; min-width: 26px; height: 22px; box-sizing: border-box; text-align: center; line-height: 18px; display: inline-flex; align-items: center; justify-content: center; }
+.spy-log-loot:hover { opacity: 1; background: rgba(80, 180, 80, 0.15); }
+.spy-log-loot.looted { opacity: 1; background: rgba(80, 180, 80, 0.25); color: #5c5; border-color: rgba(80, 180, 80, 0.5); }
+.spy-loot-cell { white-space: nowrap; }
+.spy-loot-time { font-size: 11px; color: #6a6; margin-left: 6px; }
+tr.spy-military { background: rgba(0, 0, 0, 0.15); }
+tr.spy-looted td { opacity: 0.5; }
+tr.spy-looted td:last-child, tr.spy-looted td.spy-loot-cell { opacity: 1; }
 
 /* Trade History — Resource row: 4 columns */
 .res-row {
