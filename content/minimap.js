@@ -507,53 +507,43 @@
     islandsByCoord = null; // invalidate dim-path lookup
   }
 
-  // Evaluate the filter-panel Custom JS predicate (if any) against the
-  // currently loaded world islands. Pre-computed results are stored in
-  // MapFilter as a Map<"x:y", boolean> so the synchronous matchFilter
-  // path can look them up without any bridge round-trips during render.
-  async function refreshCustomResults() {
-    if (!globalThis.CustomEval || !CustomEval.hasCode()) {
-      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
-      return;
-    }
-    if (!currentMapData || !currentMapData.islands || currentMapData.islands.length === 0) return;
-    const islands = currentMapData.islands;
-    // Ensure rich-data enrichment is current so user code sees _allyTags etc.
-    enrichIslandsWithRichData(islands);
-    const r = await CustomEval.evaluate(islands);
-    if (r.error) {
-      MapFilter.setCustomResults(null);
-      return;
-    }
-    const map = new Map();
-    for (let i = 0; i < islands.length; i++) {
-      map.set(islands[i].x + ":" + islands[i].y, !!r.matches[i]);
-    }
-    MapFilter.setCustomResults(map, (isl) => isl.x + ":" + isl.y);
-  }
-
-  // Evaluate saved JS preset chips against the current map data.
+  // --- Local filter evaluation state (no globals in MapFilter) ---
+  let localCustomResults = null; // Map<"x:y", bool> or null
+  let localPresetResults = new Map(); // Map<presetId, Map<"x:y", bool>>
   let activePresets = []; // [{id, code}] from the last ik-preset-change event
 
-  async function refreshPresetResults() {
-    if (!globalThis.CustomEval || !globalThis.MapFilter) return;
-    MapFilter.clearAllPresetResults();
-    if (activePresets.length === 0) return;
-    if (!currentMapData || !currentMapData.islands || currentMapData.islands.length === 0) return;
+  const worldKeyOf = (isl) => isl.x + ":" + isl.y;
+
+  function buildFilterCtx() {
+    return {
+      devtoolsPredicate: globalThis.IkFilter ? IkFilter.current() : null,
+      keyOf: worldKeyOf,
+      customResults: localCustomResults,
+      presetResults: localPresetResults,
+    };
+  }
+
+  async function refreshCustomResults() {
+    if (!currentMapData || !currentMapData.islands || currentMapData.islands.length === 0) {
+      localCustomResults = null;
+      return;
+    }
     const islands = currentMapData.islands;
     enrichIslandsWithRichData(islands);
-    const keyFn = (isl) => isl.x + ":" + isl.y;
-    for (const preset of activePresets) {
-      const cr = await CustomEval.compilePreset(preset.id, preset.code);
-      if (!cr.ok) continue;
-      const er = await CustomEval.evaluatePreset(preset.id, islands);
-      if (er.error || !er.matches) continue;
-      const map = new Map();
-      for (let i = 0; i < islands.length; i++) {
-        map.set(islands[i].x + ":" + islands[i].y, !!er.matches[i]);
-      }
-      MapFilter.setPresetResult(preset.id, map, keyFn);
+    const result = await FilterRunner.evaluateCustom(islands, worldKeyOf);
+    // null means stale or no code — either way, clear
+    localCustomResults = result;
+  }
+
+  async function refreshPresetResults() {
+    if (activePresets.length === 0 || !currentMapData || !currentMapData.islands || currentMapData.islands.length === 0) {
+      localPresetResults = new Map();
+      return;
     }
+    const islands = currentMapData.islands;
+    enrichIslandsWithRichData(islands);
+    const result = await FilterRunner.evaluatePresets(activePresets, islands, worldKeyOf);
+    localPresetResults = result;
   }
 
   // Stamp rich-data fields onto each island so the filter engine can read
@@ -612,7 +602,7 @@
     const renderInfo = globalThis.MapRender.render(baseCtx, islands, {
       tileW: tw, tileH: th, islandSize: iSize, pad: padding,
       drawLegend: false, layer: currentLayer, dimEmpty: dimEmpty,
-      filterConfig: filterConfig,
+      filterConfig: filterConfig, filterCtx: buildFilterCtx(),
     });
 
     lastRenderPxMin = renderInfo.pxMin;
@@ -631,19 +621,27 @@
   // status footer. Cheap — same predicate logic the renderer uses.
   function pushMatchCount(islands) {
     if (!globalThis.MapFilter || !globalThis.IkFilterPanel) return;
-    const hasFilters = filterConfig && filterConfig.enabled &&
-      filterConfig.groups && filterConfig.groups.some((g) => g.enabled !== false && g.filters && g.filters.length > 0);
-    const hasCustom = (MapFilter.getCustomPredicate && MapFilter.getCustomPredicate()) ||
-      (MapFilter.hasCustomResults && MapFilter.hasCustomResults());
-    if (!hasFilters && !hasCustom) {
+    if (!hasAnyActiveFilter()) {
       IkFilterPanel.setMatchCount(null);
+      IkFilterPanel.setCustomResultCoords([]);
       return;
     }
+    const ctx = buildFilterCtx();
     let n = 0;
     for (const isl of islands) {
-      if (MapFilter.islandMatches(isl, filterConfig)) n++;
+      if (MapFilter.islandMatches(isl, filterConfig, ctx)) n++;
     }
     IkFilterPanel.setMatchCount(n);
+    // Push matching coords from custom JS for the "Copy coords" button
+    if (localCustomResults) {
+      const coords = [];
+      for (const [key, val] of localCustomResults) {
+        if (val) coords.push(key);
+      }
+      IkFilterPanel.setCustomResultCoords(coords);
+    } else {
+      IkFilterPanel.setCustomResultCoords([]);
+    }
   }
 
   function openFullMap() {
@@ -656,6 +654,7 @@
     const ctx = canvas.getContext("2d");
     MapRender.render(ctx, islands, {
       layer: currentLayer, dimEmpty: dimEmpty, filterConfig: filterConfig,
+      filterCtx: buildFilterCtx(),
     });
     canvas.toBlob((blob) => {
       const url = URL.createObjectURL(blob);
@@ -899,9 +898,6 @@
       const activeFilter = hasAnyActiveFilter();
       if (activeFilter && globalThis.MapFilter) {
         const coord = m[1] + ":" + m[2];
-        // Prefer the enriched stored island — it has _allyTags, _maxArmy, etc.,
-        // AND the custom-predicate result lookup key (x:y) works naturally here
-        // because matchFilter reads isl.x/isl.y to build the same key.
         let isl = islandsByCoord && islandsByCoord[coord];
         if (!isl) {
           // Fallback: build a minimal object from the DOM for old-style filters
@@ -924,7 +920,7 @@
           };
         }
 
-        tile.style.opacity = MapFilter.islandMatches(isl, filterConfig) ? "" : "0.35";
+        tile.style.opacity = MapFilter.islandMatches(isl, filterConfig, buildFilterCtx()) ? "" : "0.35";
       } else {
         // Fallback: dim empty islands
         const citiesEl = tile.querySelector(".cities");
@@ -961,12 +957,12 @@
 
   // DevTools IkFilter.set() — always active, independent of the panel toggle.
   function hasDevToolsPredicate() {
-    return globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    return globalThis.IkFilter && IkFilter.current();
   }
 
   // Filter panel textarea custom JS — only counts when filters are enabled.
   function hasTextareaResults() {
-    return globalThis.MapFilter && MapFilter.hasCustomResults && MapFilter.hasCustomResults();
+    return localCustomResults != null;
   }
 
   function filtersEnabled() {
@@ -981,7 +977,7 @@
   // Returns true when any filter-based dimming should be active (respects the
   // enabled toggle for panel features, but DevTools predicate is independent).
   function hasPresetResultsActive() {
-    return globalThis.MapFilter && MapFilter.hasPresetResults && MapFilter.hasPresetResults();
+    return localPresetResults.size > 0;
   }
 
   function hasAnyActiveFilter() {
@@ -1012,6 +1008,7 @@
   window.addEventListener("ik-filter-change", (e) => {
     filterConfig = e.detail;
     cachedBaseMap = null;
+    if (!isWorldMapView()) return;
     syncDimmingAndLayer();
     drawMinimap();
   });
@@ -1019,6 +1016,8 @@
   // Preset chips changed — compile+evaluate active presets, then redraw.
   window.addEventListener("ik-preset-change", async (e) => {
     activePresets = (e.detail && e.detail.presets) || [];
+    if (!isWorldMapView()) return;
+    FilterRunner.invalidatePresets();
     await refreshPresetResults();
     cachedBaseMap = null;
     islandsByCoord = null;
@@ -1029,7 +1028,10 @@
   // Filter-panel Custom JS was (re)applied — pre-evaluate against current
   // data, then redraw. Async because we bridge to the page context for eval.
   window.addEventListener("ik-custom-code-apply", async (e) => {
+    if (!isWorldMapView()) return;
+    FilterRunner.invalidateCustom();
     if (!e.detail?.disabled) await refreshCustomResults();
+    else localCustomResults = null;
     cachedBaseMap = null;
     islandsByCoord = null;
     syncDimmingAndLayer();
@@ -1039,6 +1041,7 @@
   // Power-user JS predicate changed via window.IkFilter.set/clear — redraw
   // and force the filter layer on if a predicate is now active.
   window.addEventListener("ik-custom-predicate-change", () => {
+    if (!isWorldMapView()) return;
     cachedBaseMap = null;
     syncDimmingAndLayer();
     drawMinimap();
@@ -1107,6 +1110,7 @@
         cachedBaseMap = null;
         islandsByCoord = null; // invalidate dim-path lookup
         // Data changed — re-evaluate custom predicate and presets against the new islands
+        FilterRunner.invalidateAll();
         await refreshCustomResults();
         await refreshPresetResults();
         applyDimming();

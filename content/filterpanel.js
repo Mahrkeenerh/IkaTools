@@ -479,9 +479,9 @@
     if (lastMatchCount != null) {
       lines.push(`${lastMatchCount} islands match`);
     }
-    const fnActive = globalThis.MapFilter && MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
-    const resActive = globalThis.MapFilter && MapFilter.hasCustomResults && MapFilter.hasCustomResults();
-    if (fnActive || resActive) {
+    const fnActive = globalThis.IkFilter && IkFilter.current();
+    const codeActive = customEnabled && customCodeDraft.trim();
+    if (fnActive || codeActive) {
       lines.push("Custom JS predicate active");
     } else if (customCodeDraft.trim() && !customEnabled) {
       lines.push("Custom JS predicate paused");
@@ -495,15 +495,19 @@
   }
 
   let lastMatchCount = null;
+  let lastCustomResultCoords = []; // set by consumer via IkFilterPanel.setCustomResultCoords
   function setMatchCount(n) {
     lastMatchCount = n;
     renderStatus();
+  }
+  function setCustomResultCoords(coords) {
+    lastCustomResultCoords = coords || [];
   }
 
   // --- Custom JS predicate section (power-user) ---
   // Expandable block at the bottom of the panel body. User types a JS
   // expression body that must evaluate to a boolean; wrapped as
-  // `new Function("i", <code>)` and installed via MapFilter.setCustomPredicate.
+  // `new Function("i", <code>)` and evaluated via the page-context bridge.
   // Persisted to chrome.storage.local so it survives page reloads and works
   // on both the world map and island views.
   let customCollapsed = true;
@@ -524,7 +528,6 @@
     }
     if (!code || !code.trim()) {
       await CustomEval.compile("");
-      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
       chrome.storage.local.remove(CUSTOM_CODE_KEY);
       window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code: "" } }));
       return true;
@@ -532,14 +535,12 @@
     const r = await CustomEval.compile(code);
     if (!r.ok) {
       customError = r.error || "Compile failed";
-      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
       renderBody();
       return false;
     }
     chrome.storage.local.set({ [CUSTOM_CODE_KEY]: code });
     if (!customEnabled) {
       // Code compiled OK but toggle is off — don't push results to consumers
-      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
       return true;
     }
     // Notify consumers (minimap, islandfilter) that they should evaluate the
@@ -588,7 +589,6 @@
       if (customEnabled && customCodeDraft.trim()) {
         applyCustomCode(customCodeDraft);
       } else if (!customEnabled) {
-        if (globalThis.MapFilter) MapFilter.setCustomResults(null);
         window.dispatchEvent(new CustomEvent("ik-custom-code-apply", { detail: { code: "", disabled: true } }));
       }
       renderBody();
@@ -663,8 +663,7 @@
     applyStyle(copyBtn, { ...S.btn });
     copyBtn.addEventListener("click", (e) => {
       e.stopPropagation();
-      const coords = globalThis.MapFilter && MapFilter.getCustomResultCoords
-        ? MapFilter.getCustomResultCoords() : [];
+      const coords = lastCustomResultCoords || [];
       if (coords.length === 0) {
         copyBtn.textContent = "No matches";
         setTimeout(() => { copyBtn.textContent = "Copy coords"; }, 1500);
@@ -950,6 +949,7 @@
   // updater (background commit) to refresh the panel without polling.
   globalThis.IkFilterPanel = {
     setMatchCount,
+    setCustomResultCoords,
     refreshQueryIndex: loadQueryIndex,
   };
 

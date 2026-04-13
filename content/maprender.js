@@ -282,7 +282,7 @@ globalThis.MapRender = (() => {
     // Stamp _filterMatch for the filter layer
     if (layerKey === "filter" && opts.filterConfig && globalThis.MapFilter) {
       for (const isl of islands) {
-        isl._filterMatch = MapFilter.islandMatches(isl, opts.filterConfig);
+        isl._filterMatch = MapFilter.islandMatches(isl, opts.filterConfig, opts.filterCtx);
       }
     }
 
@@ -300,7 +300,7 @@ globalThis.MapRender = (() => {
       const hasActiveFilters = opts.filterConfig && opts.filterConfig.enabled &&
         opts.filterConfig.groups && opts.filterConfig.groups.some((g) => g.enabled !== false && g.filters && g.filters.length > 0);
       if (hasActiveFilters && globalThis.MapFilter) {
-        dimmed = !MapFilter.islandMatches(isl, opts.filterConfig);
+        dimmed = !MapFilter.islandMatches(isl, opts.filterConfig, opts.filterCtx);
       } else if (dimEmpty) {
         dimmed = isl.cities === 0;
       }

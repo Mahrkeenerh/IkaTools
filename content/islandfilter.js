@@ -4,7 +4,7 @@
 // Each cityLocationN is treated as a "virtual island" with island-level
 // fields (coords, tradegood, wonder, cityCount) and per-city rich fields
 // (_allyTags, _ownerNamesText, _maxArmy, _ctAvailable) so the existing
-// MapFilter.islandMatches() works unchanged.
+// MapFilter.islandMatches() works with a per-view ctx.
 (() => {
   const TAG = "[IslandFilter]";
 
@@ -13,6 +13,22 @@
   let ctCheckedIds = null; // Set of ownerIds actually checked in last CT scan
   let virtualCities = null; // array indexed by position; null entries = buildplace
   let tilesObserver = null;
+
+  // --- Local filter evaluation state (no globals in MapFilter) ---
+  let localCustomResults = null; // Map<positionKey, bool> or null
+  let localPresetResults = new Map(); // Map<presetId, Map<positionKey, bool>>
+  let activePresets = []; // [{id, code}] from the last ik-preset-change event
+
+  const islandKeyOf = (isl) => String(isl._position);
+
+  function buildFilterCtx() {
+    return {
+      devtoolsPredicate: globalThis.IkFilter ? IkFilter.current() : null,
+      keyOf: islandKeyOf,
+      customResults: localCustomResults,
+      presetResults: localPresetResults,
+    };
+  }
 
   function isIslandView() {
     return document.body.id === "island";
@@ -41,59 +57,33 @@
   }
 
   // Evaluate the filter-panel Custom JS predicate against the current
-  // virtual cities. Stores results in MapFilter keyed by position string
-  // so the sync matchFilter path can look them up without bridge traffic.
+  // virtual cities using the shared FilterRunner.
   async function refreshCustomResults() {
-    if (!globalThis.CustomEval || !CustomEval.hasCode()) {
-      if (globalThis.MapFilter) MapFilter.setCustomResults(null);
-      return;
-    }
     if (!virtualCities) virtualCities = buildVirtualCities();
-    if (!virtualCities) return;
+    if (!virtualCities) { localCustomResults = null; return; }
     // Skip nulls (buildplaces) — they never match a predicate
     const pairs = [];
     for (let i = 0; i < virtualCities.length; i++) {
-      if (virtualCities[i]) pairs.push({ pos: i, isl: virtualCities[i] });
+      if (virtualCities[i]) pairs.push(virtualCities[i]);
     }
-    if (pairs.length === 0) return;
-    const r = await CustomEval.evaluate(pairs.map((p) => p.isl));
-    if (r.error) {
-      MapFilter.setCustomResults(null);
-      return;
-    }
-    const map = new Map();
-    for (let i = 0; i < pairs.length; i++) {
-      map.set(String(pairs[i].pos), !!r.matches[i]);
-    }
-    MapFilter.setCustomResults(map, (isl) => String(isl._position));
+    if (pairs.length === 0) { localCustomResults = null; return; }
+    const result = await FilterRunner.evaluateCustom(pairs, islandKeyOf);
+    localCustomResults = result;
   }
 
   // Evaluate saved JS preset chips against the current island's virtual cities.
-  let activePresets = []; // [{id, code}] from the last ik-preset-change event
-
   async function refreshPresetResults() {
-    if (!globalThis.CustomEval || !globalThis.MapFilter) return;
-    MapFilter.clearAllPresetResults();
-    if (activePresets.length === 0) return;
-    if (!virtualCities) virtualCities = buildVirtualCities();
-    if (!virtualCities) return;
+    if (activePresets.length === 0 || !virtualCities) {
+      localPresetResults = new Map();
+      return;
+    }
     const pairs = [];
     for (let i = 0; i < virtualCities.length; i++) {
-      if (virtualCities[i]) pairs.push({ pos: i, isl: virtualCities[i] });
+      if (virtualCities[i]) pairs.push(virtualCities[i]);
     }
-    if (pairs.length === 0) return;
-    const keyFn = (isl) => String(isl._position);
-    for (const preset of activePresets) {
-      const cr = await CustomEval.compilePreset(preset.id, preset.code);
-      if (!cr.ok) continue;
-      const er = await CustomEval.evaluatePreset(preset.id, pairs.map((p) => p.isl));
-      if (er.error || !er.matches) continue;
-      const map = new Map();
-      for (let i = 0; i < pairs.length; i++) {
-        map.set(String(pairs[i].pos), !!er.matches[i]);
-      }
-      MapFilter.setPresetResult(preset.id, map, keyFn);
-    }
+    if (pairs.length === 0) { localPresetResults = new Map(); return; }
+    const result = await FilterRunner.evaluatePresets(activePresets, pairs, islandKeyOf);
+    localPresetResults = result;
   }
 
   // Build one virtual-island object per city slot on the current island view.
@@ -166,14 +156,10 @@
     const enabled = filterConfig && filterConfig.enabled;
     const hasFilters = enabled &&
       filterConfig.groups && filterConfig.groups.some((g) => g.filters && g.filters.length > 0);
-    const hasDevTools = globalThis.MapFilter &&
-      MapFilter.getCustomPredicate && MapFilter.getCustomPredicate();
+    const hasDevTools = globalThis.IkFilter && IkFilter.current();
     // Textarea custom JS respects the panel's enabled toggle
-    const hasTextarea = enabled && globalThis.MapFilter &&
-      MapFilter.hasCustomResults && MapFilter.hasCustomResults();
-
-    const hasPresets = enabled && globalThis.MapFilter &&
-      MapFilter.hasPresetResults && MapFilter.hasPresetResults();
+    const hasTextarea = enabled && localCustomResults != null;
+    const hasPresets = enabled && localPresetResults.size > 0;
 
     if (!hasFilters && !hasDevTools && !hasTextarea && !hasPresets) {
       // Clear all opacity — quick path, no need to build virtual cities
@@ -186,6 +172,7 @@
     if (!virtualCities) virtualCities = buildVirtualCities();
     if (!virtualCities) return;
 
+    const ctx = buildFilterCtx();
     for (let i = 0; i < virtualCities.length; i++) {
       const isl = virtualCities[i];
       if (!isl) {
@@ -193,7 +180,7 @@
         setTileOpacity(i, "0.35");
         continue;
       }
-      const match = MapFilter.islandMatches(isl, filterConfig);
+      const match = MapFilter.islandMatches(isl, filterConfig, ctx);
       setTileOpacity(i, match ? "" : "0.35");
     }
   }
@@ -249,16 +236,14 @@
     const ready = await waitForIslandDOM();
     if (!ready) return;
 
-    // The filter panel compiles saved custom JS asynchronously (fire-and-forget)
-    // so it may not be ready when we reach this point. Compile it ourselves to
-    // guarantee custom-JS dimming applies on first render.
+    // Compile saved custom JS if needed (panel may not have compiled yet)
     if (globalThis.CustomEval) {
       const savedCode = data.mapCustomPredicateCode || "";
       const customOn = data.mapCustomPredicateEnabled !== false;
       if (savedCode && customOn && !CustomEval.hasCode()) {
         await CustomEval.compile(savedCode);
       }
-      // Same for preset chips — extract active presets from filter config
+      // Extract active presets from filter config
       if (filterConfig && filterConfig.enabled && filterConfig.groups) {
         const presets = data.customJsPresets || [];
         const active = [];
@@ -275,7 +260,8 @@
       }
     }
 
-    // Re-evaluate any restored custom code and presets against this island's cities
+    // Evaluate custom code and presets against this island's cities
+    FilterRunner.invalidateAll();
     await refreshCustomResults();
     await refreshPresetResults();
     applyDimming();
@@ -285,28 +271,37 @@
   // Filter panel updates
   window.addEventListener("ik-filter-change", (e) => {
     filterConfig = e.detail;
+    if (!isIslandView()) return;
     applyDimming();
   });
 
   // Preset chips changed — compile+evaluate active presets per city
   window.addEventListener("ik-preset-change", async (e) => {
     activePresets = (e.detail && e.detail.presets) || [];
+    if (!isIslandView()) return;
     virtualCities = null;
+    FilterRunner.invalidatePresets();
     await refreshPresetResults();
     applyDimming();
   });
 
   // Custom JS predicate (re)applied from filter panel — re-evaluate per city
   window.addEventListener("ik-custom-code-apply", async (e) => {
+    if (!isIslandView()) return;
     virtualCities = null;
+    FilterRunner.invalidateCustom();
     if (!e.detail?.disabled) await refreshCustomResults();
+    else localCustomResults = null;
     applyDimming();
   });
 
   // Power-user JS predicate toggled via IkFilter (DevTools API) — redraw
-  window.addEventListener("ik-custom-predicate-change", () => applyDimming());
+  window.addEventListener("ik-custom-predicate-change", () => {
+    if (!isIslandView()) return;
+    applyDimming();
+  });
 
-  // View transitions (island ↔ world map)
+  // View transitions (island <-> world map)
   const viewObs = new MutationObserver(() => {
     if (isIslandView()) {
       virtualCities = null;
@@ -324,6 +319,7 @@
     if (changes["ctScan_" + worldName]) {
       loadCtData().then(async () => {
         virtualCities = null;
+        FilterRunner.invalidateAll();
         await refreshCustomResults();
         await refreshPresetResults();
         applyDimming();
@@ -332,7 +328,7 @@
     if (changes.mapFilters) {
       filterConfig = changes.mapFilters.newValue;
       virtualCities = null; // owner classes may have shifted between visits
-      applyDimming();
+      if (isIslandView()) applyDimming();
     }
   });
 

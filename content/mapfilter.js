@@ -1,5 +1,8 @@
-// Filter evaluation module for island dimming
+// Pure synchronous filter evaluation module.
 // Attaches to globalThis.MapFilter
+//
+// All evaluation state (custom results, preset results, devtools predicate)
+// is passed in via a `ctx` parameter — this module stores nothing.
 globalThis.MapFilter = (() => {
   const FILTER_OPTIONS = [
     // Ownership
@@ -36,25 +39,10 @@ globalThis.MapFilter = (() => {
     { type: "hasInactive", value: true, label: "Has inactive", color: "#999966", group: "Players", requiresRich: true },
     { type: "allyTag", value: "", label: "Alliance tag", color: "#FFAA00", group: "Players", requiresRich: true, parameterized: true, paramKind: "allyTag", paramPlaceholder: "tag" },
     { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
-    { type: "armyMin", value: null, label: "Player army ≥", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
+    { type: "armyMin", value: null, label: "Player army >=", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
   ];
 
-  // Two ways to install a power-user predicate:
-  // 1. `customPredicate` — a sync function installed via setCustomPredicate(fn).
-  //    Used by the DevTools-console API (IkFilter.set) where code lives in the
-  //    content-script isolated world and can be called per-island.
-  // 2. `customResultKey` — a lookup function from the filter panel's textarea.
-  //    The code there runs in the page context (via customeval.js) and the
-  //    pre-computed results are stored in a Map keyed by a string. The function
-  //    extracts the key from an island (e.g. "x:y" for world map, "id:pos" for
-  //    island view). Both are ANDed with the rest of the filter config.
-  let customPredicate = null;
-  let customResultMap = null; // Map<string, boolean> of pre-computed matches
-  let customResultKeyFn = null; // (isl) -> string used to look up in the map
-  let presetResults = new Map(); // Map<presetId, Map<coordKey, boolean>>
-  let presetResultKeyFn = null; // (isl) -> string, shared across all presets
-
-  function matchFilter(isl, filter) {
+  function matchFilter(isl, filter, ctx) {
     switch (filter.type) {
       case "tradegood": return isl.tradegood === filter.value;
       case "wonder": return isl.wonder === filter.value;
@@ -80,105 +68,63 @@ globalThis.MapFilter = (() => {
         return isl._ownerNamesText.indexOf(q) !== -1;
       }
       case "armyMin": {
-        // Empty/NaN threshold = inactive rule (match everything)
         const n = Number(filter.value);
         if (!Number.isFinite(n)) return true;
         return (isl._maxArmy || 0) >= n;
       }
       case "customJs": {
-        const presetMap = presetResults.get(filter.value);
+        if (!ctx || !ctx.presetResults) return false;
+        const presetMap = ctx.presetResults.get(filter.value);
         if (!presetMap) return false;
-        const key = presetResultKeyFn ? presetResultKeyFn(isl) : (isl.x + ":" + isl.y);
+        const key = ctx.keyOf ? ctx.keyOf(isl) : (isl.x + ":" + isl.y);
         return !!presetMap.get(key);
       }
       default: return false;
     }
   }
 
-  function matchGroup(isl, group) {
+  function matchGroup(isl, group, ctx) {
     if (!group.filters || group.filters.length === 0) return true;
     if (group.op === "and") {
-      return group.filters.every((f) => matchFilter(isl, f));
+      return group.filters.every((f) => matchFilter(isl, f, ctx));
     }
-    return group.filters.some((f) => matchFilter(isl, f));
+    return group.filters.some((f) => matchFilter(isl, f, ctx));
   }
 
-  function islandMatches(isl, config) {
+  // Evaluate all predicate channels against one island.
+  //
+  // ctx = {
+  //   devtoolsPredicate: fn|null,   — IkFilter.set() sync predicate
+  //   keyOf: (isl) => string,       — key extractor for result map lookups
+  //   customResults: Map|null,      — textarea custom JS pre-computed results
+  //   presetResults: Map|null,      — Map<presetId, Map<key, bool>>
+  // }
+  function islandMatches(isl, config, ctx) {
+    const c = ctx || {};
     // DevTools power-user predicate — always active when set (independent of
     // the filter panel's enabled toggle).
-    if (customPredicate) {
-      try { if (!customPredicate(isl)) return false; }
+    if (c.devtoolsPredicate) {
+      try { if (!c.devtoolsPredicate(isl)) return false; }
       catch (e) { /* swallow — bad predicate shouldn't kill rendering */ }
     }
-    // Filter panel disabled → skip both chip filters and Custom JS textarea.
+    // Filter panel disabled -> skip both chip filters and Custom JS textarea.
     if (!config || !config.enabled) return true;
     // Pre-computed result map (from filter panel's Custom JS textarea)
-    if (customResultMap && customResultKeyFn) {
-      const key = customResultKeyFn(isl);
-      if (!customResultMap.get(key)) return false;
+    if (c.customResults && c.keyOf) {
+      const key = c.keyOf(isl);
+      if (!c.customResults.get(key)) return false;
     }
     if (!config.groups || config.groups.length === 0) return true;
     // Only consider groups that have filters
     const active = config.groups.filter((g) => g.enabled !== false && g.filters && g.filters.length > 0);
     if (active.length === 0) return true;
     if (config.globalOp === "and") {
-      return active.every((g) => matchGroup(isl, g));
+      return active.every((g) => matchGroup(isl, g, c));
     }
-    return active.some((g) => matchGroup(isl, g));
+    return active.some((g) => matchGroup(isl, g, c));
   }
 
-  function setCustomPredicate(fn) {
-    customPredicate = (typeof fn === "function") ? fn : null;
-    // Dedicated event so the minimap can redraw without overwriting filterConfig.
-    window.dispatchEvent(new CustomEvent("ik-custom-predicate-change"));
-  }
-
-  function getCustomPredicate() { return customPredicate; }
-
-  // Install (or clear) a pre-computed result lookup for the filter-panel
-  // Custom JS feature. map === null clears. keyFn extracts the lookup key
-  // from an island object (so the same result map works across different
-  // view shapes — world map uses "x:y", island view uses "id:pos").
-  function setCustomResults(map, keyFn) {
-    customResultMap = map || null;
-    customResultKeyFn = map ? (keyFn || ((isl) => isl.x + ":" + isl.y)) : null;
-    window.dispatchEvent(new CustomEvent("ik-custom-predicate-change"));
-  }
-
-  function hasCustomResults() { return customResultMap != null; }
-
-  function getCustomResultCoords() {
-    if (!customResultMap) return [];
-    const coords = [];
-    for (const [key, val] of customResultMap) {
-      if (val) coords.push(key);
-    }
-    return coords;
-  }
-
-  function setPresetResult(presetId, map, keyFn) {
-    if (map) {
-      presetResults.set(presetId, map);
-    } else {
-      presetResults.delete(presetId);
-    }
-    if (keyFn) presetResultKeyFn = keyFn;
-  }
-
-  function clearAllPresetResults() {
-    presetResults.clear();
-  }
-
-  function hasPresetResults() {
-    return presetResults.size > 0;
-  }
-
-  return {
-    islandMatches, matchGroup, matchFilter, FILTER_OPTIONS,
-    setCustomPredicate, getCustomPredicate,
-    setCustomResults, hasCustomResults, getCustomResultCoords,
-    setPresetResult, clearAllPresetResults, hasPresetResults,
-  };
+  return { islandMatches, matchGroup, matchFilter, FILTER_OPTIONS };
 })();
 
 // Power-user hook: expose a tiny API on globalThis so a programmer can write
@@ -202,11 +148,21 @@ globalThis.MapFilter = (() => {
 //   IkFilter.clear()
 //
 // IkData.get() returns the raw queryIndex_{world} blob for ad-hoc inspection.
-globalThis.IkFilter = {
-  set(fn) { globalThis.MapFilter.setCustomPredicate(fn); },
-  clear() { globalThis.MapFilter.setCustomPredicate(null); },
-  current() { return globalThis.MapFilter.getCustomPredicate(); },
-};
+globalThis.IkFilter = (() => {
+  let predicate = null;
+
+  return {
+    set(fn) {
+      predicate = (typeof fn === "function") ? fn : null;
+      window.dispatchEvent(new CustomEvent("ik-custom-predicate-change"));
+    },
+    clear() {
+      predicate = null;
+      window.dispatchEvent(new CustomEvent("ik-custom-predicate-change"));
+    },
+    current() { return predicate; },
+  };
+})();
 
 globalThis.IkData = {
   async get(worldName) {

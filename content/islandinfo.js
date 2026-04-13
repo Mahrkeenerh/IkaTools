@@ -3,7 +3,9 @@
   const TAG = "[IslandInfo]";
   const OWN_COLOR = "#64B5F6"; // blue for own cities (matches game)
   const FRIEND_COLOR = "#00FF88"; // green for friends
+  const PARTNER_COLOR = "#FFD700"; // gold for museum treaty partners
   let friendIds = new Set();
+  let partnerIds = new Set();
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
 
@@ -13,6 +15,7 @@
   const KEY_ALLIANCE_INDEX = "allianceIndex_" + worldName;
   const KEY_FRIEND_LIST = "friendList_" + worldName;
   const KEY_FRIEND_SLOTS = "friendSlots_" + worldName;
+  const KEY_PARTNERS = "museumPartners_" + worldName;
   const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
   let friendCheckTimer = null;
 
@@ -108,6 +111,12 @@
     // Fall back to legacy global key if world-scoped key is empty
     const data = await chrome.storage.local.get([KEY_FRIEND_LIST, "friendList"]);
     friendIds = new Set(Object.keys(data[KEY_FRIEND_LIST] || data.friendList || {}));
+  }
+
+  async function loadPartners() {
+    const data = await chrome.storage.local.get(KEY_PARTNERS);
+    const list = data[KEY_PARTNERS] || [];
+    partnerIds = new Set(list.map((p) => p.id));
   }
 
   // Extract updateBackgroundData from inline scripts — shared helper
@@ -374,7 +383,8 @@
       for (const city of sorted) {
         const badge = city.state === "vacation" ? ' \ud83c\udf34' : city.state === "inactive" ? ' \ud83d\udca4' : '';
         const isFriend = !city.isOwn && friendIds.has(city.ownerId);
-        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
+        const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
+        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
         const rowBg = "";
         html += `<tr class="ik-city-row" data-position="${city.position}" style="cursor:pointer;border-bottom:1px solid #1e2535;${rowBg}" title="Click to view ${city.name}">
           <td style="padding:3px 4px;${nameStyle}"><div>${city.ownerName}${badge}</div><div style="font-size:9px;color:#667;">${city.name}</div></td>
@@ -437,8 +447,9 @@
 
       const allyPart = city.allyTag ? `<span style="color:#7ec8e3;">[${city.allyTag}]</span> ` : "";
       const isFriend = !city.isOwn && friendIds.has(city.ownerId);
-      const nameColor = city.isOwn ? OWN_COLOR : isFriend ? FRIEND_COLOR : "#dde";
-      const nameBold = city.isOwn || isFriend ? "font-weight:bold;" : "";
+      const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
+      const nameColor = city.isOwn ? OWN_COLOR : isFriend ? FRIEND_COLOR : isPartner ? PARTNER_COLOR : "#dde";
+      const nameBold = city.isOwn || isFriend || isPartner ? "font-weight:bold;" : "";
       label.innerHTML = `${allyPart}<span style="color:${nameColor};${nameBold}">${city.ownerName}</span>`;
 
       const labelBg = "rgba(0,0,0,0.85)";
@@ -521,8 +532,8 @@
     }
   }
 
-  // Load cached friends first, then scrape visible ones
-  loadFriends().then(() => {
+  // Load cached friends + partners first, then scrape visible friends
+  Promise.all([loadFriends(), loadPartners()]).then(() => {
     scrapeFriends();
     init();
   });
@@ -558,6 +569,20 @@
     const friendObs = new MutationObserver(scheduleFriendCheck);
     friendObs.observe(friendContainer, { childList: true, subtree: true, attributes: true });
   }
+
+  // Refresh panel when museum partners are saved/updated
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== "local" || !changes[KEY_PARTNERS]) return;
+    const list = changes[KEY_PARTNERS].newValue || [];
+    partnerIds = new Set(list.map((p) => p.id));
+    if (document.body.id === "island" && panel) {
+      // Re-render panel + labels with updated partner highlights
+      initialized = false;
+      panel.remove();
+      panel = null;
+      init();
+    }
+  });
 
   // Watch for barbarian village content appearing (user clicks barbarian village).
   // Intentionally never disconnected — the body.id guard keeps it a no-op off island view.

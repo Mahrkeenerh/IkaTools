@@ -196,11 +196,16 @@
   function wineCell(stock, production, consumption) {
     const stockStr = fmt(stock);
     const net = (production || 0) + (consumption || 0); // consumption is negative
+    // Estimated time until wine runs out (net must be negative)
+    const remainSec = net < 0 ? Math.round(stock / -net * 3600) : null;
+    const remainSuffix = remainSec != null
+      ? ` (<span class="${remainSec < 86400 ? "val-neg" : "val-pos"}">${fmtDuration(remainSec)}</span>)`
+      : "";
     let rateStr;
     if (production && consumption) {
-      rateStr = `<span class="val-pos">+${production}</span> <span class="val-neg">${consumption}</span> = ${fmtSigned(net)}/h`;
+      rateStr = `<span class="val-pos">+${production}</span> <span class="val-neg">${consumption}</span> = ${fmtSigned(net)}/h${remainSuffix}`;
     } else if (consumption) {
-      rateStr = `${fmtSigned(consumption)}/h`;
+      rateStr = `${fmtSigned(consumption)}/h${remainSuffix}`;
     } else if (production) {
       rateStr = `${fmtSigned(production)}/h`;
     } else {
