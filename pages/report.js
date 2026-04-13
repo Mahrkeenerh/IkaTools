@@ -2114,19 +2114,19 @@
       const log = data[storageKey];
       if (!log || Object.keys(log).length === 0) return;
 
-      const reports = Object.values(log).sort((a, b) => {
-        // Sort by date descending (DD.MM.YYYY HH:MM:SS)
-        return (b.id || 0) - (a.id || 0);
-      });
+      let showTrash = false;
 
       const header = document.createElement("div");
       header.className = "trade-section-header";
       header.style.marginTop = "20px";
       const countSpan = document.createElement("span");
       countSpan.style.cssText = "font-size:12px;color:#889;";
-      countSpan.textContent = `(${reports.length} reports archived)`;
+      const trashBtn = document.createElement("button");
+      trashBtn.className = "spy-log-trash-toggle";
+      trashBtn.textContent = "Show trash";
       header.innerHTML = '<span class="spy-badge spy-badge-info">Spy Log</span> ';
       header.appendChild(countSpan);
+      header.appendChild(trashBtn);
       container.appendChild(header);
 
       const wrap = document.createElement("div");
@@ -2135,82 +2135,115 @@
       table.className = "report-table";
 
       const thead = document.createElement("thead");
-      thead.innerHTML = `<tr>
-        <th>Date</th>
-        <th>Target Player</th>
-        <th>Target City</th>
-        <th>Coords</th>
-        <th>Mission</th>
-        <th>Result</th>
-        <th class="right">Agents</th>
-        <th>Details</th>
-        <th></th>
-        <th></th>
-      </tr>`;
       table.appendChild(thead);
-
       const tbody = document.createElement("tbody");
-      for (const r of reports) {
-        const tr = document.createElement("tr");
-
-        let missionLabel = r.type === "resources" ? "Resources" : r.type === "units" ? "Military" : r.subject || "—";
-
-        let details = "—";
-        if (r.type === "resources" && r.resources) {
-          const parts = [];
-          const RES_ORDER = ["wood", "wine", "marble", "crystal", "sulfur"];
-          for (const key of RES_ORDER) {
-            if (r.resources[key] != null) {
-              parts.push(`<img class="res-icon" src="../icons/resources/${key}.png" alt="${key}"> ${r.resources[key].toLocaleString()}`);
-            }
-          }
-          details = parts.join("&nbsp; ") || "—";
-        } else if (r.type === "units") {
-          const parts = [];
-          if (r.units) {
-            for (const [name, count] of Object.entries(r.units)) {
-              if (count > 0) parts.push(`${name}: ${count}`);
-            }
-          }
-          if (r.ships) {
-            for (const [name, count] of Object.entries(r.ships)) {
-              if (count > 0) parts.push(`${name}: ${count}`);
-            }
-          }
-          details = parts.length > 0 ? parts.join(", ") : "No troops";
-        }
-
-        const resultShort = r.result
-          ? (r.result.toLowerCase().includes("fail") || r.result.toLowerCase().includes("ne"))
-            ? '<span class="val-neg">Failed</span>'
-            : '<span class="val-pos">OK</span>'
-          : "—";
-
-        if (r.type === "units") tr.classList.add("spy-military");
-        if (r.looted) tr.classList.add("spy-looted");
-
-        const lootCell = r.type === "resources"
-          ? `<button class="spy-log-loot${r.looted ? " looted" : ""}" data-id="${r.id}" title="${r.looted ? "Unmark" : "Mark as looted"}">${r.looted ? "✓" : "💰"}</button>${r.looted ? `<span class="spy-loot-time" title="${new Date(r.looted).toLocaleString()}">${timeAgo(r.looted)}</span>` : ""}`
-          : "";
-
-        tr.innerHTML = `
-          <td style="white-space:nowrap;font-size:12px;">${r.date || "—"}</td>
-          <td>${r.targetPlayer || "—"}</td>
-          <td class="city-name">${r.targetCity || "—"}</td>
-          <td class="coords">${r.targetCoords || "—"}</td>
-          <td>${missionLabel}</td>
-          <td>${resultShort}</td>
-          <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
-          <td style="font-size:12px;">${details}</td>
-          <td class="spy-loot-cell">${lootCell}</td>
-          <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">del</button></td>
-        `;
-        tbody.appendChild(tr);
-      }
       table.appendChild(tbody);
-
       wrap.appendChild(table);
       container.appendChild(wrap);
+
+      function buildRows() {
+        const all = Object.values(log).sort((a, b) => (b.id || 0) - (a.id || 0));
+        const filtered = all.filter(r => showTrash ? r.deleted : !r.deleted);
+        const activeCount = all.filter(r => !r.deleted).length;
+        const trashCount = all.filter(r => r.deleted).length;
+
+        countSpan.textContent = showTrash
+          ? `(${trashCount} in trash)`
+          : `(${activeCount} reports archived)`;
+        trashBtn.textContent = showTrash ? "Show active" : `Show trash (${trashCount})`;
+
+        thead.innerHTML = `<tr>
+          <th>Date</th>
+          <th>Target Player</th>
+          <th>Target City</th>
+          <th>Coords</th>
+          <th>Mission</th>
+          <th>Result</th>
+          <th class="right">Agents</th>
+          <th>Details</th>
+          ${showTrash ? "" : "<th></th>"}
+          <th></th>
+        </tr>`;
+
+        tbody.innerHTML = "";
+        for (const r of filtered) {
+          const tr = document.createElement("tr");
+
+          let missionLabel = r.type === "resources" ? "Resources" : r.type === "units" ? "Military" : r.subject || "—";
+
+          let details = "—";
+          if (r.type === "resources" && r.resources) {
+            const parts = [];
+            const RES_ORDER = ["wood", "wine", "marble", "crystal", "sulfur"];
+            for (const key of RES_ORDER) {
+              if (r.resources[key] != null) {
+                parts.push(`<img class="res-icon" src="../icons/resources/${key}.png" alt="${key}"> ${r.resources[key].toLocaleString()}`);
+              }
+            }
+            details = parts.join("&nbsp; ") || "—";
+          } else if (r.type === "units") {
+            const parts = [];
+            if (r.units) {
+              for (const [name, count] of Object.entries(r.units)) {
+                if (count > 0) parts.push(`${name}: ${count}`);
+              }
+            }
+            if (r.ships) {
+              for (const [name, count] of Object.entries(r.ships)) {
+                if (count > 0) parts.push(`${name}: ${count}`);
+              }
+            }
+            details = parts.length > 0 ? parts.join(", ") : "No troops";
+          }
+
+          const resultShort = r.result
+            ? (r.result.toLowerCase().includes("fail") || r.result.toLowerCase().includes("ne"))
+              ? '<span class="val-neg">Failed</span>'
+              : '<span class="val-pos">OK</span>'
+            : "—";
+
+          if (r.type === "units") tr.classList.add("spy-military");
+          if (r.looted) tr.classList.add("spy-looted");
+
+          if (showTrash) {
+            tr.innerHTML = `
+              <td style="white-space:nowrap;font-size:12px;">${r.date || "—"}</td>
+              <td>${r.targetPlayer || "—"}</td>
+              <td class="city-name">${r.targetCity || "—"}</td>
+              <td class="coords">${r.targetCoords || "—"}</td>
+              <td>${missionLabel}</td>
+              <td>${resultShort}</td>
+              <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
+              <td style="font-size:12px;">${details}</td>
+              <td><button class="spy-log-restore" data-id="${r.id}" title="Restore report">restore</button></td>
+            `;
+          } else {
+            const lootCell = r.type === "resources"
+              ? `<button class="spy-log-loot${r.looted ? " looted" : ""}" data-id="${r.id}" title="${r.looted ? "Unmark" : "Mark as looted"}">${r.looted ? "✓" : "💰"}</button>${r.looted ? `<span class="spy-loot-time" title="${new Date(r.looted).toLocaleString()}">${timeAgo(r.looted)}</span>` : ""}`
+              : "";
+            tr.innerHTML = `
+              <td style="white-space:nowrap;font-size:12px;">${r.date || "—"}</td>
+              <td>${r.targetPlayer || "—"}</td>
+              <td class="city-name">${r.targetCity || "—"}</td>
+              <td class="coords">${r.targetCoords || "—"}</td>
+              <td>${missionLabel}</td>
+              <td>${resultShort}</td>
+              <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
+              <td style="font-size:12px;">${details}</td>
+              <td class="spy-loot-cell">${lootCell}</td>
+              <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">del</button></td>
+            `;
+          }
+          tbody.appendChild(tr);
+        }
+      }
+
+      buildRows();
+
+      trashBtn.addEventListener("click", () => {
+        showTrash = !showTrash;
+        buildRows();
+      });
 
       // Looted toggle handler
       wrap.addEventListener("click", (e) => {
@@ -2244,17 +2277,26 @@
         chrome.storage.local.set({ [storageKey]: log });
       });
 
-      // Delete handler
+      // Soft-delete handler
       wrap.addEventListener("click", (e) => {
         const btn = e.target.closest(".spy-log-del");
         if (!btn) return;
         const id = btn.dataset.id;
-        delete log[id];
-        btn.closest("tr").remove();
+        if (!log[id]) return;
+        log[id].deleted = Date.now();
         chrome.storage.local.set({ [storageKey]: log });
-        // Update count
-        const count = Object.keys(log).length;
-        countSpan.textContent = `(${count} reports archived)`;
+        buildRows();
+      });
+
+      // Restore handler
+      wrap.addEventListener("click", (e) => {
+        const btn = e.target.closest(".spy-log-restore");
+        if (!btn) return;
+        const id = btn.dataset.id;
+        if (!log[id]) return;
+        delete log[id].deleted;
+        chrome.storage.local.set({ [storageKey]: log });
+        buildRows();
       });
     });
   }

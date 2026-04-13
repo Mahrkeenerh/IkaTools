@@ -391,6 +391,20 @@
   // Parse spy reports from safehouse Reports tab (tabReports) into an array.
   // Each report has header metadata + detail content (units or resources).
   const SPY_RES_MAP = { icon_wood: "wood", icon_wine: "wine", icon_marble: "marble", icon_glass: "crystal", icon_sulfur: "sulfur" };
+  // Extract the next unseen paginator offset from a spy reports page.
+  // The paginator only shows adjacent page links, so we walk iteratively.
+  function getNextSpyOffset(doc, seen) {
+    for (const a of doc.querySelectorAll(".paginator a.paginator_link")) {
+      const href = a.getAttribute("href") || "";
+      const m = href.match(/[?&]offset=(\d+)/);
+      if (m) {
+        const offset = parseInt(m[1], 10);
+        if (!seen.has(offset)) return offset;
+      }
+    }
+    return null;
+  }
+
   function parseSpyReports(html) {
     const viewHtml = extractChangeViewHtml(html);
     const doc = new DOMParser().parseFromString(viewHtml || html, "text/html");
@@ -1414,14 +1428,30 @@
       }
     }
 
-    // Fetch spy reports once (global, not per-city) from first city with a safehouse
+    // Fetch spy reports once (global, not per-city) from first city with a safehouse.
+    // Walks all pagination pages iteratively (paginator only shows adjacent links).
     let spyReports = [];
     if (wantSpy) {
       const firstSh = results.find(r => r?.safehouse && r.shPos !== null);
       if (firstSh) {
         try {
-          const html = await fetchPage("view=safehouse&cityId=" + firstSh.city.id + "&position=" + firstSh.shPos + "&activeTab=tabReports");
-          if (html) spyReports = parseSpyReports(html);
+          const baseParams = "view=safehouse&cityId=" + firstSh.city.id + "&position=" + firstSh.shPos + "&activeTab=tabReports";
+          const seenOffsets = new Set([0]);
+          let currentParams = baseParams;
+          while (currentParams) {
+            const html = await fetchPage(currentParams);
+            if (!html) break;
+            spyReports = spyReports.concat(parseSpyReports(html));
+            const viewHtml = extractChangeViewHtml(html);
+            const doc = new DOMParser().parseFromString(viewHtml || html, "text/html");
+            const nextOffset = getNextSpyOffset(doc, seenOffsets);
+            if (nextOffset != null) {
+              seenOffsets.add(nextOffset);
+              currentParams = baseParams + "&offset=" + nextOffset;
+            } else {
+              currentParams = null;
+            }
+          }
         } catch (e) {
           console.error(P, "Error fetching spy reports:", e);
         }
