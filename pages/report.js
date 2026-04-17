@@ -751,10 +751,35 @@
     );
     if (allQueue.length === 0) return;
 
+    const cityOrder = {};
+    let idx = 0;
+    for (const q of allQueue) {
+      if (!(q.cityName in cityOrder)) cityOrder[q.cityName] = idx++;
+    }
+
+    renderTrainingQueueTable(
+      container,
+      allQueue.filter((q) => q.type !== "ship"),
+      cityOrder,
+      "Army Training Queue",
+      "Units"
+    );
+    renderTrainingQueueTable(
+      container,
+      allQueue.filter((q) => q.type === "ship"),
+      cityOrder,
+      "Ship Building Queue",
+      "Ships"
+    );
+  }
+
+  function renderTrainingQueueTable(container, queue, cityOrder, titleText, unitsHeader) {
+    if (queue.length === 0) return;
+
     const title = document.createElement("div");
     title.className = "panel-title";
     title.style.marginTop = "24px";
-    title.textContent = "Training Queues";
+    title.textContent = titleText;
     container.appendChild(title);
 
     const wrap = document.createElement("div");
@@ -764,26 +789,19 @@
 
     const thead = document.createElement("thead");
     const headTr = document.createElement("tr");
-    headTr.innerHTML = "<th>City</th><th>Units</th><th>Status</th><th>ETA</th>";
+    headTr.innerHTML = `<th>City</th><th>${unitsHeader}</th><th>Status</th><th>ETA</th>`;
     thead.appendChild(headTr);
     table.appendChild(thead);
 
     const tbody = document.createElement("tbody");
-    // Stable sort: preserve city order from game, but group by city with position order
-    const cityOrder = {};
-    let idx = 0;
-    for (const q of allQueue) {
-      if (!(q.cityName in cityOrder)) cityOrder[q.cityName] = idx++;
-    }
-    allQueue.sort((a, b) => {
+    queue.sort((a, b) => {
       const cmp = cityOrder[a.cityName] - cityOrder[b.cityName];
       if (cmp !== 0) return cmp;
       return a.position - b.position;
     });
 
-    // Group by city+position (same training block)
     const groups = [];
-    for (const q of allQueue) {
+    for (const q of queue) {
       const key = q.cityName + "|" + q.position + "|" + (q.active ? "1" : "0");
       const last = groups[groups.length - 1];
       if (last && last.key === key) {
@@ -799,10 +817,7 @@
         ? "<span class=\"val-pos\">Building</span>"
         : "Queued #" + first.position;
 
-      const unitsParts = group.items.map((q) => {
-        const icon = q.type === "ship" ? "🚢 " : "";
-        return `${icon}${q.name} ×${q.count.toLocaleString()}`;
-      });
+      const unitsParts = group.items.map((q) => `${q.name} ×${q.count.toLocaleString()}`);
 
       const tr = document.createElement("tr");
       tr.innerHTML =
