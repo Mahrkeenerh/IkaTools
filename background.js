@@ -316,7 +316,8 @@ function bgApplyCtToQueryIndex(queryIndex, ctResult, opts) {
 async function bgCommitIslandData(collectedIslands, opts) {
   if (collectedIslands.length === 0) return;
   const { worldName } = opts;
-  const { writes, freshIslandKeys } = bgBuildIslandWrites(collectedIslands, opts);
+  const isPartial = opts.distanceRadius > 0 && opts.sourceCoords && opts.sourceCoords.length > 0;
+  const { writes, freshIslandKeys, allyIndex } = bgBuildIslandWrites(collectedIslands, opts);
 
   // Enrich the world map with the same alliance data
   const mapKey = "map_" + worldName;
@@ -340,14 +341,49 @@ async function bgCommitIslandData(collectedIslands, opts) {
     writes[mapKey] = worldMap;
   }
 
+  // For partial scans, merge the alliance index with existing data instead of replacing
+  if (isPartial) {
+    const prevAlly = await chrome.storage.local.get("allianceIndex_" + worldName);
+    const prevAllyIndex = prevAlly["allianceIndex_" + worldName];
+    if (prevAllyIndex) {
+      const merged = Object.assign({}, prevAllyIndex, allyIndex);
+      writes["allianceIndex_" + worldName] = merged;
+    }
+  }
+
   // Build the derived query index from the same writes — purpose-built blob
   // that the filter UI and power-user JS hook read from. Single key, no
   // get(null) at read time.
-  const queryIndex = bgBuildQueryIndex(writes, { worldName, fullScanAt: Date.now() });
-  // Carry over previously-applied CT data so it isn't lost when only the
-  // island phase is rerun.
   const prev = await chrome.storage.local.get("queryIndex_" + worldName);
   const prevIdx = prev["queryIndex_" + worldName];
+
+  let queryIndex;
+  if (isPartial && prevIdx) {
+    // Partial scan: build index from only the new writes, then merge into existing
+    const partialIndex = bgBuildQueryIndex(writes, { worldName, fullScanAt: Date.now() });
+    queryIndex = { ...prevIdx, fullScanAt: Date.now() };
+    // Overwrite only the coords we just fetched, keep everything else
+    for (const coord of Object.keys(partialIndex.islandsByCoord)) {
+      queryIndex.islandsByCoord[coord] = partialIndex.islandsByCoord[coord];
+    }
+    // Merge ally tags and counts
+    for (const tag of Object.keys(partialIndex.allyCityCounts || {})) {
+      queryIndex.allyCityCounts[tag] = (queryIndex.allyCityCounts[tag] || 0) +
+        partialIndex.allyCityCounts[tag] - (prevIdx.allyCityCounts[tag] || 0);
+      if (queryIndex.allyCityCounts[tag] <= 0) delete queryIndex.allyCityCounts[tag];
+    }
+    const allTags = Object.keys(queryIndex.allyCityCounts || {}).sort((a, b) => {
+      const d = queryIndex.allyCityCounts[b] - queryIndex.allyCityCounts[a];
+      return d !== 0 ? d : a.localeCompare(b);
+    });
+    queryIndex.allyTags = allTags;
+    queryIndex.allianceIndex = writes["allianceIndex_" + worldName] || queryIndex.allianceIndex;
+  } else {
+    queryIndex = bgBuildQueryIndex(writes, { worldName, fullScanAt: Date.now() });
+  }
+
+  // Carry over previously-applied CT data so it isn't lost when only the
+  // island phase is rerun.
   if (prevIdx && prevIdx.ct) {
     queryIndex.ct = prevIdx.ct;
     for (const coord of Object.keys(queryIndex.islandsByCoord)) {
@@ -365,19 +401,23 @@ async function bgCommitIslandData(collectedIslands, opts) {
   }
   writes["queryIndex_" + worldName] = queryIndex;
 
-  // Find existing island_* keys for this world that aren't in the fresh set —
-  // those represent islands the player can no longer see (relocated, etc.)
-  const islandPrefix = "island_" + worldName + "_";
-  const allKeys = await chrome.storage.local.get(null);
-  const stale = Object.keys(allKeys).filter(
-    (k) => k.startsWith(islandPrefix) && !freshIslandKeys.has(k)
-  );
+  if (isPartial) {
+    // Partial scan: only write new/updated data, never remove existing islands
+    await chrome.storage.local.set(writes);
+  } else {
+    // Full scan: atomic swap — find and remove stale island keys
+    const islandPrefix = "island_" + worldName + "_";
+    const allKeys = await chrome.storage.local.get(null);
+    const stale = Object.keys(allKeys).filter(
+      (k) => k.startsWith(islandPrefix) && !freshIslandKeys.has(k)
+    );
 
-  // Write fresh data first; only then drop stale keys. If we crash between
-  // these two steps, we have extra ghost keys (recoverable) instead of an
-  // empty map (catastrophic).
-  await chrome.storage.local.set(writes);
-  if (stale.length > 0) await chrome.storage.local.remove(stale);
+    // Write fresh data first; only then drop stale keys. If we crash between
+    // these two steps, we have extra ghost keys (recoverable) instead of an
+    // empty map (catastrophic).
+    await chrome.storage.local.set(writes);
+    if (stale.length > 0) await chrome.storage.local.remove(stale);
+  }
 }
 
 // Throttled runner with batch pauses; reports progress to storage
@@ -453,6 +493,37 @@ async function bgPhasePause(state) {
   return !state.cancelled;
 }
 
+// Build a Set of island coord keys ("x:y") within Chebyshev distance of source coords.
+// For small radii uses spatial enumeration; for large radii scans all islands.
+function bgBuildDistanceSet(sourceCoords, radius, allIslands) {
+  const result = new Set();
+  if (radius <= 30) {
+    // Spatial enumeration: for each source, add all coords in the square.
+    // Coords are added to a Set so overlapping radii cause no extra work.
+    const islandCoords = new Set();
+    for (const isl of allIslands) islandCoords.add(isl.x + ":" + isl.y);
+    for (const src of sourceCoords) {
+      for (let dx = -radius; dx <= radius; dx++) {
+        for (let dy = -radius; dy <= radius; dy++) {
+          const key = (src.x + dx) + ":" + (src.y + dy);
+          if (islandCoords.has(key)) result.add(key);
+        }
+      }
+    }
+  } else {
+    // Linear scan: check each island against all sources
+    for (const isl of allIslands) {
+      for (const src of sourceCoords) {
+        if (Math.abs(isl.x - src.x) <= radius && Math.abs(isl.y - src.y) <= radius) {
+          result.add(isl.x + ":" + isl.y);
+          break;
+        }
+      }
+    }
+  }
+  return result;
+}
+
 async function bgDoIslandFetch(opts, state) {
   const { originUrl, worldName, idMapping } = opts;
   const mapKey = "map_" + worldName;
@@ -463,9 +534,17 @@ async function bgDoIslandFetch(opts, state) {
   // No upfront wipe — accumulate fresh data, swap atomically at the end so
   // a cancelled or crashed scan never leaves the user with an empty world.
   const populatedIslands = mapData.islands.filter((i) => i.cities > 0);
+
+  // Apply distance filter if source coords are provided
+  let distanceSet = null;
+  if (opts.distanceRadius > 0 && opts.sourceCoords && opts.sourceCoords.length > 0) {
+    distanceSet = bgBuildDistanceSet(opts.sourceCoords, opts.distanceRadius, mapData.islands);
+  }
+
   const toFetch = [];
   for (const isl of populatedIslands) {
     const key = isl.x + ":" + isl.y;
+    if (distanceSet && !distanceSet.has(key)) continue;
     const islandId = idMapping[key];
     if (islandId) toFetch.push({ ...isl, islandId });
   }
@@ -529,6 +608,19 @@ async function bgDoCtCheck(opts, state) {
     players = players.filter((p) => p.allyTag.toLowerCase().includes(filter));
   }
   if (ownAvatarId) players = players.filter((p) => p.id !== ownAvatarId);
+
+  // Distance filter: only check players who have at least one island in range
+  if (opts.distanceRadius > 0 && opts.sourceCoords && opts.sourceCoords.length > 0) {
+    const mapKey = "map_" + worldName;
+    const mapRaw = await chrome.storage.local.get(mapKey);
+    const mapData = mapRaw[mapKey];
+    if (mapData && mapData.islands) {
+      const distanceSet = bgBuildDistanceSet(opts.sourceCoords, opts.distanceRadius, mapData.islands);
+      players = players.filter((p) =>
+        p.islands.some((i) => distanceSet.has(i.x + ":" + i.y))
+      );
+    }
+  }
 
   await bgRunThrottled(players, async (p) => {
     const text = await bgFetchAjax(originUrl, `view=sendIKMessage&receiverId=${p.id}&isMission=1&closeView=1`);

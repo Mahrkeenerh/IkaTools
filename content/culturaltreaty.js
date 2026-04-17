@@ -45,7 +45,10 @@
 
     port.onMessage.addListener(async (msg) => {
       if (msg.action === "start-ct-scan") {
-        await runScan(msg.allyFilter || "", msg.mode || "full");
+        await runScan(msg.allyFilter || "", msg.mode || "full", {
+          distanceRadius: msg.distanceRadius || 0,
+          distanceSource: msg.distanceSource || "own",
+        });
       }
     });
   });
@@ -99,7 +102,7 @@
     return scanResult;
   }
 
-  async function runScan(allyFilter, mode) {
+  async function runScan(allyFilter, mode, distanceOpts) {
     if (scanning || IkScanner.scanning) {
       safeSend({ type: "error", message: "Scan already running" });
       return;
@@ -147,6 +150,20 @@
         if (m2) ownAvatarId = m2[1];
       });
 
+      // Extract source island coords for distance filtering from Phase 1 scan result
+      let sourceCoords = null;
+      if (distanceOpts.distanceRadius > 0) {
+        sourceCoords = [];
+        for (const isl of mapR.islands) {
+          if (distanceOpts.distanceSource === "own" && isl.owner === "own") {
+            sourceCoords.push({ x: isl.x, y: isl.y });
+          } else if (distanceOpts.distanceSource === "allied" && (isl.owner === "own" || isl.owner === "ally")) {
+            sourceCoords.push({ x: isl.x, y: isl.y });
+          }
+        }
+        safeSend({ type: "log", message: `Distance filter: ${sourceCoords.length} source islands, radius ${distanceOpts.distanceRadius}` });
+      }
+
       // Hand off phases 2 (+ optionally 3) to the background service worker — survives page navigation
       const opts = {
         mode,
@@ -155,6 +172,8 @@
         idMapping,
         ownAvatarId,
         allyFilter,
+        distanceRadius: distanceOpts.distanceRadius || 0,
+        sourceCoords,
       };
       const resp = await chrome.runtime.sendMessage({ type: "bg-start-scan", opts });
       if (!resp || !resp.ok) {

@@ -413,6 +413,19 @@ body {
     <button class="btn btn-danger btn-sm" id="ct-cancel-btn" style="display:none">Cancel</button>
     <button class="btn btn-secondary btn-sm" id="export-data-btn" title="Download a JSON dump of the current world's data">Export</button>
   </div>
+  <div style="margin-top:8px;display:flex;align-items:center;gap:8px;">
+    <div class="control-group">
+      <label>Distance</label>
+      <input type="number" id="scan-distance" placeholder="all" min="1" max="100" style="width:50px;padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--text);font-size:12px;">
+    </div>
+    <div class="control-group">
+      <label>From</label>
+      <select id="scan-distance-source" style="padding:3px 4px;border:1px solid var(--border);border-radius:3px;background:var(--bg-input);color:var(--text);font-size:12px;">
+        <option value="own">Own cities</option>
+        <option value="allied">Own + Allied</option>
+      </select>
+    </div>
+  </div>
   <div id="ct-filter-row" style="margin-top:8px;display:flex;align-items:center;gap:8px;">
     <div class="control-group">
       <label>CT scan alliance filter</label>

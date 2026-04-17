@@ -91,6 +91,8 @@
   const ctAllyFilter = $("ct-ally-filter"); // narrows scan, pre-fetch
   const ctDisplayFilter = $("ct-display-filter"); // filters displayed list, post-scan
   const ctResults = $("ct-panel-results");
+  const scanDistance = $("scan-distance");
+  const scanDistanceSource = $("scan-distance-source");
   const allScanBtns = [scanMapBtn, islandScanBtn, ctScanBtn];
 
   // Last CT result set kept in memory so the display filter can re-render without rescanning
@@ -218,7 +220,14 @@
     progressBar.style.width = "0%";
 
     const port = chrome.tabs.connect(ikariamTabId, { name: "ct-scan" });
-    port.postMessage({ action: "start-ct-scan", mode, allyFilter: ctAllyFilter.value.trim() });
+    const distVal = parseInt(scanDistance.value, 10);
+    port.postMessage({
+      action: "start-ct-scan",
+      mode,
+      allyFilter: ctAllyFilter.value.trim(),
+      distanceRadius: distVal > 0 ? distVal : 0,
+      distanceSource: scanDistanceSource.value,
+    });
     attachCtPort(port);
     if (mode === "islands" || mode === "full") attachBgStorageListener();
   }

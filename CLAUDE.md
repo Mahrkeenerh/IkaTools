@@ -49,7 +49,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
   - `islandinfo.js` — Island view: passive data extraction, sortable player panel, alliance labels on cities, writes to `island_{world}_{id}` and `allianceIndex_{world}`
   - `mapfilter.js` and `filterrunner.js` are loaded before `minimap.js` / `filterpanel.js` / `islandfilter.js` so they can read `globalThis.MapFilter` and `globalThis.FilterRunner`.
   - `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
-  - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar. Pauses only during the DOM scan phase, not the background fetch phases.
+  - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar. Pauses during DOM scan phase, not during background fetch phases.
   - `gamenotes.js` — In-game notes toolbar button with floating panel, syncs with popup notes via chrome.storage
   - `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
   - `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`

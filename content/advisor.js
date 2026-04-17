@@ -607,6 +607,15 @@
 
   // Parse branchOffice page for trade offers using DOMParser.
   // Input can be an ajax=1 JSON response or a full HTML page.
+  // Large numeric cells render as abbreviated text ("4,12M") with the raw value
+  // in a sibling `.tooltip` div ("4 121 600"). Prefer the tooltip when present.
+  function parseNumericCell(td) {
+    if (!td) return 0;
+    const tooltip = td.querySelector(".tooltip");
+    const raw = tooltip ? tooltip.textContent : (td.childNodes[0]?.textContent || td.textContent || "");
+    return parseInt(raw.replace(/\s/g, ""), 10) || 0;
+  }
+
   // Buy table cols:  City | Goods/min | Qty | Resource | Price | Distance | Trade  (7)
   // Sell table cols: City | Qty | Resource | Price | Distance | Trade              (6)
   // Returns array of { cityName, playerName, goodsPerMin, quantity, price, distance }
@@ -660,16 +669,14 @@
           // Buy: City | Goods/min | Qty | Resource | Price | Distance | Trade
           ({ cityName, playerName } = parseCityPlayer(tds[0]));
           goodsPerMin = parseInt(tds[1]?.textContent.trim(), 10) || 0;
-          const qtyText = tds[2]?.childNodes[0]?.textContent || tds[2]?.textContent || "";
-          quantity = parseInt(qtyText.replace(/\s/g, ""), 10) || 0;
-          price = parseInt((tds[4]?.textContent || "").replace(/\s/g, ""), 10) || 0;
+          quantity = parseNumericCell(tds[2]);
+          price = parseNumericCell(tds[4]);
           distance = parseInt(tds[5]?.textContent.trim(), 10) || 0;
         } else if (tds.length >= 6) {
           // Sell: City | Qty | Resource | Price | Distance | Trade
           ({ cityName, playerName } = parseCityPlayer(tds[0]));
-          const qtyText = tds[1]?.childNodes[0]?.textContent || tds[1]?.textContent || "";
-          quantity = parseInt(qtyText.replace(/\s/g, ""), 10) || 0;
-          price = parseInt((tds[3]?.textContent || "").replace(/\s/g, ""), 10) || 0;
+          quantity = parseNumericCell(tds[1]);
+          price = parseNumericCell(tds[3]);
           distance = parseInt(tds[4]?.textContent.trim(), 10) || 0;
         } else {
           continue;
@@ -715,8 +722,7 @@
 
         const { cityName, playerName } = parseCityPlayer(tds[0]);
         const goodsPerMin = parseInt(tds[1]?.textContent.trim(), 10) || 0;
-        const qtyText = tds[2]?.childNodes[0]?.textContent || tds[2]?.textContent || "";
-        const quantity = parseInt(qtyText.replace(/\s/g, ""), 10) || 0;
+        const quantity = parseNumericCell(tds[2]);
 
         // Unit: extract from div class "unitDropDownSlot army_small normal sXXX"
         const unitDiv = tds[3]?.querySelector(".unitDropDownSlot");
@@ -729,8 +735,7 @@
         }
 
         // Price + currency icon class
-        const priceText = (tds[4]?.textContent || "").replace(/\s/g, "");
-        const price = parseInt(priceText, 10) || 0;
+        const price = parseNumericCell(tds[4]);
         const currIcon = tds[4]?.querySelector("img");
         let currency = "gold";
         if (currIcon) {

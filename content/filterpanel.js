@@ -751,6 +751,10 @@
     return section;
 
     async function doApply() {
+      if (!customEnabled && customCodeDraft.trim()) {
+        customEnabled = true;
+        chrome.storage.local.set({ [CUSTOM_ENABLED_KEY]: true });
+      }
       const ok = await applyCustomCode(customCodeDraft);
       if (ok && customCodeDraft.trim()) customCollapsed = false;
       renderBody();
