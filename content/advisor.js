@@ -851,7 +851,8 @@
       // Skip first td (player name link)
       for (let i = 1; i < tds.length && i - 1 < tableHeaders.length; i++) {
         const text = tds[i].textContent.trim();
-        const count = text === "-" || text === "" ? 0 : parseInt(text, 10) || 0;
+        const cleaned = text.replace(/[\s,.\u00a0]/g, "");
+        const count = text === "-" || text === "" ? 0 : parseInt(cleaned, 10) || 0;
         units.push({ ...tableHeaders[i - 1], count });
       }
     }
@@ -885,7 +886,7 @@
       const buttons = table.querySelectorAll(".armybutton, .fleetbutton");
       for (const btn of buttons) {
         const name = btn.getAttribute("title") || "";
-        const count = parseInt(btn.textContent.trim(), 10) || 0;
+        const count = parseInt(btn.textContent.replace(/[\s,.\u00a0]/g, ""), 10) || 0;
         if (count === 0) continue;
 
         // Find unit ID from CSS class
@@ -962,7 +963,7 @@
           if (armyDiv.className.includes("fleet")) type = "ship";
         }
         const countEl = wrapper.querySelector(".unitcounttextlabel");
-        const count = countEl ? parseInt(countEl.textContent.trim(), 10) || 0 : 0;
+        const count = countEl ? parseInt(countEl.textContent.replace(/[\s,.\u00a0]/g, ""), 10) || 0 : 0;
         if (count > 0) {
           queue.push({ position: i + 1, active, id, name, count, type, enddate });
         }
