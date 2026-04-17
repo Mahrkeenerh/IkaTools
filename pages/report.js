@@ -613,12 +613,45 @@
     tfoot.appendChild(footTr);
   }
 
+  // Generals score: 0.02 points per resource spent on active units/ships.
+  // Values are build-cost × 0.02, keyed by internal unit id (s-number).
+  // Unit upgrades don't affect this — they're flat research costs, not per-unit.
+  const UNIT_SCORE = {
+    s303: 1.4, s315: 0.6, s302: 1.2, s308: 6.2, s301: 0.4,
+    s313: 1.1, s304: 4.0, s319: 5.0,
+    s307: 4.4, s306: 11.2, s305: 31.0,
+    s312: 2.5, s309: 5.8, s310: 4.0, s311: 10.0,
+    s211: 6.2, s210: 5.0, s216: 24.0, s213: 6.8,
+    s214: 6.4, s215: 22.4, s217: 28.0, s212: 20.2,
+    s218: 6.4, s219: 28.0, s220: 16.0,
+  };
+  // Movement parser emits CSS-class names instead of s-ids, so map them.
+  const UNIT_NAME_TO_ID = {
+    phalanx: "s303", spearman: "s315", swordsman: "s302", steamgiant: "s308",
+    slinger: "s301", archer: "s313", marksman: "s304",
+    ram: "s307", catapult: "s306", mortar: "s305",
+    gyrocopter: "s312", bombardier: "s309", cook: "s310", medic: "s311",
+    ship_flamethrower: "s211", ship_ram: "s210", ship_steamboat: "s216",
+    ship_ballista: "s213", ship_catapult: "s214", ship_mortar: "s215",
+    ship_rocketship: "s217", ship_submarine: "s212",
+    ship_paddlespeedship: "s218", ship_ballooncarrier: "s219", ship_tender: "s220",
+  };
+  function unitScore(ref, count) {
+    const id = ref && ref.startsWith("s") ? ref : UNIT_NAME_TO_ID[ref];
+    return (UNIT_SCORE[id] || 0) * (count || 0);
+  }
+  function fmtScore(n) {
+    return Math.round(n).toLocaleString();
+  }
+
   // --- Army tab ---
   function renderArmy(report) {
     const LAND_GROUPS = ["Infantry", "Siege & Support"];
     const NAVAL_GROUPS = ["Warships", "Naval Support"];
     const GROUP_ORDER = [...LAND_GROUPS, ...NAVAL_GROUPS];
     const container = $("army-container");
+
+    renderArmyScore(report, container);
 
     // Active movements with units — shown first
     renderMilitaryMovements(report, container);
@@ -743,6 +776,64 @@
       wrap.appendChild(table);
       container.appendChild(wrap);
     }
+  }
+
+  function renderArmyScore(report, container) {
+    let stationedScore = 0;
+    for (const city of report.cities) {
+      if (!city.military?.units) continue;
+      for (const u of city.military.units) stationedScore += unitScore(u.id, u.count);
+    }
+    let transitScore = 0;
+    if (report.militaryMovements) {
+      for (const m of report.militaryMovements) {
+        for (const u of (m.units || [])) transitScore += unitScore(u.name, u.count);
+      }
+    }
+    let queueScore = 0;
+    for (const city of report.cities) {
+      for (const q of (city.trainingQueue || [])) queueScore += unitScore(q.id, q.count);
+    }
+
+    const current = stationedScore + transitScore;
+    const after = current + queueScore;
+    if (current === 0 && queueScore === 0) return;
+
+    const wrap = document.createElement("div");
+    wrap.className = "summary-cards";
+    wrap.style.marginBottom = "16px";
+
+    const growthPct = current > 0 && queueScore > 0
+      ? `+${((queueScore / current) * 100).toFixed(1)}% over current`
+      : "";
+
+    const cards = [
+      {
+        label: "Current Score",
+        value: fmtScore(current),
+        sub: `${fmtScore(stationedScore)} stationed + ${fmtScore(transitScore)} in transit`,
+      },
+      {
+        label: "In Training",
+        value: fmtScore(queueScore),
+        sub: queueScore > 0 ? "adds when finished" : "nothing queued",
+      },
+      {
+        label: "After Queue",
+        value: fmtScore(after),
+        sub: growthPct,
+      },
+    ];
+    for (const c of cards) {
+      const el = document.createElement("div");
+      el.className = "summary-card";
+      el.innerHTML =
+        `<div class="label">${c.label}</div>` +
+        `<div class="value">${c.value}</div>` +
+        `<div class="sub">${c.sub}</div>`;
+      wrap.appendChild(el);
+    }
+    container.appendChild(wrap);
   }
 
   function renderTrainingQueues(report, container) {
