@@ -558,7 +558,11 @@
     function workerCell(assigned, max, om) {
       if (om && om.overwork > 0) {
         const total = om.normalWorkers + om.overwork;
-        return `<td class="right" style="color:#e8a735;">${total} (${om.normalWorkers}+${om.overwork}) / ${max}</td>`;
+        const color = total >= max ? "#60c060" : "#e8a735";
+        return `<td class="right" style="color:${color};">${total} (${om.normalWorkers}+${om.overwork}) / ${max}</td>`;
+      }
+      if (assigned >= max && max > 0) {
+        return `<td class="right" style="color:#60c060;">${assigned} / ${max}</td>`;
       }
       return `<td class="right">${assigned} / ${max}</td>`;
     }
@@ -588,8 +592,8 @@
         ${prodCell(om.wood)}
         ${workerCell(w.luxury.assigned, w.luxury.max, om.luxury)}
         ${prodCell(om.luxury)}
-        <td class="right"${w.scientists.assigned < w.scientists.max ? ' style="color:#e06060;"' : ""}>${w.scientists.assigned} / ${w.scientists.max}</td>
-        <td class="right"${w.priests.assigned < w.priests.max ? ' style="color:#e06060;"' : ""}>${w.priests.assigned} / ${w.priests.max}</td>
+        <td class="right"${w.scientists.assigned < w.scientists.max ? ' style="color:#e06060;"' : (w.scientists.max > 0 && w.scientists.assigned >= w.scientists.max ? ' style="color:#60c060;"' : "")}>${w.scientists.assigned} / ${w.scientists.max}</td>
+        <td class="right"${w.priests.assigned < w.priests.max ? ' style="color:#e06060;"' : (w.priests.max > 0 && w.priests.assigned >= w.priests.max ? ' style="color:#60c060;"' : "")}>${w.priests.assigned} / ${w.priests.max}</td>
         <td class="right">${fmt(city.citizens)}</td>
         <td class="right">${city.occupiedSpace != null ? city.occupiedSpace : "—"} / ${city.maxInhabitants != null ? city.maxInhabitants : "—"}</td>
         <td class="right"${city.growthPerHour != null && city.growthPerHour < 0 ? ' style="color:#e06060;"' : ""}>${city.growthPerHour != null ? fmtSignedFloat(city.growthPerHour) : "—"}</td>
