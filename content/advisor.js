@@ -2,6 +2,22 @@
 (() => {
   const P = "[Advisor]";
 
+  // Max scientists by academy level (index = level, 0-32). Source: Ikariam game data.
+  // Wiki-sourced, known to contain errors — the report highlights rows where
+  // assigned > max so values can be corrected manually as they're observed in-game.
+  const MAX_SCIENTISTS_BY_LEVEL = [0, 8, 12, 16, 22, 28, 35, 43, 51, 60, 69, 79, 89, 99, 111, 122, 134, 146, 159, 172, 185, 198, 212, 227, 241, 256, 271, 287, 302, 318, 335, 351, 368];
+  // Max priests by temple level (index = level). Known values from Ikariam game data up to 28;
+  // levels 25 and 27 linearly interpolated from neighbours (756, 848). Above 28, falls back to fetched max.
+  const MAX_PRIESTS_BY_LEVEL = [0, 12, 23, 37, 54, 73, 94, 117, 142, 168, 196, 225, 255, 287, 320, 355, 390, 427, 464, 503, 543, 583, 625, 668, 711, 756, 801, 848, 895];
+
+  function maxByBuildingLevel(buildings, internalName, table) {
+    if (!Array.isArray(buildings)) return null;
+    const b = buildings.find((x) => x.building === internalName);
+    if (!b) return null;
+    const lvl = b.level || 0;
+    return lvl >= 0 && lvl < table.length ? table[lvl] : null;
+  }
+
   // Extract a JSON object/value following a marker string, using brace-matching
   function extractJson(html, marker) {
     const idx = html.indexOf(marker);
@@ -408,10 +424,13 @@
   function parseSpyReports(html) {
     const viewHtml = extractChangeViewHtml(html);
     const doc = new DOMParser().parseFromString(viewHtml || html, "text/html");
-    const headerRows = doc.querySelectorAll("tr.espionageReports");
+    // Successful reports use class="espionageReports", failed ones use class="entry" —
+    // match by id prefix instead so we capture both.
+    const headerRows = doc.querySelectorAll('tr[id^="message"]');
     const reports = [];
     for (const row of headerRows) {
       const id = parseInt(row.id.replace("message", ""), 10);
+      if (!Number.isFinite(id)) continue;
 
       const targetPlayer = row.querySelector(".targetOwner")?.textContent.trim() || "";
       const cityCell = row.querySelector(".targetCity");
@@ -439,9 +458,13 @@
       const dm = (row.querySelector(".lostDecoys")?.textContent.trim() || "").match(/(\d+)\s*\/\s*(\d+)/);
       const dateText = row.querySelector(".date")?.textContent.trim() || "";
 
+      // Failed reports have a .noReport div in the detail row regardless of language.
+      const detailRow = doc.querySelector(`#tbl_mail${id}`);
+      const success = !detailRow?.querySelector(".noReport");
+
       const report = {
         id, targetPlayer, targetCity, targetCoords, date: dateText,
-        subject, result: resultText,
+        subject, result: resultText, success,
         agentsLost: am ? parseInt(am[1], 10) : 0,
         agentsDeployed: am ? parseInt(am[2], 10) : 0,
         decoysLost: dm ? parseInt(dm[1], 10) : 0,
@@ -450,7 +473,6 @@
       if (targetCityId) report.targetCityId = targetCityId;
 
       // Parse detail content (always in DOM, hidden when collapsed)
-      const detailRow = doc.querySelector(`#tbl_mail${id}`);
       const reportText = detailRow?.querySelector(".reportText");
       if (reportText) {
         // Resources
@@ -1552,12 +1574,14 @@
             max: hd.maxTransporters ?? 0,
           },
           actionPoints: hd.maxActionPoints ?? 0,
-          // Town hall data
+          // Town hall data. Scientist/priest max from the town hall input is bounded by
+          // available citizens, so it under-reports when population is capped. Use
+          // academy/temple level as the true ceiling when known.
           workers: th.woodWorkers != null ? {
             wood: { assigned: th.woodWorkers ?? 0, max: th.woodWorkersMax ?? 0 },
             luxury: { assigned: th.luxuryWorkers ?? 0, max: th.luxuryWorkersMax ?? 0 },
-            scientists: { assigned: th.scientists ?? 0, max: th.scientistsMax ?? 0 },
-            priests: { assigned: th.priests ?? 0, max: th.priestsMax ?? 0 },
+            scientists: { assigned: th.scientists ?? 0, max: maxByBuildingLevel(b.buildings, "academy", MAX_SCIENTISTS_BY_LEVEL) ?? th.scientistsMax ?? 0 },
+            priests: { assigned: th.priests ?? 0, max: maxByBuildingLevel(b.buildings, "temple", MAX_PRIESTS_BY_LEVEL) ?? th.priestsMax ?? 0 },
           } : null,
           happiness: th.happiness ?? null,
           growthPerHour: th.growthPerHour ?? null,
@@ -1608,13 +1632,21 @@
     const existing = await new Promise(r => chrome.storage.local.get(storageKey, r));
     const log = existing[storageKey] || {};
     let added = 0;
+    let updated = 0;
     for (const r of allReports) {
-      if (!log[r.id]) { log[r.id] = r; added++; }
+      if (!log[r.id]) {
+        log[r.id] = r;
+        added++;
+      } else if (r.success !== undefined && log[r.id].success === undefined) {
+        // Backfill success flag into legacy entries that pre-date the field.
+        log[r.id].success = r.success;
+        updated++;
+      }
     }
-    if (added > 0) {
+    if (added > 0 || updated > 0) {
       await new Promise(r => chrome.storage.local.set({ [storageKey]: log }, r));
     }
-    console.log(P, `Spy log: ${added} new / ${allReports.length} total reports (${Object.keys(log).length} archived)`);
+    console.log(P, `Spy log: ${added} new / ${updated} backfilled / ${allReports.length} total reports (${Object.keys(log).length} archived)`);
   }
 
   // --- Shared advisor run logic ---

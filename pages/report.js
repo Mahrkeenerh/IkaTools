@@ -572,6 +572,21 @@
       return `<td class="right">${fmt(data.prodPerHour)}</td>`;
     }
 
+    // Scientist/priest cells — max comes from a hardcoded wiki table that may be wrong.
+    // If assigned > max, flag it so the table can be corrected.
+    function workerMaxCell(assigned, max) {
+      if (max > 0 && assigned > max) {
+        return `<td class="right" style="color:#ff3030;font-weight:bold;" title="Table max (${max}) exceeded — update MAX_*_BY_LEVEL in advisor.js">${assigned} / ${max} ⚠</td>`;
+      }
+      if (assigned < max) {
+        return `<td class="right" style="color:#e06060;">${assigned} / ${max}</td>`;
+      }
+      if (max > 0 && assigned >= max) {
+        return `<td class="right" style="color:#60c060;">${assigned} / ${max}</td>`;
+      }
+      return `<td class="right">${assigned} / ${max}</td>`;
+    }
+
     for (const city of report.cities) {
       const w = city.workers;
       if (!w) continue;
@@ -592,8 +607,8 @@
         ${prodCell(om.wood)}
         ${workerCell(w.luxury.assigned, w.luxury.max, om.luxury)}
         ${prodCell(om.luxury)}
-        <td class="right"${w.scientists.assigned < w.scientists.max ? ' style="color:#e06060;"' : (w.scientists.max > 0 && w.scientists.assigned >= w.scientists.max ? ' style="color:#60c060;"' : "")}>${w.scientists.assigned} / ${w.scientists.max}</td>
-        <td class="right"${w.priests.assigned < w.priests.max ? ' style="color:#e06060;"' : (w.priests.max > 0 && w.priests.assigned >= w.priests.max ? ' style="color:#60c060;"' : "")}>${w.priests.assigned} / ${w.priests.max}</td>
+        ${workerMaxCell(w.scientists.assigned, w.scientists.max)}
+        ${workerMaxCell(w.priests.assigned, w.priests.max)}
         <td class="right">${fmt(city.citizens)}</td>
         <td class="right">${city.occupiedSpace != null ? city.occupiedSpace : "—"} / ${city.maxInhabitants != null ? city.maxInhabitants : "—"}</td>
         <td class="right"${city.growthPerHour != null && city.growthPerHour < 0 ? ' style="color:#e06060;"' : ""}>${city.growthPerHour != null ? fmtSignedFloat(city.growthPerHour) : "—"}</td>
@@ -644,6 +659,20 @@
     const id = ref && ref.startsWith("s") ? ref : UNIT_NAME_TO_ID[ref];
     return (UNIT_SCORE[id] || 0) * (count || 0);
   }
+
+  // Gold upkeep per unit per hour, keyed by s-id.
+  const UNIT_UPKEEP = {
+    s301: 2, s302: 4, s303: 3, s304: 3, s305: 30,
+    s306: 25, s307: 15, s308: 12, s309: 45, s310: 10,
+    s311: 20, s312: 15, s313: 4, s315: 1,
+    s210: 15, s211: 25, s212: 50, s213: 20, s214: 35,
+    s215: 50, s216: 45, s217: 55, s218: 5, s219: 100,
+    s220: 100,
+  };
+  function unitUpkeep(ref, count) {
+    const id = ref && ref.startsWith("s") ? ref : UNIT_NAME_TO_ID[ref];
+    return (UNIT_UPKEEP[id] || 0) * (count || 0);
+  }
   function fmtScore(n) {
     return Math.round(n).toLocaleString();
   }
@@ -663,9 +692,21 @@
     // Training queues — shown after movements
     renderTrainingQueues(report, container);
 
+    // Build transit counts by unit id from active military movements
+    const transitByUnitId = {};
+    if (report.militaryMovements) {
+      for (const m of report.militaryMovements) {
+        for (const u of (m.units || [])) {
+          const id = u.name && u.name.startsWith("s") ? u.name : UNIT_NAME_TO_ID[u.name];
+          if (!id) continue;
+          transitByUnitId[id] = (transitByUnitId[id] || 0) + (u.count || 0);
+        }
+      }
+    }
+
     // Collect all units grouped
-    const groupUnits = {}; // group -> [unitName, ...]
-    const seen = {}; // group -> Set
+    const groupUnits = {}; // group -> [{name, id}, ...]
+    const seen = {}; // group -> Set of name
     for (const city of report.cities) {
       if (!city.military?.units) continue;
       for (const u of city.military.units) {
@@ -673,7 +714,7 @@
         if (!groupUnits[g]) { groupUnits[g] = []; seen[g] = new Set(); }
         if (!seen[g].has(u.name)) {
           seen[g].add(u.name);
-          groupUnits[g].push(u.name);
+          groupUnits[g].push({ name: u.name, id: u.id });
         }
       }
     }
@@ -720,7 +761,7 @@
       const table = document.createElement("table");
       table.className = "report-table";
 
-      // Header: Unit | City1 | City2 | ... | Total
+      // Header: Unit | City1 | City2 | ... | Transit | Total | Base Upkeep/h
       const thead = document.createElement("thead");
       const headTr = document.createElement("tr");
       headTr.innerHTML = "<th>Unit</th>" +
@@ -729,14 +770,18 @@
           const cap = c.isCapital ? ' <span class="capital-badge">Cap</span>' : "";
           return `<th class="right ${cls}">${c.name}${cap}</th>`;
         }).join("") +
-        '<th class="right">Total</th>';
+        '<th class="right" style="font-style:italic;" title="Units currently in active military movements">Transit</th>' +
+        '<th class="right">Total</th>' +
+        '<th class="right val-neg" title="Base upkeep per hour — does not account for science-based reductions. Units in transit cost 2× in reality; see the Active Movements table for that.">Base Upkeep/h</th>';
       thead.appendChild(headTr);
       table.appendChild(thead);
 
       // Body: one row per unit, with divider between groups
       const tbody = document.createElement("tbody");
       const cityTotals = new Array(report.cities.length).fill(0);
+      let transitTotal = 0;
       let grandTotal = 0;
+      let grandUpkeep = 0;
 
       for (let gi = 0; gi < sectionGroups.length; gi++) {
         const group = sectionGroups[gi];
@@ -746,22 +791,29 @@
         if (gi > 0) {
           const divTr = document.createElement("tr");
           divTr.className = "group-divider";
-          divTr.innerHTML = `<td colspan="${report.cities.length + 2}" class="divider-label">${group}</td>`;
+          divTr.innerHTML = `<td colspan="${report.cities.length + 4}" class="divider-label">${group}</td>`;
           tbody.appendChild(divTr);
         }
 
-        for (const unitName of names) {
+        for (const { name: unitName, id: unitId } of names) {
           const tr = document.createElement("tr");
-          let rowTotal = 0;
+          let stationed = 0;
           let cells = `<td>${unitName}</td>`;
           report.cities.forEach((city, ci) => {
             const count = cityUnitMaps[ci][unitName] || 0;
-            rowTotal += count;
+            stationed += count;
             cityTotals[ci] += count;
             cells += `<td class="right">${count ? count.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
           });
+          const transit = transitByUnitId[unitId] || 0;
+          const rowTotal = stationed + transit;
+          transitTotal += transit;
           grandTotal += rowTotal;
+          const rowUpkeep = unitUpkeep(unitId, rowTotal);
+          grandUpkeep += rowUpkeep;
+          cells += `<td class="right" style="font-style:italic;">${transit ? transit.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
           cells += `<td class="right">${rowTotal ? rowTotal.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
+          cells += `<td class="right val-neg">${rowUpkeep ? rowUpkeep.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
           tr.innerHTML = cells;
           tbody.appendChild(tr);
         }
@@ -773,7 +825,9 @@
       const footTr = document.createElement("tr");
       footTr.innerHTML = "<td>Total</td>" +
         cityTotals.map((t) => `<td class="right">${t ? t.toLocaleString() : "—"}</td>`).join("") +
-        `<td class="right">${grandTotal ? grandTotal.toLocaleString() : "—"}</td>`;
+        `<td class="right" style="font-style:italic;">${transitTotal ? transitTotal.toLocaleString() : "—"}</td>` +
+        `<td class="right">${grandTotal ? grandTotal.toLocaleString() : "—"}</td>` +
+        `<td class="right val-neg">${grandUpkeep ? grandUpkeep.toLocaleString() : "—"}</td>`;
       tfoot.appendChild(footTr);
       table.appendChild(tfoot);
 
@@ -955,7 +1009,8 @@
 
     const thead = document.createElement("thead");
     const headTr = document.createElement("tr");
-    headTr.innerHTML = "<th>Mission</th><th>Direction</th><th>From</th><th>To</th><th>ETA</th><th>Units</th><th class=\"right\">Cargo</th>";
+    headTr.innerHTML = "<th>Mission</th><th>Direction</th><th>From</th><th>To</th><th>ETA</th><th>Units</th><th class=\"right\">Cargo</th>" +
+      "<th class=\"right val-neg\" title=\"Base upkeep per hour — doubled because units on the move cost 2×. Excludes science-based reductions.\">Base Upkeep/h</th>";
     thead.appendChild(headTr);
     table.appendChild(thead);
 
@@ -982,6 +1037,10 @@
       const cargoParts = m.resources.map((r) => fmt(r.amount) + " " + r.type);
       const cargoStr = cargoParts.join(", ") || "—";
 
+      // Upkeep: units on the move cost double
+      let moveUpkeep = 0;
+      for (const u of m.units) moveUpkeep += unitUpkeep(u.name, u.count) * 2;
+
       tr.innerHTML = `
         <td>${label}</td>
         <td><span class="${dirClass}">${dir}</span></td>
@@ -989,7 +1048,8 @@
         <td>${m.target.city}${m.target.player ? " (" + m.target.player + ")" : ""}</td>
         <td>${m.endTimestamp ? timeHtml(m.endTimestamp) : (m.arrivalTime || "—")}</td>
         <td>${unitStr}</td>
-        <td class="right">${cargoStr}</td>`;
+        <td class="right">${cargoStr}</td>
+        <td class="right val-neg">${moveUpkeep ? moveUpkeep.toLocaleString() : '<span class="val-zero">—</span>'}</td>`;
       tbody.appendChild(tr);
 
       // Track units in transit — attribute to origin city if returning, target if outbound
@@ -2306,11 +2366,11 @@
             details = parts.length > 0 ? parts.join(", ") : "No troops";
           }
 
-          const resultShort = r.result
-            ? (r.result.toLowerCase().includes("fail") || r.result.toLowerCase().includes("ne"))
-              ? '<span class="val-neg">Failed</span>'
-              : '<span class="val-pos">OK</span>'
-            : "—";
+          const resultShort = r.success === false
+            ? '<span class="val-neg">Failed</span>'
+            : r.success === true
+              ? '<span class="val-pos">OK</span>'
+              : "—";
 
           if (r.type === "units") tr.classList.add("spy-military");
           if (r.looted) tr.classList.add("spy-looted");

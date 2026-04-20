@@ -1,8 +1,6 @@
-// Auto-finish buildings when remaining time is under 4m 55s (free speedup)
+// Auto-finish buildings when remaining time is under 5 min (free speedup)
 (() => {
-  const THRESHOLD_MIN = 295; // 4m 55s
-  const THRESHOLD_MAX = 299; // 4m 59s
-  let threshold = THRESHOLD_MIN + Math.floor(Math.random() * (THRESHOLD_MAX - THRESHOLD_MIN + 1));
+  const THRESHOLD = 300;
   const CHECK_INTERVAL = 1000;
   const FAST_INTERVAL = 100;
   const BUTTON_COOLDOWN = 500;
@@ -15,7 +13,6 @@
   let fastStopTimer = null;
   let lastButtonClick = 0;
   let lastConfirmClick = 0;
-  let lastClickWasFinish = false;
 
   function parseTime(text) {
     let total = 0;
@@ -53,9 +50,6 @@
         if (costEl && costEl.textContent.trim() === "0") {
           lastConfirmClick = Date.now();
           lastButtonClick = 0;
-          if (lastClickWasFinish) {
-            threshold = THRESHOLD_MIN + Math.floor(Math.random() * (THRESHOLD_MAX - THRESHOLD_MIN + 1));
-          }
           confirmBtn.click();
           startFastPoll();
         } else {
@@ -74,10 +68,9 @@
         const timeText = countdown.textContent.trim();
         if (!timeText) return;
         const seconds = parseTime(timeText);
-        if (seconds <= 0 || seconds > threshold) return;
+        if (seconds <= 0 || seconds >= THRESHOLD) return;
         const speedupBtn = document.getElementById("buildingSpeedupConstructionList");
         if (!speedupBtn) return;
-        lastClickWasFinish = speedupBtn.classList.contains("finish");
         lastButtonClick = Date.now();
         lastConfirmClick = 0;
         speedupBtn.click();
@@ -94,10 +87,9 @@
         const timeText = textEl.textContent.trim();
         if (!timeText) continue;
         const seconds = parseTime(timeText);
-        if (seconds <= 0 || seconds > threshold) continue;
+        if (seconds <= 0 || seconds >= THRESHOLD) continue;
         const speedupBtn = document.getElementById(`js_CityPosition${i}SpeedupButton`);
         if (!speedupBtn || speedupBtn.classList.contains("invisible")) continue;
-        lastClickWasFinish = countdownEl.classList.contains("buildingSpeedup");
         lastButtonClick = Date.now();
         lastConfirmClick = 0;
         speedupBtn.click();
