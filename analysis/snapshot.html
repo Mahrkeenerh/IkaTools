@@ -1,0 +1,517 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Ikariam snapshot analysis</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+  :root {
+    --bg: #14181d;
+    --panel: #1c222a;
+    --panel2: #232a33;
+    --text: #e4e8ee;
+    --muted: #8b95a4;
+    --accent: #4fb3d9;
+    --border: #2d3440;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Ubuntu, sans-serif;
+  }
+  header {
+    padding: 20px 24px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: baseline;
+    gap: 16px;
+    flex-wrap: wrap;
+  }
+  header h1 { font-size: 20px; margin: 0; font-weight: 600; }
+  header .world { color: var(--accent); font-family: ui-monospace, monospace; }
+  header .meta { color: var(--muted); font-size: 12px; }
+  main { padding: 16px 24px 48px; }
+  section {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin: 16px 0;
+    overflow: hidden;
+  }
+  section > h2 {
+    margin: 0;
+    padding: 14px 18px;
+    font-size: 15px;
+    font-weight: 600;
+    border-bottom: 1px solid var(--border);
+    background: var(--panel2);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+  }
+  section > h2 .hint { color: var(--muted); font-weight: 400; font-size: 12px; }
+  section .chart { padding: 8px; width: 100%; }
+  section .chart > .js-plotly-plot,
+  section .chart > .js-plotly-plot > .plot-container,
+  section .chart > .js-plotly-plot > .plot-container > .svg-container { width: 100% !important; }
+  .controls {
+    padding: 10px 18px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    flex-wrap: wrap;
+    background: var(--panel2);
+  }
+  .controls label { color: var(--muted); font-size: 12px; }
+  select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    padding: 5px 10px;
+    font: inherit;
+  }
+  select:focus { outline: 1px solid var(--accent); outline-offset: -1px; }
+  #status {
+    padding: 40px;
+    text-align: center;
+    color: var(--muted);
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Ikariam snapshot <span class="world" id="world">—</span></h1>
+  <span class="meta" id="exportedAt">—</span>
+  <span class="meta" id="counts">—</span>
+</header>
+<main>
+  <div id="status">Loading data.json…</div>
+  <section id="s-scores" hidden>
+    <h2>Player score distributions <span class="hint">CDF across all players · log scale for score dims</span></h2>
+    <div class="chart" id="scoresCdf" style="height:420px"></div>
+  </section>
+
+  <section id="s-violins" hidden>
+    <h2>Building-level distribution by type <span class="hint">each violin = levels of that building across cities that have it</span></h2>
+    <div class="chart" id="buildingViolins" style="height:520px"></div>
+  </section>
+
+  <section id="s-heat" hidden>
+    <h2>Meta-progression heatmap <span class="hint">median building level at each townHall bucket · blank cell = fewer than 10 cities</span></h2>
+    <div class="chart" id="progHeat" style="height:640px"></div>
+  </section>
+
+  <section id="s-scatter" hidden>
+    <h2>Drill-down: building level vs townHall <span class="hint">pick a building · dots jittered · line = median per townHall level · bottom bar = cities per townHall level</span></h2>
+    <div class="controls">
+      <label for="bPick">Building:</label>
+      <select id="bPick"></select>
+    </div>
+    <div class="chart" id="progScatter" style="height:680px"></div>
+  </section>
+
+  <section id="s-wonders" hidden>
+    <h2>Wonder adoption <span class="hint">violin = per-island level distribution · yellow box = p25–p75 · red line = mean</span></h2>
+    <div class="chart" id="wonderBar" style="height:460px"></div>
+  </section>
+
+  <section id="s-tails" hidden>
+    <h2>Long tails <span class="hint">alliance sizes and cities-per-island · both sorted descending</span></h2>
+    <div class="chart" id="tails" style="height:460px"></div>
+  </section>
+</main>
+
+<script>
+const COLORS = {
+  army:     "#e06c6c",
+  building: "#6ca5e0",
+  research: "#9e6ce0",
+  trader:   "#e0c06c",
+  place:    "#6ce0a5",
+};
+
+const LAYOUT_BASE = {
+  autosize: true,
+  paper_bgcolor: "#1c222a",
+  plot_bgcolor: "#1c222a",
+  font: { color: "#e4e8ee", size: 12 },
+  margin: { t: 30, r: 20, b: 50, l: 60 },
+  xaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440" },
+  yaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440" },
+  legend: { bgcolor: "transparent" },
+};
+
+function mergeLayout(extra) {
+  return JSON.parse(JSON.stringify({ ...LAYOUT_BASE, ...extra }));
+}
+
+const CONFIG = { responsive: true, displaylogo: false, toImageButtonOptions: { format: "png", scale: 2 } };
+
+async function main() {
+  let data;
+  try {
+    const resp = await fetch("data.json");
+    if (!resp.ok) throw new Error("fetch " + resp.status);
+    data = await resp.json();
+  } catch (e) {
+    document.getElementById("status").textContent = "Failed to load data.json: " + e.message +
+      " — run prep.py first, and open this page via `python3 -m http.server` (not file://).";
+    return;
+  }
+  document.getElementById("status").hidden = true;
+
+  // Header
+  document.getElementById("world").textContent = data.meta.world || "?";
+  document.getElementById("exportedAt").textContent = "exported " + (data.meta.exportedAt || "?");
+  document.getElementById("counts").textContent =
+    `${data.counts.players} players · ${data.counts.cities} cities · ${data.counts.alliances} alliances · ${data.counts.islandsPopulated} populated islands`;
+
+  renderScoresCdf(data);
+  renderBuildingViolins(data);
+  renderMetaHeatmap(data);
+  renderDrilldownScatter(data);
+  renderWonders(data);
+  renderTails(data);
+
+  // Force a relayout after sections become visible so Plotly re-measures
+  // the (now-unhidden) containers at their true width.
+  const resizeAll = () => {
+    document.querySelectorAll(".chart").forEach((el) => {
+      if (el.children.length) Plotly.Plots.resize(el);
+    });
+  };
+  requestAnimationFrame(resizeAll);
+  window.addEventListener("resize", resizeAll);
+}
+
+// --- 1. Score CDFs --------------------------------------------------------
+function renderScoresCdf(data) {
+  const dims = ["army", "building", "research", "trader", "place"];
+  const traces = [];
+  for (const dim of dims) {
+    const vals = data.playerScores
+      .map((p) => p[dim])
+      .filter((v) => v > 0)
+      .sort((a, b) => a - b);
+    if (vals.length === 0) continue;
+    // Build CDF: x = score, y = cumulative fraction of players AT OR BELOW.
+    // For `place` (1 = top rank), invert so higher = better.
+    let xs, ys;
+    if (dim === "place") {
+      // place: smaller is better, so CDF of rank = % of players ranked at-or-below rank X
+      xs = vals;
+      ys = vals.map((_, i) => (i + 1) / vals.length);
+    } else {
+      xs = vals;
+      ys = vals.map((_, i) => (i + 1) / vals.length);
+    }
+    traces.push({
+      x: xs, y: ys,
+      mode: "lines",
+      name: dim,
+      line: { color: COLORS[dim], width: 2 },
+      hovertemplate: `${dim}: %{x:,} · bottom %{y:.1%}<extra></extra>`,
+    });
+  }
+  const layout = mergeLayout({
+    xaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", type: "log", title: "score (log)" },
+    yaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", tickformat: ".0%", title: "cumulative fraction of players", range: [0, 1] },
+    legend: { bgcolor: "transparent", orientation: "h", y: -0.18 },
+    hovermode: "x unified",
+  });
+  Plotly.newPlot("scoresCdf", traces, layout, CONFIG);
+  document.getElementById("s-scores").hidden = false;
+}
+
+// --- 2. Building-level violins -------------------------------------------
+function renderBuildingViolins(data) {
+  // Bucket levels per building type.
+  const byType = {};
+  for (const t of data.buildingTypes) byType[t] = [];
+  for (const c of data.cities) {
+    for (const [t, lvl] of Object.entries(c.b)) {
+      if (byType[t]) byType[t].push(lvl);
+    }
+  }
+  // Sort types by median level descending — puts "heavy" buildings at the top.
+  const types = data.buildingTypes.slice().sort((a, b) => {
+    return median(byType[b]) - median(byType[a]);
+  });
+
+  const traces = types.map((t) => ({
+    type: "violin",
+    y: byType[t],
+    name: `${t} (${byType[t].length})`,
+    box: {
+      visible: true,
+      line: { color: "#f4e36a", width: 1.5 },
+      fillcolor: "rgba(244, 227, 106, 0.35)",
+    },
+    meanline: { visible: true, color: "#e02020" },
+    line: { color: "#4fb3d9" },
+    fillcolor: "rgba(79, 179, 217, 0.35)",
+    points: false,
+    hovertemplate: `${t}<br>level: %{y}<extra></extra>`,
+  }));
+  const layout = mergeLayout({
+    xaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", tickangle: -35, automargin: true },
+    yaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "building level", rangemode: "tozero" },
+    showlegend: false,
+    margin: { t: 30, r: 20, b: 120, l: 50 },
+  });
+  Plotly.newPlot("buildingViolins", traces, layout, CONFIG);
+  document.getElementById("s-violins").hidden = false;
+}
+
+// --- 3. Meta-progression heatmap -----------------------------------------
+// Rows = building types, cols = townHall bucket, cell = median level.
+function renderMetaHeatmap(data) {
+  const buckets = [
+    { label: "TH 1-5",   lo: 1,  hi: 5  },
+    { label: "TH 6-10",  lo: 6,  hi: 10 },
+    { label: "TH 11-15", lo: 11, hi: 15 },
+    { label: "TH 16-20", lo: 16, hi: 20 },
+    { label: "TH 21-25", lo: 21, hi: 25 },
+    { label: "TH 26-30", lo: 26, hi: 30 },
+    { label: "TH 31-35", lo: 31, hi: 35 },
+    { label: "TH 36-40", lo: 36, hi: 40 },
+    { label: "TH 41+",   lo: 41, hi: 99 },
+  ];
+  const types = data.buildingTypes.slice();
+  // Sort types by overall median desc, townHall at bottom for reference
+  const overallMed = {};
+  for (const t of types) {
+    const all = [];
+    for (const c of data.cities) if (c.b[t]) all.push(c.b[t]);
+    overallMed[t] = median(all);
+  }
+  types.sort((a, b) => overallMed[a] - overallMed[b]); // ascending → highest at top after reverse below
+
+  const z = [];
+  const text = [];
+  for (const t of types) {
+    const row = [];
+    const rowText = [];
+    for (const bk of buckets) {
+      const levels = [];
+      for (const c of data.cities) {
+        if (c.th >= bk.lo && c.th <= bk.hi && c.b[t]) levels.push(c.b[t]);
+      }
+      if (levels.length < 10) {
+        row.push(null);
+        rowText.push("n < 10");
+      } else {
+        row.push(median(levels));
+        rowText.push(`median ${median(levels).toFixed(1)}<br>n=${levels.length}`);
+      }
+    }
+    z.push(row);
+    text.push(rowText);
+  }
+  const trace = {
+    type: "heatmap",
+    z,
+    x: buckets.map((b) => b.label),
+    y: types,
+    colorscale: [
+      [0,    "#1c222a"],
+      [0.15, "#1e3a52"],
+      [0.4,  "#2e6a8a"],
+      [0.65, "#4fb3d9"],
+      [1,    "#f4e36a"],
+    ],
+    hoverongaps: false,
+    text,
+    hovertemplate: "%{y} · %{x}<br>%{text}<extra></extra>",
+    colorbar: { title: "median level", tickfont: { color: "#e4e8ee" } },
+  };
+  const layout = mergeLayout({
+    xaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", side: "top" },
+    yaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", automargin: true },
+    margin: { t: 60, r: 20, b: 20, l: 140 },
+  });
+  Plotly.newPlot("progHeat", [trace], layout, CONFIG);
+  document.getElementById("s-heat").hidden = false;
+}
+
+// --- 4. Drill-down scatter -----------------------------------------------
+function renderDrilldownScatter(data) {
+  const sel = document.getElementById("bPick");
+  for (const t of data.buildingTypes) {
+    if (t === "townHall") continue;
+    const opt = document.createElement("option");
+    opt.value = t;
+    opt.textContent = t;
+    sel.appendChild(opt);
+  }
+  sel.value = "academy";
+  sel.addEventListener("change", () => drawScatter(data, sel.value));
+  drawScatter(data, sel.value);
+  document.getElementById("s-scatter").hidden = false;
+}
+
+function drawScatter(data, type) {
+  const xs = [];
+  const ys = [];
+  const thLevels = {}; // th → [levels of this building]
+  for (const c of data.cities) {
+    const lvl = c.b[type];
+    if (!lvl) continue;
+    xs.push(c.th + (Math.random() - 0.5) * 0.6);
+    ys.push(lvl + (Math.random() - 0.5) * 0.6);
+    (thLevels[c.th] = thLevels[c.th] || []).push(lvl);
+  }
+  // Median + p25/p75 per townHall, and cities-per-townHall counts for the marginal bar.
+  const thSorted = Object.keys(thLevels).map(Number).sort((a, b) => a - b);
+  const medX = [], medY = [], p25Y = [], p75Y = [];
+  const histX = [], histY = [];
+  for (const th of thSorted) {
+    const count = thLevels[th].length;
+    histX.push(th);
+    histY.push(count);
+    if (count < 5) continue;
+    const vals = thLevels[th].slice().sort((a, b) => a - b);
+    medX.push(th);
+    medY.push(percentile(vals, 0.5));
+    p25Y.push(percentile(vals, 0.25));
+    p75Y.push(percentile(vals, 0.75));
+  }
+  const scatter = {
+    x: xs, y: ys,
+    mode: "markers",
+    name: `${type} (${xs.length} cities)`,
+    marker: { size: 6, color: "rgba(79, 179, 217, 0.35)", line: { width: 0 } },
+    hovertemplate: `townHall ≈ %{x:.0f}<br>${type} ≈ %{y:.0f}<extra></extra>`,
+    xaxis: "x", yaxis: "y",
+  };
+  const band = {
+    x: medX.concat(medX.slice().reverse()),
+    y: p75Y.concat(p25Y.slice().reverse()),
+    fill: "toself",
+    fillcolor: "rgba(244, 163, 106, 0.35)",
+    line: { color: "rgba(244, 163, 106, 0.9)", width: 1 },
+    hoverinfo: "skip",
+    showlegend: true,
+    name: "p25–p75",
+    xaxis: "x", yaxis: "y",
+  };
+  const med = {
+    x: medX, y: medY,
+    mode: "lines+markers",
+    name: "median",
+    line: { color: "#f4e36a", width: 2 },
+    marker: { color: "#f4e36a", size: 5 },
+    hovertemplate: `TH %{x}: median ${type} = %{y:.1f}<extra></extra>`,
+    xaxis: "x", yaxis: "y",
+  };
+  const hist = {
+    type: "bar",
+    x: histX, y: histY,
+    name: "cities per TH",
+    marker: { color: "rgba(79, 179, 217, 0.7)" },
+    hovertemplate: `TH %{x}: %{y} cities with ${type}<extra></extra>`,
+    showlegend: false,
+    xaxis: "x2", yaxis: "y2",
+  };
+  const layout = mergeLayout({
+    xaxis:  { gridcolor: "#2d3440", zerolinecolor: "#2d3440", rangemode: "tozero", domain: [0, 1], anchor: "y", showticklabels: false },
+    yaxis:  { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: `${type} level`, rangemode: "tozero", domain: [0.28, 1] },
+    xaxis2: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "townHall level", rangemode: "tozero", domain: [0, 1], anchor: "y2", matches: "x" },
+    yaxis2: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "cities", rangemode: "tozero", domain: [0, 0.22] },
+    legend: { bgcolor: "transparent", orientation: "h", y: -0.22 },
+    bargap: 0.15,
+  });
+  Plotly.react("progScatter", [scatter, band, med, hist], layout, CONFIG);
+}
+
+// --- 5. Wonders -----------------------------------------------------------
+function renderWonders(data) {
+  // Sort by median level descending so the "most developed" wonders are on the left.
+  const sorted = data.wonders.slice().sort((a, b) => median(b.levels) - median(a.levels));
+  const traces = sorted.map((w) => ({
+    type: "violin",
+    y: w.levels,
+    name: `${w.name}<br>(${w.islands} islands)`,
+    box: {
+      visible: true,
+      line: { color: "#f4e36a", width: 1.5 },
+      fillcolor: "rgba(244, 227, 106, 0.35)",
+    },
+    meanline: { visible: true, color: "#e02020" },
+    line: { color: "#4fb3d9" },
+    fillcolor: "rgba(79, 179, 217, 0.35)",
+    points: "outliers",
+    marker: { color: "rgba(79, 179, 217, 0.6)", size: 4 },
+    hovertemplate: `${w.name}<br>level: %{y}<extra></extra>`,
+  }));
+  const layout = mergeLayout({
+    xaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", automargin: true },
+    yaxis: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "wonder level", rangemode: "tozero", dtick: 1 },
+    showlegend: false,
+    margin: { t: 30, r: 20, b: 80, l: 50 },
+  });
+  Plotly.newPlot("wonderBar", traces, layout, CONFIG);
+  document.getElementById("s-wonders").hidden = false;
+}
+
+// --- 6. Long tails --------------------------------------------------------
+function renderTails(data) {
+  // Left: alliance city counts (top 50). Right: cities-per-island histogram.
+  const top = data.alliances.slice(0, 50);
+  const ally = {
+    type: "bar",
+    x: top.map((a) => a.tag),
+    y: top.map((a) => a.cities),
+    marker: { color: "#4fb3d9" },
+    hovertemplate: "%{x}: %{y} cities<extra></extra>",
+    xaxis: "x",
+    yaxis: "y",
+  };
+  // cities-per-island histogram
+  const hist = {
+    type: "histogram",
+    x: data.citiesPerIsland,
+    xbins: { start: 1, end: 18, size: 1 },
+    marker: { color: "#e0c06c" },
+    hovertemplate: "%{x} cities on island · %{y} islands<extra></extra>",
+    xaxis: "x2",
+    yaxis: "y2",
+    showlegend: false,
+  };
+  const layout = mergeLayout({
+    grid: { rows: 1, columns: 2, pattern: "independent" },
+    xaxis:  { gridcolor: "#2d3440", zerolinecolor: "#2d3440", tickangle: -45, automargin: true, title: "alliance (top 50)" },
+    yaxis:  { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "cities" },
+    xaxis2: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "cities per island", dtick: 1 },
+    yaxis2: { gridcolor: "#2d3440", zerolinecolor: "#2d3440", title: "number of islands" },
+    margin: { t: 30, r: 20, b: 90, l: 60 },
+    showlegend: false,
+  });
+  Plotly.newPlot("tails", [ally, hist], layout, CONFIG);
+  document.getElementById("s-tails").hidden = false;
+}
+
+// --- helpers --------------------------------------------------------------
+function median(arr) {
+  if (!arr || arr.length === 0) return 0;
+  const s = arr.slice().sort((a, b) => a - b);
+  const m = Math.floor(s.length / 2);
+  return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2;
+}
+function percentile(sortedArr, p) {
+  if (!sortedArr.length) return 0;
+  const i = (sortedArr.length - 1) * p;
+  const lo = Math.floor(i), hi = Math.ceil(i);
+  if (lo === hi) return sortedArr[lo];
+  return sortedArr[lo] + (sortedArr[hi] - sortedArr[lo]) * (i - lo);
+}
+
+main();
+</script>
+</body>
+</html>
