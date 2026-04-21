@@ -73,6 +73,48 @@ function bgExtractBgData(html) {
   return null;
 }
 
+// Parse a city-view HTML response into a compact building record.
+// Foreign cities expose updateBackgroundData with a `position` array that
+// describes every slot (built + empty) — we keep all of them so stats can
+// tell "never built" vs "not reached that slot yet" vs "built at level N".
+function bgParseCity(html) {
+  const data = bgExtractBgData(html);
+  if (!data || !Array.isArray(data.position)) return null;
+  const buildings = data.position.map((p, i) => {
+    const raw = (p && p.building) || "";
+    const parts = raw ? raw.split(/\s+/) : [];
+    const base = parts[0] || "";
+    const constructing = parts.includes("constructionSite");
+    // buildingGround = unbuilt slot (with optional modifier like "dockyard" or "sea")
+    const isEmpty = !base || base === "buildingGround";
+    const entry = {
+      pos: i,
+      type: isEmpty ? null : base,
+      level: p ? (parseInt(p.level || 0, 10) || 0) : 0,
+      groundId: p ? (typeof p.groundId === "number" ? p.groundId : parseInt(p.groundId || 0, 10) || 0) : 0,
+    };
+    if (constructing) {
+      entry.constructing = true;
+      const done = parseInt(p.completed || 0, 10) || 0;
+      if (done) entry.completeAt = done;
+    }
+    return entry;
+  });
+  return {
+    id: parseInt(data.id || 0, 10),
+    name: data.name || "",
+    ownerId: String(data.ownerId || ""),
+    ownerName: data.ownerName || "",
+    islandId: String(data.islandId || ""),
+    islandX: parseInt(data.islandXCoord || 0, 10),
+    islandY: parseInt(data.islandYCoord || 0, 10),
+    phase: typeof data.phase === "number" ? data.phase : (parseInt(data.phase || 0, 10) || 0),
+    isCapital: !!data.isCapital,
+    buildings,
+    timestamp: Date.now(),
+  };
+}
+
 function bgParseIslandPlayers(html, collectedIslands) {
   const data = bgExtractBgData(html);
   if (!data || !data.cities) return [];
@@ -420,21 +462,30 @@ async function bgCommitIslandData(collectedIslands, opts) {
   }
 }
 
-// Throttled runner with batch pauses; reports progress to storage
-function bgRunThrottled(items, fn, phase, state) {
+// Throttled runner with batch pauses; reports progress to storage.
+// retryOpts: { retries, backoffMs, shouldRetry(result, err) -> bool, onExhausted(item, attempts) }
+// shouldRetry receives (result, err) — err is non-null on a thrown exception, result is the fn
+// return value on success. Returning true triggers a retry (up to retryOpts.retries extra attempts).
+function bgRunThrottled(items, fn, phase, state, retryOpts) {
+  const MAX_RETRIES = retryOpts ? (retryOpts.retries || 2) : 0;
+  const BACKOFF = retryOpts ? (retryOpts.backoffMs || [500, 1500]) : [];
+  const shouldRetry = retryOpts ? (retryOpts.shouldRetry || (() => false)) : () => false;
+  const onExhausted = retryOpts ? (retryOpts.onExhausted || null) : null;
+
   return new Promise((resolve) => {
     let done = 0;
     let started = 0;
+    let failed = 0;
     let pausing = false;
     let batchStarted = 0;
     const total = items.length;
     const startTime = Date.now();
-    if (total === 0) { resolve(); return; }
+    if (total === 0) { resolve({ failed: 0 }); return; }
 
     function reportProgress(extra) {
       const elapsed = Date.now() - startTime;
       const eta = done > 0 ? Math.round(elapsed / done * (total - done) / 1000) : 0;
-      const prog = { phase, current: done, total, eta, ...extra };
+      const prog = { phase, current: done, total, eta, failed, ...extra };
       chrome.storage.local.set({ [PROGRESS_KEY]: prog });
     }
 
@@ -454,9 +505,37 @@ function bgRunThrottled(items, fn, phase, state) {
       next();
     }
 
+    async function runWithRetry(item) {
+      let attempts = 0;
+      while (true) {
+        let result, err;
+        try {
+          result = await fn(item);
+          err = null;
+        } catch (e) {
+          result = null;
+          err = e;
+        }
+        const isBad = shouldRetry(result, err);
+        if (!isBad) return; // success — no counting needed
+        if (state.cancelled || attempts >= MAX_RETRIES) {
+          // Retries exhausted (or scan cancelled) — only count as failed when not cancelled,
+          // since a cancellation mid-flight is expected and not a data quality issue.
+          if (!state.cancelled) {
+            failed++;
+            if (onExhausted) onExhausted(item, attempts + 1);
+          }
+          return;
+        }
+        attempts++;
+        const delay = Array.isArray(BACKOFF) ? (BACKOFF[attempts - 1] ?? BACKOFF[BACKOFF.length - 1] ?? 500) : BACKOFF;
+        await alarmSleep(delay);
+      }
+    }
+
     function next() {
       if (pausing) return;
-      if (state.cancelled) { resolve(); return; }
+      if (state.cancelled) { resolve({ failed }); return; }
       if (batchStarted >= BG_BATCH_SIZE) {
         if (started === done) {
           if (done < total) doPause();
@@ -467,14 +546,14 @@ function bgRunThrottled(items, fn, phase, state) {
         if (state.cancelled) break;
         const idx = started++;
         batchStarted++;
-        fn(items[idx]).catch(() => {}).finally(() => {
+        runWithRetry(items[idx]).finally(() => {
           done++;
           reportProgress();
-          if (done === total) resolve();
+          if (done === total) resolve({ failed });
           else next();
         });
       }
-      if (state.cancelled && started === done) resolve();
+      if (state.cancelled && started === done) resolve({ failed });
     }
     next();
   });
@@ -551,9 +630,23 @@ async function bgDoIslandFetch(opts, state) {
 
   const collectedIslands = [];
   const allPlayers = new Map();
-  await bgRunThrottled(toFetch, async (isl) => {
+  // Retry when the fetch threw OR when bgExtractBgData got nothing usable —
+  // populatedIslands is already filtered to cities > 0, so a null bgData means
+  // the response was a network error, a redirect (logged-out), or a parse failure.
+  // Duplicate pushes on retry are harmless: bgBuildIslandWrites overwrites by islandId.
+  const islandRetryOpts = {
+    retries: 2,
+    backoffMs: [500, 1500],
+    shouldRetry: (result, err) => err !== null || result === false,
+    onExhausted: (isl, attempts) => {
+      console.warn("[bg-scan] gave up on island after " + attempts + " attempts:", isl.x + ":" + isl.y, "id=" + isl.islandId);
+    },
+  };
+  const { failed: islandsFailed } = await bgRunThrottled(toFetch, async (isl) => {
     const html = await bgFetchPage(originUrl, `view=island&islandId=${isl.islandId}`);
+    const before = collectedIslands.length;
     const players = bgParseIslandPlayers(html, collectedIslands);
+    const gotData = collectedIslands.length > before;
     for (const p of players) {
       if (!allPlayers.has(p.id)) {
         allPlayers.set(p.id, { ...p, islands: [{ x: isl.x, y: isl.y, name: isl.name }] });
@@ -561,11 +654,62 @@ async function bgDoIslandFetch(opts, state) {
         allPlayers.get(p.id).islands.push({ x: isl.x, y: isl.y, name: isl.name });
       }
     }
-  }, "islands", state);
+    // false signals a parse miss (bgExtractBgData returned nothing); true means we got data
+    return gotData;
+  }, "islands", state, islandRetryOpts);
 
   if (state.cancelled) return null;
   await bgCommitIslandData(collectedIslands, opts);
-  return { players: [...allPlayers.values()], totalIslands: toFetch.length };
+  return { players: [...allPlayers.values()], totalIslands: toFetch.length, failed: islandsFailed };
+}
+
+async function bgDoCityFetch(opts, state) {
+  const { originUrl, worldName } = opts;
+
+  const all = await chrome.storage.local.get(null);
+  const islandPrefix = "island_" + worldName + "_";
+
+  let distanceSet = null;
+  if (opts.distanceRadius > 0 && opts.sourceCoords && opts.sourceCoords.length > 0) {
+    const mapKey = "map_" + worldName;
+    const mapData = all[mapKey];
+    if (mapData && mapData.islands) {
+      distanceSet = bgBuildDistanceSet(opts.sourceCoords, opts.distanceRadius, mapData.islands);
+    }
+  }
+
+  const cityList = [];
+  for (const key of Object.keys(all)) {
+    if (!key.startsWith(islandPrefix)) continue;
+    const island = all[key];
+    if (!island || !island.cities) continue;
+    if (distanceSet && !distanceSet.has(island.x + ":" + island.y)) continue;
+    for (const c of island.cities) {
+      if (c && c.id) cityList.push({ id: c.id });
+    }
+  }
+  if (cityList.length === 0) return null;
+
+  const writes = {};
+  // Retry cities whose fetch threw or whose parse returned null (malformed/logged-out response).
+  const cityRetryOpts = {
+    retries: 2,
+    backoffMs: [500, 1500],
+    shouldRetry: (result, err) => err !== null || result === null,
+    onExhausted: (c, attempts) => {
+      console.warn("[bg-scan] gave up on city after " + attempts + " attempts:", "cityId=" + c.id);
+    },
+  };
+  const { failed: citiesFailed } = await bgRunThrottled(cityList, async (c) => {
+    const html = await bgFetchPage(originUrl, "view=city&cityId=" + c.id);
+    const parsed = bgParseCity(html);
+    if (parsed) writes["cityData_" + worldName + "_" + c.id] = parsed;
+    return parsed;
+  }, "cities", state, cityRetryOpts);
+
+  if (state.cancelled) return null;
+  if (Object.keys(writes).length > 0) await chrome.storage.local.set(writes);
+  return { totalCities: cityList.length, fetched: Object.keys(writes).length, failed: citiesFailed };
 }
 
 async function bgLoadPlayersFromStoredIslands(worldName) {
@@ -664,17 +808,29 @@ async function runBgScan(opts) {
   await chrome.storage.local.set({ [RUNNING_KEY]: true });
 
   try {
-    if (opts.mode === "islands" || opts.mode === "full") {
+    const doIslands = opts.mode === "islands" || opts.mode === "full" || opts.mode === "fullCities";
+    const doCities = opts.mode === "cities" || opts.mode === "fullCities";
+    const doCt = opts.mode === "ct" || opts.mode === "full";
+
+    if (doIslands) {
       const r = await bgDoIslandFetch(opts, state);
       if (!r || state.cancelled) return;
-
-      if (opts.mode === "full") {
+      if (doCities || doCt) {
         const ok = await bgPhasePause(state);
         if (!ok) return;
       }
     }
 
-    if (opts.mode === "ct" || opts.mode === "full") {
+    if (doCities) {
+      const r = await bgDoCityFetch(opts, state);
+      if (!r || state.cancelled) return;
+      if (doCt) {
+        const ok = await bgPhasePause(state);
+        if (!ok) return;
+      }
+    }
+
+    if (doCt) {
       const r = await bgDoCtCheck(opts, state);
       if (!r || state.cancelled) return;
     }
