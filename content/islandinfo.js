@@ -442,8 +442,18 @@
       if (!scrollEl) continue;
       if (scrollEl.querySelector(".ik-city-label")) continue;
 
+      const wrap = document.createElement("div");
+      wrap.className = "ik-city-label";
+      Object.assign(wrap.style, {
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: "4px",
+        margin: "2px auto 0",
+        width: "max-content",
+      });
+
       const label = document.createElement("div");
-      label.className = "ik-city-label";
 
       const allyPart = city.allyTag ? `<span style="color:#7ec8e3;">[${city.allyTag}]</span> ` : "";
       const isFriend = !city.isOwn && friendIds.has(city.ownerId);
@@ -462,11 +472,25 @@
         lineHeight: "12px",
         textAlign: "center",
         pointerEvents: "none",
-        width: "max-content",
-        margin: "2px auto 0",
       });
 
-      scrollEl.appendChild(label);
+      const viewBtn = document.createElement("div");
+      viewBtn.title = "View city";
+      viewBtn.textContent = "\u{1F50D}";
+      Object.assign(viewBtn.style, {
+        fontSize: "18px",
+        lineHeight: "18px",
+        cursor: "pointer",
+      });
+      viewBtn.addEventListener("click", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        window.location.href = "?view=city&cityId=" + city.id;
+      });
+
+      wrap.appendChild(label);
+      wrap.appendChild(viewBtn);
+      scrollEl.appendChild(wrap);
     }
   }
 

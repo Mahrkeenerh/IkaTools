@@ -87,13 +87,14 @@
   const scanMapBtn = $("scan-map-btn");
   const islandScanBtn = $("island-scan-btn");
   const ctScanBtn = $("ct-scan-btn");
+  const citiesScanBtn = $("cities-scan-btn");
   const ctCancelBtn = $("ct-cancel-btn");
   const ctAllyFilter = $("ct-ally-filter"); // narrows scan, pre-fetch
   const ctDisplayFilter = $("ct-display-filter"); // filters displayed list, post-scan
   const ctResults = $("ct-panel-results");
   const scanDistance = $("scan-distance");
   const scanDistanceSource = $("scan-distance-source");
-  const allScanBtns = [scanMapBtn, islandScanBtn, ctScanBtn];
+  const allScanBtns = [scanMapBtn, islandScanBtn, ctScanBtn, citiesScanBtn];
 
   // Last CT result set kept in memory so the display filter can re-render without rescanning
   let lastCtResult = null;
@@ -110,6 +111,7 @@
           let label;
           if (msg.phase === "map") label = "Scanning map";
           else if (msg.phase === "ct-check") label = "Checking CT";
+          else if (msg.phase === "cities") label = "Fetching cities";
           else label = "Fetching islands";
           if (msg.paused) {
             phaseText.textContent = `Cooldown (${msg.pauseSec}s)...`;
@@ -168,6 +170,7 @@
           let plabel;
           if (p.phase === "map") plabel = "Scanning map";
           else if (p.phase === "ct-check") plabel = "Checking CT";
+          else if (p.phase === "cities") plabel = "Fetching cities";
           else plabel = "Fetching islands";
           phaseText.textContent = `${plabel} (${p.current}/${p.total})`;
           const eta = p.eta > 0 ? ` \u2022 ~${p.eta}s left` : "";
@@ -179,12 +182,12 @@
         chrome.storage.onChanged.removeListener(bgStorageListener);
         bgStorageListener = null;
         if (!ikariamWorldName) return;
-        if (activeScanMode === "islands") {
-          // Islands-only: no CT data, just report completion
+        if (activeScanMode === "islands" || activeScanMode === "fullCities") {
+          // No CT data to display — just report completion
           phaseText.textContent = "Done!";
           progressBar.style.width = "100%";
           statusDetail.textContent = "";
-          log("Island scan complete");
+          log(activeScanMode === "fullCities" ? "Deep scan complete" : "Island scan complete");
           loadGallery();
           allScanBtns.forEach((b) => (b.disabled = false));
           ctCancelBtn.style.display = "none";
@@ -229,12 +232,13 @@
       distanceSource: scanDistanceSource.value,
     });
     attachCtPort(port);
-    if (mode === "islands" || mode === "full") attachBgStorageListener();
+    if (mode === "islands" || mode === "full" || mode === "fullCities") attachBgStorageListener();
   }
 
   scanMapBtn.addEventListener("click", () => startScan("map", "Scanning map..."));
   islandScanBtn.addEventListener("click", () => startScan("islands", "Starting island scan..."));
   ctScanBtn.addEventListener("click", () => startScan("full", "Starting full scan..."));
+  citiesScanBtn.addEventListener("click", () => startScan("fullCities", "Starting deep scan..."));
 
   // --- Export full world data as JSON ---
   const exportBtn = $("export-data-btn");
@@ -244,9 +248,12 @@
       const w = ikariamWorldName;
       const all = await chrome.storage.local.get(null);
       const islandPrefix = "island_" + w + "_";
+      const cityPrefix = "cityData_" + w + "_";
       const islands = [];
+      const cities = [];
       for (const k of Object.keys(all)) {
         if (k.startsWith(islandPrefix)) islands.push(all[k]);
+        else if (k.startsWith(cityPrefix)) cities.push(all[k]);
       }
       const payload = {
         formatVersion: 1,
@@ -257,6 +264,7 @@
         queryIndex: all["queryIndex_" + w] || null,
         ctScan: all["ctScan_" + w] || null,
         islands,
+        cities,
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
       const url = URL.createObjectURL(blob);
@@ -265,7 +273,7 @@
       a.download = `ikariam-${w}-${new Date().toISOString().slice(0, 10)}.json`;
       a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
-      log(`Exported ${islands.length} islands`);
+      log(`Exported ${islands.length} islands, ${cities.length} cities`);
     });
   }
 
@@ -296,6 +304,7 @@
           let label;
           if (p.phase === "map") label = "Scanning map";
           else if (p.phase === "ct-check") label = "Checking CT";
+          else if (p.phase === "cities") label = "Fetching cities";
           else label = "Fetching islands";
           phaseText.textContent = `${label} (${p.current}/${p.total})`;
         } else {
@@ -330,6 +339,7 @@
               let label;
               if (p.phase === "map") label = "Scanning map";
               else if (p.phase === "ct-check") label = "Checking CT";
+              else if (p.phase === "cities") label = "Fetching cities";
               else label = "Fetching islands";
               phaseText.textContent = `${label} (${p.current}/${p.total})`;
             }
@@ -1127,6 +1137,7 @@
 
   function applyDevMode(on) {
     captchaTabBtn.style.display = on ? "" : "none";
+    if (citiesScanBtn) citiesScanBtn.style.display = on ? "" : "none";
     // If captcha tab is active but dev mode turned off, switch to settings
     if (!on && captchaTabBtn.classList.contains("active")) {
       captchaTabBtn.click(); // deselect
