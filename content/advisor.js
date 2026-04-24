@@ -353,14 +353,14 @@
 
       const cityLi = info.querySelector("li.city");
       if (cityLi) {
+        // The li.city's `title` attribute is the target's building type (e.g. "Rezidence"),
+        // not the city name — only the inner <a>'s title (when present) is the city name.
         const cityLink = cityLi.querySelector("a");
-        const text = cityLink
-          ? (cityLink.textContent.trim())
-          : cityLi.textContent.trim();
-        const title = cityLink ? (cityLink.getAttribute("title") || "") : (cityLi.getAttribute("title") || "");
+        const text = cityLink ? cityLink.textContent.trim() : cityLi.textContent.trim();
         const coordMatch = text.match(/[\[(](\d+:\d+)[\])]/);
         mission.targetCoords = coordMatch ? coordMatch[1] : "";
-        mission.targetCity = title || text.replace(/\s*[\[(]\d+:\d+[\])]\s*/, "").trim();
+        const linkTitle = cityLink ? (cityLink.getAttribute("title") || "") : "";
+        mission.targetCity = linkTitle || text.replace(/\s*[\[(]\d+:\d+[\])]\s*/, "").trim();
         if (cityLink) {
           const href = cityLink.getAttribute("href") || "";
           const cityIdMatch = href.match(/cityId=(\d+)/);
