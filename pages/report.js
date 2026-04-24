@@ -564,6 +564,9 @@
       if (assigned >= max && max > 0) {
         return `<td class="right" style="color:#60c060;">${assigned} / ${max}</td>`;
       }
+      if (max > 0 && assigned < max) {
+        return `<td class="right" style="color:#e06060;">${assigned} / ${max}</td>`;
+      }
       return `<td class="right">${assigned} / ${max}</td>`;
     }
 
