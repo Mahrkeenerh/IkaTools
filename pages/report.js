@@ -1518,8 +1518,9 @@
         if (map.has(key)) {
           const existing = map.get(key);
           if (!existing.fromCities.includes(o.fromCity)) existing.fromCities.push(o.fromCity);
+          if (!(o.fromCity in existing.cityDistances)) existing.cityDistances[o.fromCity] = o.distance;
         } else {
-          map.set(key, { ...o, fromCities: [o.fromCity] });
+          map.set(key, { ...o, fromCities: [o.fromCity], cityDistances: { [o.fromCity]: o.distance } });
         }
       }
       return [...map.values()];
@@ -1781,14 +1782,26 @@
         badges += '<span class="offer-badge badge-new">NEW</span>';
       }
 
+      // Compute shortest distance across "my cities" that see this offer
+      const cityDists = o.cityDistances || {};
+      const distValues = o.fromCities.map((c) => cityDists[c]).filter((d) => d != null);
+      const shortestDist = distValues.length > 0 ? Math.min(...distValues) : o.distance;
+      const fromCitiesHtml = o.fromCities.map((c) => {
+        const d = cityDists[c];
+        const isClosest = d != null && d === shortestDist;
+        return isClosest
+          ? `<strong>${c}</strong>`
+          : `<span style="color:#556;opacity:0.55;">${c}</span>`;
+      }).join(", ");
+
       tr.innerHTML = `
         <td>${o.cityName}${o.playerName ? ' <span style="color:#667">(' + o.playerName + ')</span>' : ""}${badges}</td>
         <td class="right">${fmt(o.quantity)}</td>
         <td class="right">${fmt(o.price)}</td>
         <td class="right">${fmt(o.quantity * o.price)}</td>
-        <td class="right">${o.distance}</td>
+        <td class="right">${shortestDist}</td>
         ${goodsMinTd}
-        <td>${o.fromCities.join(", ")}</td>
+        <td>${fromCitiesHtml}</td>
       `;
       tbody.appendChild(tr);
     }
@@ -1899,8 +1912,9 @@
       if (dedupMap.has(key)) {
         const ex = dedupMap.get(key);
         if (!ex.fromCities.includes(o.fromCity)) ex.fromCities.push(o.fromCity);
+        if (!(o.fromCity in ex.cityDistances)) ex.cityDistances[o.fromCity] = o.distance;
       } else {
-        dedupMap.set(key, { ...o, fromCities: [o.fromCity] });
+        dedupMap.set(key, { ...o, fromCities: [o.fromCity], cityDistances: { [o.fromCity]: o.distance } });
       }
     }
     const offers = [...dedupMap.values()];
@@ -2067,6 +2081,7 @@
           <th>Player</th>
           <th class="right">Qty</th>
           <th class="right">Price</th>
+          <th class="right">Total</th>
           <th>Currency</th>
           <th class="right">Dist</th>
           <th class="right">G/min</th>
@@ -2075,6 +2090,7 @@
         table.appendChild(thead);
 
         const tbody = document.createElement("tbody");
+        const currencyTotals = new Map(); // currency → { qty, total }
         for (const o of unitOffers) {
           const tr = document.createElement("tr");
 
@@ -2093,16 +2109,50 @@
             badges += '<span class="offer-badge badge-new">NEW</span>';
           }
 
+          // Shortest-distance city highlighting
+          const cityDists = o.cityDistances || {};
+          const distValues = o.fromCities.map((c) => cityDists[c]).filter((d) => d != null);
+          const shortestDist = distValues.length > 0 ? Math.min(...distValues) : o.distance;
+          const fromCitiesHtml = o.fromCities.map((c) => {
+            const d = cityDists[c];
+            const isClosest = d != null && d === shortestDist;
+            return isClosest
+              ? `<strong>${c}</strong>`
+              : `<span style="color:#556;opacity:0.55;">${c}</span>`;
+          }).join(", ");
+
+          const rowTotal = o.quantity * o.price;
+          const curKey = o.currency || "gold";
+          const agg = currencyTotals.get(curKey) || { qty: 0, total: 0 };
+          agg.qty += o.quantity;
+          agg.total += rowTotal;
+          currencyTotals.set(curKey, agg);
+
           tr.innerHTML = `
             <td>${o.cityName}${o.playerName ? ' <span style="color:#667">(' + o.playerName + ')</span>' : ""}${badges}</td>
             <td class="right">${fmt(o.quantity)}</td>
             <td class="right">${fmt(o.price)}</td>
+            <td class="right">${fmt(rowTotal)}</td>
             <td>${CURRENCY_LABELS[o.currency] || o.currency}</td>
-            <td class="right">${o.distance}</td>
+            <td class="right">${shortestDist}</td>
             <td class="right">${o.goodsPerMin || "—"}</td>
-            <td>${o.fromCities.join(", ")}</td>
+            <td>${fromCitiesHtml}</td>
           `;
           tbody.appendChild(tr);
+        }
+
+        // Subtotal — one row per currency
+        for (const [cur, agg] of currencyTotals) {
+          const subTotal = document.createElement("tr");
+          subTotal.innerHTML = `
+            <td style="font-weight:600;color:#8890a0;border-top:1px solid #2a3040;">Total</td>
+            <td class="right" style="font-weight:600;border-top:1px solid #2a3040;">${fmt(agg.qty)}</td>
+            <td style="border-top:1px solid #2a3040;"></td>
+            <td class="right" style="font-weight:600;border-top:1px solid #2a3040;"><span class="val-neg">${fmt(agg.total)}</span></td>
+            <td style="border-top:1px solid #2a3040;">${CURRENCY_LABELS[cur] || cur}</td>
+            <td colspan="3" style="border-top:1px solid #2a3040;"></td>
+          `;
+          tbody.appendChild(subTotal);
         }
         table.appendChild(tbody);
         wrap.appendChild(table);
