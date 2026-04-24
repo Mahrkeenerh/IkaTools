@@ -2387,7 +2387,7 @@
               <td>${missionLabel}</td>
               <td>${resultShort}</td>
               <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
-              <td style="font-size:12px;">${details}</td>
+              <td class="spy-details" style="font-size:12px;">${details}</td>
               <td><button class="spy-log-restore" data-id="${r.id}" title="Restore report">restore</button></td>
             `;
           } else {
@@ -2402,7 +2402,7 @@
               <td>${missionLabel}</td>
               <td>${resultShort}</td>
               <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
-              <td style="font-size:12px;">${details}</td>
+              <td class="spy-details" style="font-size:12px;">${details}</td>
               <td class="spy-loot-cell">${lootCell}</td>
               <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">del</button></td>
             `;

@@ -960,15 +960,20 @@
         const m = script.textContent.match(/enddate:\s*'(\d+)'/);
         if (m) enddate = parseInt(m[1], 10);
       }
-      // Active entry: estimate enddate from countdown text (e.g. "2m 36s", "1h 30m")
+      // Active entry: estimate enddate from countdown text (e.g. "2m 36s", "1h 30m", "1D 5h")
       if (!enddate && active) {
         const cdEl = block.querySelector("#unitBuildCountDown");
         if (cdEl) {
           const txt = cdEl.textContent.trim();
-          const hM = txt.match(/(\d+)h/);
-          const mM = txt.match(/(\d+)m/);
-          const sM = txt.match(/(\d+)s/);
-          const secs = (hM ? parseInt(hM[1], 10) * 3600 : 0) + (mM ? parseInt(mM[1], 10) * 60 : 0) + (sM ? parseInt(sM[1], 10) : 0);
+          const dM = txt.match(/(\d+)\s*[dD]/);
+          const hM = txt.match(/(\d+)\s*h/);
+          const mM = txt.match(/(\d+)\s*m/);
+          const sM = txt.match(/(\d+)\s*s/);
+          const secs =
+            (dM ? parseInt(dM[1], 10) * 86400 : 0) +
+            (hM ? parseInt(hM[1], 10) * 3600 : 0) +
+            (mM ? parseInt(mM[1], 10) * 60 : 0) +
+            (sM ? parseInt(sM[1], 10) : 0);
           if (secs > 0) enddate = Math.floor(Date.now() / 1000) + secs;
         }
       }
@@ -1129,10 +1134,15 @@
       // Compute absolute end timestamp from countdown text for live display
       let endTimestamp = null;
       if (countdown) {
-        const hM = countdown.match(/(\d+)h/);
-        const mM = countdown.match(/(\d+)m/);
-        const sM = countdown.match(/(\d+)s/);
-        const secs = (hM ? parseInt(hM[1], 10) * 3600 : 0) + (mM ? parseInt(mM[1], 10) * 60 : 0) + (sM ? parseInt(sM[1], 10) : 0);
+        const dM = countdown.match(/(\d+)\s*[dD]/);
+        const hM = countdown.match(/(\d+)\s*h/);
+        const mM = countdown.match(/(\d+)\s*m/);
+        const sM = countdown.match(/(\d+)\s*s/);
+        const secs =
+          (dM ? parseInt(dM[1], 10) * 86400 : 0) +
+          (hM ? parseInt(hM[1], 10) * 3600 : 0) +
+          (mM ? parseInt(mM[1], 10) * 60 : 0) +
+          (sM ? parseInt(sM[1], 10) : 0);
         if (secs > 0) endTimestamp = Math.floor(Date.now() / 1000) + secs;
       }
 
