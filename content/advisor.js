@@ -1047,6 +1047,11 @@
     const rows = table.querySelectorAll("tbody tr");
     for (const row of rows) {
       if (row.querySelector("th")) continue;
+      // Game tags each row with "own" for the user's own movements, "ally" for allied
+      // movements involving the user, and neither for third-party traffic visible via
+      // trades. The advisor should only account for the user's own fleets — otherwise
+      // ally deployments and foreign trade ships inflate transit counts.
+      if (!row.classList.contains("own")) continue;
       const tds = row.querySelectorAll("td");
       if (tds.length < 8) continue;
 
