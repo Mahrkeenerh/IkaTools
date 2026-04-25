@@ -984,6 +984,15 @@
     const dailyGold = goldPerHour * activeHours;
     const dailyRaids = raidsPerHour * activeHours;
 
+    // Aggressive mode: delays + breaks halved, missions unchanged
+    const avgCycleAgg = avgMission + meanDelay * 0.5 + 5;
+    const meanBreakAgg = meanBreak * 0.5;
+    const cycleWithBreakAgg = expectedStreak * avgCycleAgg + meanBreakAgg;
+    const raidsPerHourAgg = expectedStreak / cycleWithBreakAgg * 3600;
+    const dailyPtsAgg = raidsPerHourAgg * avgPts * activeHours;
+    const dailyGoldAgg = raidsPerHourAgg * avgGold * activeHours;
+    const dailyRaidsAgg = raidsPerHourAgg * activeHours;
+
     function fmtTime(sec) {
       if (sec < 60) return sec.toFixed(0) + "s";
       const m = Math.floor(sec / 60);
@@ -1004,6 +1013,10 @@
       `<b style="color:#5ca0f2">${fmtNum(dailyPts)} pts</b>, ` +
       `<b style="color:#f2c85c">${fmtNum(dailyGold)} gold</b> ` +
       `<span style="color:#556">(~${Math.round(dailyRaids)} raids)</span><br>` +
+      `Per day <span style="color:#ff6464">aggressive</span>: ` +
+      `<b style="color:#5ca0f2">${fmtNum(dailyPtsAgg)} pts</b>, ` +
+      `<b style="color:#f2c85c">${fmtNum(dailyGoldAgg)} gold</b> ` +
+      `<span style="color:#556">(~${Math.round(dailyRaidsAgg)} raids)</span><br>` +
       `<span style="color:#556">───</span><br>` +
       `Delay: <b style="color:#c8cdd8">${fmtTime(medianDelay)}</b> median, ` +
       `<b style="color:#c8cdd8">${fmtTime(meanDelay)}</b> mean ` +
