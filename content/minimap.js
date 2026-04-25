@@ -492,6 +492,7 @@
   let allianceIndex = null;
   let allianceColorMap = {};
   let queryIndex = null; // derived rich-data blob (queryIndex_{world})
+  let lootedIndex = null; // {byCityId, byCoordCity, byCoord} from spy log
 
   async function loadAllianceIndex() {
     const worldName = IkUtils.getUrlWorldName() || "unknown";
@@ -505,6 +506,10 @@
     allianceColorMap = MapRender.buildAllianceColorMap(allianceIndex, islands);
     allyVersion++;
     islandsByCoord = null; // invalidate dim-path lookup
+  }
+
+  async function loadLootedIndex() {
+    lootedIndex = await IkUtils.getLootedIndex();
   }
 
   // --- Local filter evaluation state (no globals in MapFilter) ---
@@ -550,6 +555,7 @@
   // them without storage round-trips. Underscore fields are conventional
   // "computed-by-enrichment" markers consumed by mapfilter.matchFilter.
   function enrichIslandsWithRichData(islands) {
+    const lootedByCoord = lootedIndex ? lootedIndex.byCoord : null;
     if (!queryIndex || !queryIndex.islandsByCoord) {
       // Clear stale enrichment so old data doesn't leak through
       for (const isl of islands) {
@@ -559,6 +565,7 @@
         isl._players = [];
         isl._ctAvailable = false;
         isl._ctChecked = false;
+        isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
       }
       return;
     }
@@ -572,6 +579,7 @@
         isl._players = [];
         isl._ctAvailable = false;
         isl._ctChecked = false;
+        isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
         continue;
       }
       isl._allyTags = new Set(entry.allyTags || []);
@@ -580,6 +588,7 @@
       isl._players = entry.players || [];
       isl._ctAvailable = !!entry.ctAvailable;
       isl._ctChecked = !!entry.ctChecked;
+      isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
     }
   }
 
@@ -798,6 +807,7 @@
       dataLoading = true;
       currentMapData = data[key];
       await loadAllianceIndex();
+      await loadLootedIndex();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
       await refreshPresetResults();
@@ -1084,7 +1094,7 @@
           currentMapData = existing[mapKey] || mapData;
           cachedBaseMap = null;
           dataLoading = true;
-          loadAllianceIndex().then(() => {
+          Promise.all([loadAllianceIndex(), loadLootedIndex()]).then(() => {
             dataLoading = false;
             showMapUI();
             drawMinimap();
@@ -1100,6 +1110,18 @@
     const allyIdxKey = "allianceIndex_" + worldName;
     const mapKey = "map_" + worldName;
     const queryIdxKey = "queryIndex_" + worldName;
+    const spyLogKey = "spyLog_" + worldName;
+    if (changes[spyLogKey]) {
+      loadLootedIndex().then(async () => {
+        cachedBaseMap = null;
+        islandsByCoord = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+        drawMinimap();
+      });
+    }
     if (changes[allyIdxKey] || changes[mapKey] || changes[queryIdxKey]) {
       chrome.storage.local.get([mapKey, allyIdxKey, queryIdxKey], async (d) => {
         if (d[mapKey]) currentMapData = d[mapKey];

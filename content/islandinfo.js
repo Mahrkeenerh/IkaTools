@@ -6,8 +6,10 @@
   const PARTNER_COLOR = "#FFD700"; // gold for museum treaty partners
   let friendIds = new Set();
   let partnerIds = new Set();
+  let lootedIndex = null; // {byCityId, byCoordCity, byCoord} from spy log
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
+  let currentIsland = null; // last extracted island, used by refreshLootedLabels
 
   // World-scoped storage key helpers — all URL-based (stable across language settings)
   const worldName = IkUtils.getUrlWorldName() || "unknown";
@@ -117,6 +119,10 @@
     const data = await chrome.storage.local.get(KEY_PARTNERS);
     const list = data[KEY_PARTNERS] || [];
     partnerIds = new Set(list.map((p) => p.id));
+  }
+
+  async function loadLooted() {
+    lootedIndex = await IkUtils.getLootedIndex(worldName);
   }
 
   // Extract updateBackgroundData from inline scripts — shared helper
@@ -437,6 +443,7 @@
 
   // --- Inject labels on island view (username + alliance under each city banner) ---
   function injectCityLabels(island) {
+    const islandCoords = island.x + ":" + island.y;
     for (const city of island.cities) {
       const scrollEl = document.getElementById("cityLocation" + city.position + "Scroll");
       if (!scrollEl) continue;
@@ -446,11 +453,19 @@
       wrap.className = "ik-city-label";
       Object.assign(wrap.style, {
         display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        gap: "1px",
+        margin: "2px auto 0",
+        width: "max-content",
+      });
+
+      const row1 = document.createElement("div");
+      Object.assign(row1.style, {
+        display: "flex",
         alignItems: "center",
         justifyContent: "center",
         gap: "4px",
-        margin: "2px auto 0",
-        width: "max-content",
       });
 
       const label = document.createElement("div");
@@ -488,10 +503,46 @@
         window.location.href = "?view=city&cityId=" + city.id;
       });
 
-      wrap.appendChild(label);
-      wrap.appendChild(viewBtn);
+      row1.appendChild(label);
+      row1.appendChild(viewBtn);
+      wrap.appendChild(row1);
+
+      // Second row — "Looted X ago" in red, only for cities with a spy log
+      // entry that's been marked looted.
+      const lootedTs = IkUtils.lookupLooted(lootedIndex, city.id, islandCoords, city.name);
+      if (lootedTs) {
+        const lootRow = document.createElement("div");
+        lootRow.className = "ik-loot-label";
+        lootRow.dataset.cityId = String(city.id);
+        lootRow.title = "Looted " + new Date(lootedTs).toLocaleString();
+        lootRow.textContent = "Looted " + IkUtils.formatLootedAge(lootedTs);
+        Object.assign(lootRow.style, {
+          fontSize: "9px",
+          color: "#ff5555",
+          background: "rgba(0,0,0,0.85)",
+          padding: "1px 4px",
+          borderRadius: "3px",
+          whiteSpace: "nowrap",
+          lineHeight: "12px",
+          textAlign: "center",
+          pointerEvents: "none",
+          fontWeight: "bold",
+        });
+        wrap.appendChild(lootRow);
+      }
+
       scrollEl.appendChild(wrap);
     }
+  }
+
+  // Re-inject city labels with up-to-date looted timestamps. Called when the
+  // spy log changes (e.g. user toggled "looted" in the report page).
+  async function refreshLootedLabels() {
+    if (document.body.id !== "island" || !currentIsland) return;
+    await loadLooted();
+    // Strip existing labels and re-inject so looted state appears/disappears.
+    document.querySelectorAll(".ik-city-label").forEach((el) => el.remove());
+    injectCityLabels(currentIsland);
   }
 
   // --- Barbarian village: ships needed calculation ---
@@ -549,15 +600,18 @@
     const stored = await chrome.storage.local.get(KEY_PANEL_EXPANDED);
     if (stored[KEY_PANEL_EXPANDED] !== undefined) expanded = stored[KEY_PANEL_EXPANDED];
 
+    await loadLooted();
+
     const island = await extractAndStore();
+    currentIsland = island;
     if (island && island.cities.length > 0) {
       createPanel(island);
       injectCityLabels(island);
     }
   }
 
-  // Load cached friends + partners first, then scrape visible friends
-  Promise.all([loadFriends(), loadPartners()]).then(() => {
+  // Load cached friends + partners + looted first, then scrape visible friends
+  Promise.all([loadFriends(), loadPartners(), loadLooted()]).then(() => {
     scrapeFriends();
     init();
   });
@@ -570,6 +624,7 @@
       const currentId = getCurrentIslandId();
       if (initialized && currentId && currentId !== lastIslandId) {
         initialized = false;
+        currentIsland = null; // stale — refreshLootedLabels would re-inject old data
         if (panel) {
           panel.remove();
           panel = null;
@@ -579,6 +634,7 @@
       setTimeout(() => { scrapeFriends(); init(); }, 500);
     } else {
       initialized = false; // reset guard so init() runs again on next island visit
+      currentIsland = null;
       if (panel) {
         panel.remove();
         panel = null;
@@ -596,17 +652,23 @@
 
   // Refresh panel when museum partners are saved/updated
   chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "local" || !changes[KEY_PARTNERS]) return;
-    const list = changes[KEY_PARTNERS].newValue || [];
-    partnerIds = new Set(list.map((p) => p.id));
-    if (document.body.id === "island" && panel) {
-      // Re-render panel + labels with updated partner highlights
-      initialized = false;
-      panel.remove();
-      panel = null;
-      init();
+    if (area !== "local") return;
+    if (changes[KEY_PARTNERS]) {
+      const list = changes[KEY_PARTNERS].newValue || [];
+      partnerIds = new Set(list.map((p) => p.id));
+      if (document.body.id === "island" && panel) {
+        // Re-render panel + labels with updated partner highlights
+        initialized = false;
+        panel.remove();
+        panel = null;
+        init();
+      }
+    }
+    if (changes["spyLog_" + worldName]) {
+      refreshLootedLabels();
     }
   });
+
 
   // Watch for barbarian village content appearing (user clicks barbarian village).
   // Intentionally never disconnected — the body.id guard keeps it a no-op off island view.

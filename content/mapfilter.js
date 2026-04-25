@@ -40,6 +40,9 @@ globalThis.MapFilter = (() => {
     { type: "allyTag", value: "", label: "Alliance tag", color: "#FFAA00", group: "Players", requiresRich: true, parameterized: true, paramKind: "allyTag", paramPlaceholder: "tag" },
     { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
     { type: "armyMin", value: null, label: "Player army >=", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
+    // Spy log — independent of full scan, no requiresRich
+    { type: "looted", value: true, label: "Looted", color: "#E04444", group: "Spy" },
+    { type: "notLooted", value: true, label: "Not looted", color: "#5ab87a", group: "Spy" },
   ];
 
   function matchFilter(isl, filter, ctx) {
@@ -72,6 +75,8 @@ globalThis.MapFilter = (() => {
         if (!Number.isFinite(n)) return true;
         return (isl._maxArmy || 0) >= n;
       }
+      case "looted": return !!isl._looted;
+      case "notLooted": return !isl._looted;
       case "customJs": {
         if (!ctx || !ctx.presetResults) return false;
         const presetMap = ctx.presetResults.get(filter.value);
@@ -139,6 +144,7 @@ globalThis.MapFilter = (() => {
 //   _players         Array<{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, trader}>
 //   _ctAvailable     boolean
 //   _ctChecked       boolean
+//   _looted          number          (timestamp of last looted spy report, 0 if never)
 //
 // Examples:
 //   IkFilter.set(i => i._allyTags && i._allyTags.has("-DR-"))

@@ -56,6 +56,12 @@ You don't need to write `return` — just write an expression (e.g. `i.cities > 
 | `i._ctAvailable` | boolean | Cultural treaty can be established |
 | `i._ctChecked` | boolean | CT availability was scanned |
 
+### Spy log
+
+| Field | Type | Description |
+|---|---|---|
+| `i._looted` | number | Timestamp (ms) of last looted spy report on this island/city, `0` if never |
+
 ### Player object (`i._players[n]`)
 
 Each entry in the `_players` array has:

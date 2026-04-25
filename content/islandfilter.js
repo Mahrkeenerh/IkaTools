@@ -11,6 +11,7 @@
   let filterConfig = null;
   let ctPlayerIds = null; // Set of ownerIds with an available CT
   let ctCheckedIds = null; // Set of ownerIds actually checked in last CT scan
+  let lootedIndex = null; // {byCityId, byCoordCity, byCoord} from spy log
   let virtualCities = null; // array indexed by position; null entries = buildplace
   let tilesObserver = null;
 
@@ -45,6 +46,10 @@
       ctPlayerIds = new Set();
       ctCheckedIds = new Set();
     }
+  }
+
+  async function loadLootedData() {
+    lootedIndex = await IkUtils.getLootedIndex();
   }
 
   // Read the ownership category from the game's own class list on the tile.
@@ -100,6 +105,7 @@
     // Total populated (non-buildplace) cities on this island
     const cityCount = bg.cities.filter((c) => c && c.type !== "buildplace").length;
 
+    const coords = x + ":" + y;
     const result = [];
     for (let i = 0; i < bg.cities.length; i++) {
       const c = bg.cities[i];
@@ -113,6 +119,7 @@
       const place = parseScore(sc.place);
       const allyTag = c.ownerAllyTag || "";
       const isPiracy = !!(c.actions && c.actions.piracy_raid);
+      const looted = IkUtils.lookupLooted(lootedIndex, c.id, coords, c.name);
 
       result.push({
         // Island-level fields (shared across all cities on this island)
@@ -120,6 +127,8 @@
         military: false, war: false, helios: false,
         // City-level fields
         _position: i, // used as the lookup key for custom-predicate results
+        _cityId: c.id,
+        _cityName: c.name || "",
         owner: detectCityOwner(i),
         piracy: isPiracy,
         // Rich-data fields — stamped to match enrichIslandsWithRichData format
@@ -138,6 +147,7 @@
         }],
         _ctAvailable: ctPlayerIds ? ctPlayerIds.has(ownerId) : false,
         _ctChecked: ctCheckedIds ? ctCheckedIds.has(ownerId) : false,
+        _looted: looted,
       });
     }
     return result;
@@ -231,6 +241,7 @@
     ]);
     filterConfig = data.mapFilters || null;
     await loadCtData();
+    await loadLootedData();
     virtualCities = null;
 
     const ready = await waitForIslandDOM();
@@ -318,6 +329,15 @@
     const worldName = IkUtils.getUrlWorldName() || "unknown";
     if (changes["ctScan_" + worldName]) {
       loadCtData().then(async () => {
+        virtualCities = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+      });
+    }
+    if (changes["spyLog_" + worldName]) {
+      loadLootedData().then(async () => {
         virtualCities = null;
         FilterRunner.invalidateAll();
         await refreshCustomResults();
