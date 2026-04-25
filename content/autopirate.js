@@ -8,8 +8,14 @@
 
   let enabled = false;
   let convertEnabled = false;
+  let aggressive = false;
   let pirateCityId = null;
   let idleTimeout = 5000;
+
+  // Aggressive mode halves all human-like waits (pauses, breaks, idle, polling,
+  // convert + navigate delays). Mission durations are real game cooldowns and
+  // are NOT scaled. Used to simulate higher engagement on the last day of a comp.
+  function tm() { return aggressive ? 0.5 : 1.0; }
 
   // --- Session counters (for logging) ---
   let sessionRaids = 0;
@@ -172,7 +178,7 @@
     // document.hasFocus() is true when any element in the page has focus,
     // including iframes (e.g. the in-game shop) — so clicking an iframe
     // won't falsely trigger idle detection like the old windowFocused flag did.
-    return (document.hidden || !document.hasFocus()) && Date.now() - lastActivity > idleTimeout;
+    return (document.hidden || !document.hasFocus()) && Date.now() - lastActivity > idleTimeout * tm();
   }
 
   function isInActiveHours() {
@@ -243,7 +249,7 @@
       const dynBreakMin = cfg.breakMin + streakFactor * 2;
       const breakMu = Math.log((dynBreakMin + cfg.breakMax) / 2 * 60);
       const breakD = Math.min(lognormal(breakMu, 0.4), (cfg.breakMax + 5) * 60);
-      const d = Math.max(breakD, (dynBreakMin - 2) * 60) * 1000;
+      const d = Math.max(breakD, (dynBreakMin - 2) * 60) * 1000 * tm();
 
       sessionBreakCount++;
       sessionBreakMs += d;
@@ -288,7 +294,7 @@
     const sigma = cfg.baseSigma;
     const softCap = (20 + Math.random() * 10) * 60;
     const delaySec = Math.min(lognormal(mu, sigma), softCap);
-    const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000;
+    const d = Math.max(delaySec, 3 + Math.random() * 2) * 1000 * tm();
     return d;
   }
 
@@ -319,7 +325,7 @@
     if (Math.random() >= chance) return;
 
     // Schedule convert with 2-6s delay (player switches tab after launching raid)
-    const delay = (2 + Math.random() * 4) * 1000;
+    const delay = (2 + Math.random() * 4) * 1000 * tm();
     scheduleConvert(() => {
       if (!inControl || !isIdle() || !convertEnabled) return;
       navigate("?view=pirateFortress&activeTab=tabCrew&cityId=" + pirateCityId + "&position=17");
@@ -350,7 +356,7 @@
 
   function submitConvert() {
     // Wait 1-3s, click slider max (via bridge), then wait and click submit
-    const fillDelay = (1 + Math.random() * 2) * 1000;
+    const fillDelay = (1 + Math.random() * 2) * 1000 * tm();
     scheduleConvert(() => {
       if (!inControl || !isIdle()) return;
       if (!document.getElementById("CPToCrewForm")) return;
@@ -359,7 +365,7 @@
       window.dispatchEvent(new CustomEvent("ik-convert-crew"));
 
       // Wait 0.5-1.5s for game JS to update slider + enable submit button
-      const submitDelay = (500 + Math.random() * 1000);
+      const submitDelay = (500 + Math.random() * 1000) * tm();
       scheduleConvert(() => {
         if (!inControl || !isIdle()) return;
         // Check we have at least 500 capture points before converting
@@ -462,12 +468,12 @@
         scheduleConvert(() => {
           raidInProgress = false;
           tryConvert();
-        }, 3000 + Math.random() * 1000);
+        }, (3000 + Math.random() * 1000) * tm());
         return;
       }
 
       reportStats();
-      if (Date.now() - lastNavigateTime > NAVIGATE_COOLDOWN) {
+      if (Date.now() - lastNavigateTime > NAVIGATE_COOLDOWN * tm()) {
         lastNavigateTime = Date.now();
         const bodyId = document.body.id;
         const onPirateCity = bodyId === "city" && location.search.includes("cityId=" + pirateCityId);
@@ -496,7 +502,7 @@
 
   function scheduleNext() {
     if (checkTimer) clearTimeout(checkTimer);
-    const jitter = 3500 + Math.random() * 3000; // 3.5-6.5s
+    const jitter = (3500 + Math.random() * 3000) * tm(); // 3.5-6.5s (1.75-3.25s aggressive)
     checkTimer = setTimeout(() => {
       tryPirate();
       if (enabled) scheduleNext();
@@ -612,13 +618,15 @@
   const KEY_PIRATE_CITY = "pirateCityId_" + worldName;
   let scanActive = false;
 
-  const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", KEY_PIRATE_CITY, "pirateCityId",
+  const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", "pirateAggressive",
+    KEY_PIRATE_CITY, "pirateCityId",
     "pirateIdleTimeout", "pirateState", "scanInProgress",
     ...Object.values(CFG_KEYS).map((k) => k.storage)];
 
   chrome.storage.local.get(allStorageKeys, (data) => {
     enabled = !!data.pirateEnabled;
     convertEnabled = !!data.pirateConvertEnabled;
+    aggressive = !!data.pirateAggressive;
     // Fall back to legacy global key if world-scoped key is absent
     pirateCityId = data[KEY_PIRATE_CITY] ?? data.pirateCityId ?? null;
     if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
@@ -655,6 +663,9 @@
     if (msg.type === "pirate-convert-toggle") {
       convertEnabled = msg.enabled;
     }
+    if (msg.type === "pirate-aggressive-toggle") {
+      aggressive = msg.enabled;
+    }
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;
       const save = {};
@@ -681,6 +692,9 @@
     }
     if (changes.pirateConvertEnabled) {
       convertEnabled = !!changes.pirateConvertEnabled.newValue;
+    }
+    if (changes.pirateAggressive) {
+      aggressive = !!changes.pirateAggressive.newValue;
     }
     if (changes.scanInProgress) {
       scanActive = !!changes.scanInProgress.newValue;

@@ -110,7 +110,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 | `advisorReportData_{world}` | URL world | advisor | Last advisor report data |
 | `tradeHistory_{world}_{avatarId}_{YYYY-MM}` | URL world | tradehistory | Monthly trade history chunks |
 | `tradeHistoryIdx_{world}_{avatarId}` | URL world | tradehistory | Index of available months |
-| `pirateEnabled` / `pirateConvertEnabled` / `pirateSleepStart` / `pirateSleepEnd` / `pirateState` / `pirateIdleTimeout` + advanced timing params | global | autopirate | Pirate toggles and config |
+| `pirateEnabled` / `pirateConvertEnabled` / `pirateAggressive` / `pirateSleepStart` / `pirateSleepEnd` / `pirateState` / `pirateIdleTimeout` + advanced timing params | global | autopirate | Pirate toggles and config (`pirateAggressive` halves all human-like waits — for last-day comp pushes) |
 | `devModeEnabled` | global | settings | Developer mode toggle (off by default, shows Captcha tab) |
 | `captchaCollectEnabled` | global | captcha tab | Captcha data collection toggle (off by default) |
 | `captchaLog` | global | content.js | Array of `{dataUrl, answer, success, timestamp}` entries |

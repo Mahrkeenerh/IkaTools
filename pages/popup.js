@@ -708,6 +708,7 @@
   // --- Auto pirate ---
   const pirateToggle = $("pirate-toggle");
   const convertToggle = $("convert-toggle");
+  const aggressiveToggle = $("aggressive-toggle");
   const pirateCity = $("pirate-city");
   const pirateStart = $("pirate-start");
   const pirateEnd = $("pirate-end");
@@ -776,7 +777,7 @@
     // Build the scoped key using the content script's world name (canonical)
     const pirateCityScopedKey = pirateWorldName ? "pirateCityId_" + pirateWorldName : null;
     const keys = [
-      "pirateEnabled", "pirateConvertEnabled", "pirateCityId",
+      "pirateEnabled", "pirateConvertEnabled", "pirateAggressive", "pirateCityId",
       "pirateSleepStart", "pirateSleepEnd",
       ...PIRATE_ADV.map((a) => a.key),
     ];
@@ -785,6 +786,7 @@
     const data = await chrome.storage.local.get(keys);
     pirateToggle.checked = !!data.pirateEnabled;
     convertToggle.checked = !!data.pirateConvertEnabled;
+    aggressiveToggle.checked = !!data.pirateAggressive;
     pirateStart.value = data.pirateSleepStart ?? 1;
     pirateEnd.value = data.pirateSleepEnd ?? 7;
 
@@ -823,6 +825,14 @@
     chrome.storage.local.set({ pirateConvertEnabled: enabled });
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-convert-toggle", enabled }).catch(() => {});
+    }
+  });
+
+  aggressiveToggle.addEventListener("change", () => {
+    const enabled = aggressiveToggle.checked;
+    chrome.storage.local.set({ pirateAggressive: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-aggressive-toggle", enabled }).catch(() => {});
     }
   });
 
