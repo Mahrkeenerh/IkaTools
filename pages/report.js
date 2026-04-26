@@ -2366,13 +2366,29 @@
 
       function buildRows() {
         const all = Object.values(log).sort((a, b) => (b.id || 0) - (a.id || 0));
-        const filtered = all.filter(r => showTrash ? r.deleted : !r.deleted);
-        const activeCount = all.filter(r => !r.deleted).length;
-        const trashCount = all.filter(r => r.deleted).length;
+        const activeAll = all.filter(r => !r.deleted);
+        const trashList = all.filter(r => r.deleted);
+
+        // Dedup active reports: keep newest per (city, report type)
+        const seen = new Set();
+        const active = [];
+        for (const r of activeAll) {
+          const cityKey = r.targetCityId != null
+            ? `id:${r.targetCityId}`
+            : `co:${r.targetCoords || ""}|${r.targetCity || ""}|${r.targetPlayer || ""}`;
+          const typeKey = r.type || r.subject || "other";
+          const key = `${cityKey}::${typeKey}`;
+          if (seen.has(key)) continue;
+          seen.add(key);
+          active.push(r);
+        }
+
+        const filtered = showTrash ? trashList : active;
+        const trashCount = trashList.length;
 
         countSpan.textContent = showTrash
           ? `(${trashCount} in trash)`
-          : `(${activeCount} reports archived)`;
+          : `(${active.length} of ${activeAll.length} reports)`;
         trashBtn.textContent = showTrash ? "Show active" : `Show trash (${trashCount})`;
 
         thead.innerHTML = `<tr>
