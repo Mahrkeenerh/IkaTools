@@ -492,7 +492,7 @@
   let allianceIndex = null;
   let allianceColorMap = {};
   let queryIndex = null; // derived rich-data blob (queryIndex_{world})
-  let lootedIndex = null; // {byCityId, byCoordCity, byCoord} from spy log
+  let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
 
   async function loadAllianceIndex() {
     const worldName = IkUtils.getUrlWorldName() || "unknown";

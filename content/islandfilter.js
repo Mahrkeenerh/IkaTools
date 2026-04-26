@@ -11,7 +11,7 @@
   let filterConfig = null;
   let ctPlayerIds = null; // Set of ownerIds with an available CT
   let ctCheckedIds = null; // Set of ownerIds actually checked in last CT scan
-  let lootedIndex = null; // {byCityId, byCoordCity, byCoord} from spy log
+  let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
   let virtualCities = null; // array indexed by position; null entries = buildplace
   let tilesObserver = null;
 
@@ -119,7 +119,7 @@
       const place = parseScore(sc.place);
       const allyTag = c.ownerAllyTag || "";
       const isPiracy = !!(c.actions && c.actions.piracy_raid);
-      const looted = IkUtils.lookupLooted(lootedIndex, c.id, coords, c.name);
+      const looted = IkUtils.lookupLooted(lootedIndex, c.id, coords, c.ownerName, c.name);
 
       result.push({
         // Island-level fields (shared across all cities on this island)

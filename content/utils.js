@@ -149,16 +149,16 @@ globalThis.IkUtils = (() => {
     return result;
   }
 
-  // Build a lookup index from spyLog_{world} keyed by cityId, by coord+name,
-  // and by island coord (max timestamp across all looted cities). Skips
-  // entries without a `looted` timestamp or marked as `deleted`.
+  // Build a lookup index from spyLog_{world} keyed by cityId, by
+  // coord+player+city, and by island coord (max timestamp across all looted
+  // cities). Skips entries without a `looted` timestamp or marked as `deleted`.
   async function getLootedIndex(worldName) {
     const w = worldName || getUrlWorldName() || "unknown";
     const key = "spyLog_" + w;
     const data = await chrome.storage.local.get(key);
     const log = data[key] || {};
     const byCityId = new Map();
-    const byCoordCity = new Map();
+    const byCoordPlayerCity = new Map();
     const byCoord = new Map();
     for (const id of Object.keys(log)) {
       const r = log[id];
@@ -168,27 +168,29 @@ globalThis.IkUtils = (() => {
         const cid = String(r.targetCityId);
         if ((byCityId.get(cid) || 0) < ts) byCityId.set(cid, ts);
       }
-      if (r.targetCoords && r.targetCity) {
-        const k = r.targetCoords + "|" + r.targetCity.toLowerCase();
-        if ((byCoordCity.get(k) || 0) < ts) byCoordCity.set(k, ts);
+      if (r.targetCoords && r.targetPlayer && r.targetCity) {
+        const k = r.targetCoords + "|" + r.targetPlayer.toLowerCase() + "|" + r.targetCity.toLowerCase();
+        if ((byCoordPlayerCity.get(k) || 0) < ts) byCoordPlayerCity.set(k, ts);
       }
       if (r.targetCoords) {
         if ((byCoord.get(r.targetCoords) || 0) < ts) byCoord.set(r.targetCoords, ts);
       }
     }
-    return { byCityId, byCoordCity, byCoord };
+    return { byCityId, byCoordPlayerCity, byCoord };
   }
 
   // Look up the looted timestamp for a single city given the index from
-  // getLootedIndex. Prefers cityId match, falls back to coord+name.
-  function lookupLooted(index, cityId, coords, cityName) {
+  // getLootedIndex. Prefers cityId match (stable across renames), falls back
+  // to coord+player+city for legacy spy log entries that lack targetCityId.
+  function lookupLooted(index, cityId, coords, playerName, cityName) {
     if (!index) return 0;
     if (cityId) {
       const ts = index.byCityId.get(String(cityId));
       if (ts) return ts;
     }
-    if (coords && cityName) {
-      const ts = index.byCoordCity.get(coords + "|" + String(cityName).toLowerCase());
+    if (coords && playerName && cityName) {
+      const k = coords + "|" + String(playerName).toLowerCase() + "|" + String(cityName).toLowerCase();
+      const ts = index.byCoordPlayerCity.get(k);
       if (ts) return ts;
     }
     return 0;

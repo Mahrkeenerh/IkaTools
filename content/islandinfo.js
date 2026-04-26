@@ -6,7 +6,7 @@
   const PARTNER_COLOR = "#FFD700"; // gold for museum treaty partners
   let friendIds = new Set();
   let partnerIds = new Set();
-  let lootedIndex = null; // {byCityId, byCoordCity, byCoord} from spy log
+  let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
   let currentIsland = null; // last extracted island, used by refreshLootedLabels
@@ -509,7 +509,7 @@
 
       // Second row — "Looted X ago" in red, only for cities with a spy log
       // entry that's been marked looted.
-      const lootedTs = IkUtils.lookupLooted(lootedIndex, city.id, islandCoords, city.name);
+      const lootedTs = IkUtils.lookupLooted(lootedIndex, city.id, islandCoords, city.ownerName, city.name);
       if (lootedTs) {
         const lootRow = document.createElement("div");
         lootRow.className = "ik-loot-label";
