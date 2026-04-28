@@ -4,8 +4,10 @@
   const OWN_COLOR = "#64B5F6"; // blue for own cities (matches game)
   const FRIEND_COLOR = "#00FF88"; // green for friends
   const PARTNER_COLOR = "#FFD700"; // gold for museum treaty partners
+  const TRADER_COLOR = "#E040FB"; // magenta for trade partners (don't attack!)
   let friendIds = new Set();
   let partnerIds = new Set();
+  let traderIds = new Set();
   let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
@@ -18,6 +20,7 @@
   const KEY_FRIEND_LIST = "friendList_" + worldName;
   const KEY_FRIEND_SLOTS = "friendSlots_" + worldName;
   const KEY_PARTNERS = "museumPartners_" + worldName;
+  const KEY_TRADERS = "tradePartners_" + worldName;
   const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
   let friendCheckTimer = null;
 
@@ -119,6 +122,12 @@
     const data = await chrome.storage.local.get(KEY_PARTNERS);
     const list = data[KEY_PARTNERS] || [];
     partnerIds = new Set(list.map((p) => p.id));
+  }
+
+  async function loadTraders() {
+    const data = await chrome.storage.local.get(KEY_TRADERS);
+    const map = data[KEY_TRADERS] || {};
+    traderIds = new Set(Object.keys(map));
   }
 
   async function loadLooted() {
@@ -390,7 +399,8 @@
         const badge = city.state === "vacation" ? ' \ud83c\udf34' : city.state === "inactive" ? ' \ud83d\udca4' : '';
         const isFriend = !city.isOwn && friendIds.has(city.ownerId);
         const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
-        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
+        const isTrader = !city.isOwn && !isFriend && !isPartner && traderIds.has(city.ownerId);
+        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : isTrader ? `color:${TRADER_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
         const rowBg = "";
         html += `<tr class="ik-city-row" data-position="${city.position}" style="cursor:pointer;border-bottom:1px solid #1e2535;${rowBg}" title="Click to view ${city.name}">
           <td style="padding:3px 4px;${nameStyle}"><div>${city.ownerName}${badge}</div><div style="font-size:9px;color:#667;">${city.name}</div></td>
@@ -473,8 +483,9 @@
       const allyPart = city.allyTag ? `<span style="color:#7ec8e3;">[${city.allyTag}]</span> ` : "";
       const isFriend = !city.isOwn && friendIds.has(city.ownerId);
       const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
-      const nameColor = city.isOwn ? OWN_COLOR : isFriend ? FRIEND_COLOR : isPartner ? PARTNER_COLOR : "#dde";
-      const nameBold = city.isOwn || isFriend || isPartner ? "font-weight:bold;" : "";
+      const isTrader = !city.isOwn && !isFriend && !isPartner && traderIds.has(city.ownerId);
+      const nameColor = city.isOwn ? OWN_COLOR : isFriend ? FRIEND_COLOR : isPartner ? PARTNER_COLOR : isTrader ? TRADER_COLOR : "#dde";
+      const nameBold = city.isOwn || isFriend || isPartner || isTrader ? "font-weight:bold;" : "";
       label.innerHTML = `${allyPart}<span style="color:${nameColor};${nameBold}">${city.ownerName}</span>`;
 
       const labelBg = "rgba(0,0,0,0.85)";
@@ -610,8 +621,8 @@
     }
   }
 
-  // Load cached friends + partners + looted first, then scrape visible friends
-  Promise.all([loadFriends(), loadPartners(), loadLooted()]).then(() => {
+  // Load cached friends + partners + traders + looted first, then scrape visible friends
+  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadLooted()]).then(() => {
     scrapeFriends();
     init();
   });
@@ -658,6 +669,16 @@
       partnerIds = new Set(list.map((p) => p.id));
       if (document.body.id === "island" && panel) {
         // Re-render panel + labels with updated partner highlights
+        initialized = false;
+        panel.remove();
+        panel = null;
+        init();
+      }
+    }
+    if (changes[KEY_TRADERS]) {
+      const map = changes[KEY_TRADERS].newValue || {};
+      traderIds = new Set(Object.keys(map));
+      if (document.body.id === "island" && panel) {
         initialized = false;
         panel.remove();
         panel = null;

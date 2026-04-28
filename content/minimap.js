@@ -493,6 +493,7 @@
   let allianceColorMap = {};
   let queryIndex = null; // derived rich-data blob (queryIndex_{world})
   let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
+  let traderIds = new Set(); // avatarIds of recent trade partners
 
   async function loadAllianceIndex() {
     const worldName = IkUtils.getUrlWorldName() || "unknown";
@@ -510,6 +511,13 @@
 
   async function loadLootedIndex() {
     lootedIndex = await IkUtils.getLootedIndex();
+  }
+
+  async function loadTraders() {
+    const worldName = IkUtils.getUrlWorldName() || "unknown";
+    const data = await chrome.storage.local.get("tradePartners_" + worldName);
+    const map = data["tradePartners_" + worldName] || {};
+    traderIds = new Set(Object.keys(map));
   }
 
   // --- Local filter evaluation state (no globals in MapFilter) ---
@@ -556,6 +564,7 @@
   // "computed-by-enrichment" markers consumed by mapfilter.matchFilter.
   function enrichIslandsWithRichData(islands) {
     const lootedByCoord = lootedIndex ? lootedIndex.byCoord : null;
+    const hasTraders = traderIds && traderIds.size > 0;
     if (!queryIndex || !queryIndex.islandsByCoord) {
       // Clear stale enrichment so old data doesn't leak through
       for (const isl of islands) {
@@ -566,10 +575,12 @@
         isl._ctAvailable = false;
         isl._ctChecked = false;
         isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
+        isl._tradePartner = false;
       }
       return;
     }
     const byCoord = queryIndex.islandsByCoord;
+    const lootedByCityId = lootedIndex ? lootedIndex.byCityId : null;
     for (const isl of islands) {
       const entry = byCoord[isl.x + ":" + isl.y];
       if (!entry) {
@@ -580,15 +591,27 @@
         isl._ctAvailable = false;
         isl._ctChecked = false;
         isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
+        isl._tradePartner = false;
         continue;
       }
       isl._allyTags = new Set(entry.allyTags || []);
       isl._ownerNamesText = entry.ownerNamesText || "";
       isl._maxArmy = entry.maxArmy || 0;
-      isl._players = entry.players || [];
+      // Clone player records so we can stamp .looted without mutating the cached queryIndex.
+      isl._players = (entry.players || []).map((p) => {
+        let looted = 0;
+        if (lootedByCityId && p.cityIds) {
+          for (const cid of p.cityIds) {
+            const ts = lootedByCityId.get(cid) || 0;
+            if (ts > looted) looted = ts;
+          }
+        }
+        return { ...p, looted };
+      });
       isl._ctAvailable = !!entry.ctAvailable;
       isl._ctChecked = !!entry.ctChecked;
       isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
+      isl._tradePartner = hasTraders && isl._players.some((p) => traderIds.has(String(p.id)));
     }
   }
 
@@ -808,6 +831,7 @@
       currentMapData = data[key];
       await loadAllianceIndex();
       await loadLootedIndex();
+      await loadTraders();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
       await refreshPresetResults();
@@ -1111,8 +1135,20 @@
     const mapKey = "map_" + worldName;
     const queryIdxKey = "queryIndex_" + worldName;
     const spyLogKey = "spyLog_" + worldName;
+    const tradersKey = "tradePartners_" + worldName;
     if (changes[spyLogKey]) {
       loadLootedIndex().then(async () => {
+        cachedBaseMap = null;
+        islandsByCoord = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+        drawMinimap();
+      });
+    }
+    if (changes[tradersKey]) {
+      loadTraders().then(async () => {
         cachedBaseMap = null;
         islandsByCoord = null;
         FilterRunner.invalidateAll();

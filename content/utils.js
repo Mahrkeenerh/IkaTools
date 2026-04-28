@@ -1,14 +1,28 @@
 // Shared utilities for Ikariam Tools content scripts
 // Loaded first via manifest — available as globalThis.IkUtils
 globalThis.IkUtils = (() => {
-  // Inject bridge.js into page context (once) — bypasses CSP via external script src
+  // Inject bridge.js into page context (once) — bypasses CSP via external script src.
+  // Returns a Promise that resolves once the script's `onload` fires, so callers
+  // that immediately dispatch CustomEvents can `await` to avoid losing the event
+  // before bridge.js registers its listeners.
+  let bridgeReadyPromise = null;
   function ensureBridge() {
-    if (document.getElementById("ik-bridge")) return;
-    const s = document.createElement("script");
-    s.id = "ik-bridge";
-    s.src = chrome.runtime.getURL("content/bridge.js");
-    s.onerror = () => console.warn("[IkUtils] bridge.js failed to load");
-    document.documentElement.appendChild(s);
+    if (bridgeReadyPromise) return bridgeReadyPromise;
+    bridgeReadyPromise = new Promise((resolve) => {
+      const existing = document.getElementById("ik-bridge");
+      if (existing) { resolve(); return; }
+      const s = document.createElement("script");
+      s.id = "ik-bridge";
+      s.src = chrome.runtime.getURL("content/bridge.js");
+      s.onload = () => resolve();
+      s.onerror = () => {
+        console.warn("[IkUtils] bridge.js failed to load");
+        bridgeReadyPromise = null;
+        resolve();
+      };
+      document.documentElement.appendChild(s);
+    });
+    return bridgeReadyPromise;
   }
 
   // Extract world name from page title

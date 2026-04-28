@@ -262,6 +262,7 @@ function bgBuildQueryIndex(writes, opts) {
         maxArmyPlayerName = c.ownerName || null;
       }
       if (oid) {
+        const cidStr = c.id != null ? String(c.id) : "";
         const prev = playerMap.get(oid);
         if (prev) {
           prev.cities++;
@@ -271,6 +272,7 @@ function bgBuildQueryIndex(writes, opts) {
           prev.research = Math.max(prev.research, scores.research || 0);
           prev.army = Math.max(prev.army, army);
           prev.trader = Math.max(prev.trader, scores.trader || 0);
+          if (cidStr) prev.cityIds.push(cidStr);
         } else {
           playerMap.set(oid, {
             id: oid,
@@ -285,6 +287,7 @@ function bgBuildQueryIndex(writes, opts) {
             research: scores.research || 0,
             army,
             trader: scores.trader || 0,
+            cityIds: cidStr ? [cidStr] : [],
           });
         }
       }

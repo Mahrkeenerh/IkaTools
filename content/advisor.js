@@ -5,7 +5,7 @@
   // Max scientists by academy level (index = level, 0-32). Source: Ikariam game data.
   // Wiki-sourced, known to contain errors — the report highlights rows where
   // assigned > max so values can be corrected manually as they're observed in-game.
-  const MAX_SCIENTISTS_BY_LEVEL = [0, 8, 12, 16, 22, 28, 35, 43, 51, 60, 69, 79, 89, 99, 111, 122, 134, 146, 159, 172, 185, 198, 212, 227, 241, 256, 271, 287, 302, 318, 335, 351, 368];
+  const MAX_SCIENTISTS_BY_LEVEL = [0, 8, 11, 16, 22, 28, 35, 43, 51, 60, 69, 79, 89, 99, 111, 122, 134, 146, 158, 172, 185, 198, 212, 227, 241, 256, 271, 287, 302, 318, 335, 351, 368];
   // Max priests by temple level (index = level). Known values from Ikariam game data up to 28;
   // levels 25 and 27 linearly interpolated from neighbours (756, 848). Above 28, falls back to fetched max.
   const MAX_PRIESTS_BY_LEVEL = [0, 12, 23, 37, 54, 73, 94, 117, 142, 168, 196, 225, 255, 287, 320, 355, 390, 427, 464, 503, 543, 583, 625, 668, 711, 756, 801, 848, 895];

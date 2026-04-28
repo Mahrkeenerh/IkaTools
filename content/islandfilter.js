@@ -12,6 +12,7 @@
   let ctPlayerIds = null; // Set of ownerIds with an available CT
   let ctCheckedIds = null; // Set of ownerIds actually checked in last CT scan
   let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
+  let traderIds = new Set(); // avatarIds of recent trade partners
   let virtualCities = null; // array indexed by position; null entries = buildplace
   let tilesObserver = null;
 
@@ -50,6 +51,13 @@
 
   async function loadLootedData() {
     lootedIndex = await IkUtils.getLootedIndex();
+  }
+
+  async function loadTraderData() {
+    const worldName = IkUtils.getUrlWorldName() || "unknown";
+    const data = await chrome.storage.local.get("tradePartners_" + worldName);
+    const map = data["tradePartners_" + worldName] || {};
+    traderIds = new Set(Object.keys(map));
   }
 
   // Read the ownership category from the game's own class list on the tile.
@@ -144,10 +152,13 @@
           cities: 1,
           maxLevel: parseInt(c.level || 0, 10),
           place, building, research, army, trader,
+          cityIds: c.id != null ? [String(c.id)] : [],
+          looted,
         }],
         _ctAvailable: ctPlayerIds ? ctPlayerIds.has(ownerId) : false,
         _ctChecked: ctCheckedIds ? ctCheckedIds.has(ownerId) : false,
         _looted: looted,
+        _tradePartner: traderIds.has(ownerId),
       });
     }
     return result;
@@ -242,6 +253,7 @@
     filterConfig = data.mapFilters || null;
     await loadCtData();
     await loadLootedData();
+    await loadTraderData();
     virtualCities = null;
 
     const ready = await waitForIslandDOM();
@@ -338,6 +350,15 @@
     }
     if (changes["spyLog_" + worldName]) {
       loadLootedData().then(async () => {
+        virtualCities = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+      });
+    }
+    if (changes["tradePartners_" + worldName]) {
+      loadTraderData().then(async () => {
         virtualCities = null;
         FilterRunner.invalidateAll();
         await refreshCustomResults();

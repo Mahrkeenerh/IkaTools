@@ -31,9 +31,11 @@
     pending.resolve(detail);
   });
 
-  function sendRequest(cmd, payload, timeoutMs) {
+  async function sendRequest(cmd, payload, timeoutMs) {
+    // Await bridge readiness so the event isn't dispatched before bridge.js
+    // has registered its `ik-eval-cmd` listener (cause of "Eval bridge timeout").
+    await IkUtils.ensureBridge();
     return new Promise((resolve) => {
-      IkUtils.ensureBridge();
       const reqId = nextReqId();
       const timeout = setTimeout(() => {
         pendingRequests.delete(reqId);

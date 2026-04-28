@@ -80,6 +80,8 @@ Each entry in the `_players` array has:
 | `.research` | number |
 | `.army` | number |
 | `.trader` | number |
+| `.cityIds` | Array\<string\> (cityIds owned by this player on this island) |
+| `.looted` | number (max looted-spy timestamp across this player's cities on this island, `0` if none) |
 
 ## Examples
 
