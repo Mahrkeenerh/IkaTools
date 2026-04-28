@@ -1462,6 +1462,18 @@
       }
     }
 
+    // Receipts of actual completed trades — passively scraped from the
+    // tradeAdvisor news feed. 30 days matches the longest history view; the
+    // section's refresh fn filters by the active timeframe.
+    let allReceipts = [];
+    if (typeof TradeReceipts !== "undefined" && report.urlWorld) {
+      try {
+        allReceipts = await TradeReceipts.loadReceipts(report.urlWorld, 30);
+      } catch (e) {
+        console.error("[Report] Failed to load trade receipts:", e);
+      }
+    }
+
     const hasHistory = historySnapshots.length > 0 && typeof TradeChart !== "undefined";
 
     // Compute history stats for badges (all 30 days)
@@ -1535,7 +1547,8 @@
     let includeOwn = false;
     const refreshFns = []; // each resource block registers its refresh
 
-    if (hasHistory) {
+    const hasReceipts = allReceipts.length > 0;
+    if (hasHistory || hasReceipts) {
       const controls = document.createElement("div");
       controls.className = "history-controls";
 
@@ -1580,6 +1593,18 @@
       controls.appendChild(ownLabel);
 
       container.appendChild(controls);
+    }
+
+    // Realized-trade price history. Rendered up here (right after the
+    // controls + standing offers) because the user wants the actual sales
+    // overview adjacent to their currently-active offers, not buried at the
+    // bottom. Uses the same timeframe + scatter toggles as the offer-board
+    // charts so they all move in lockstep.
+    if (hasReceipts) {
+      renderReceiptsCharts(
+        container, allReceipts, RESOURCES, RES_LABELS, RES_CLASSES, RES_ICONS, RES_IDX,
+        () => timeframeDays, () => timeframeRaw, () => showScatter, refreshFns
+      );
     }
 
     // Per-resource rows: 4 columns each (ask chart | bid chart | sell-to table | buy-from table)
@@ -1701,11 +1726,18 @@
       container.appendChild(row);
     }
 
+    // Full receipt log table — kept at the very bottom (drilldown view for
+    // when the chart isn't enough). The price-history overview lives higher
+    // up, right after the standing offers.
+    if (allReceipts.length > 0) {
+      renderReceiptsTable(container, allReceipts, RES_LABELS, RES_CLASSES, RES_ICONS, () => timeframeDays, refreshFns);
+    }
+
     // Disclaimer
     if (hasHistory) {
       const disclaimer = document.createElement("div");
       disclaimer.className = "chart-disclaimer";
-      disclaimer.textContent = "History reflects listed market offers seen during scans, not completed transactions. Offers under 1,000 qty excluded from charts.";
+      disclaimer.textContent = "Offer-board charts reflect listed market offers seen during scans, not completed transactions. The realized-trade charts and the receipt log are actual fulfilled trades. Offers under 1,000 qty excluded from offer-board charts.";
       container.appendChild(disclaimer);
     }
 
@@ -1713,6 +1745,297 @@
     if (refreshFns.length > 0) {
       requestAnimationFrame(() => refreshFns.forEach((fn) => fn()));
     }
+  }
+
+  // ---------- Realized-trade price history (chart section) ----------
+  //
+  // Renders one row per resource (matching the offer-board layout: header +
+  // two sides), with the left side = "Bought" prices we paid, right side =
+  // "Sold" prices we received. Uses TradeChart.drawIQRChart with a custom
+  // extractFn so it can reuse all of the offer-board chart rendering, axis,
+  // and hover tooltip code without forking it.
+  function renderReceiptsCharts(container, allReceipts, RESOURCES, RES_LABELS, RES_CLASSES, RES_ICONS, RES_IDX, getDays, getRaw, getShowScatter, refreshFns) {
+    if (typeof TradeChart === "undefined") return;
+    const RES_CANON_BY_IDX = ["wood", "wine", "marble", "crystal", "sulfur"];
+
+    // Custom extractor for receipts. Signature matches TradeChart.extractSeriesData
+    // so drawIQRChart can call it transparently. `side === "ask"` ↔ we sold,
+    // `side === "bid"` ↔ we bought — same convention the rest of the panel uses.
+    function extractReceiptSeries(receipts, resourceIdx, side, _includeOwn, options) {
+      const raw = options?.raw || false;
+      const minQty = options?.minQty || 0;
+      const canonical = RES_CANON_BY_IDX[resourceIdx];
+      if (!canonical) return [];
+      const dir = side === "ask" ? "sell" : "buy";
+      const filtered = receipts.filter((r) =>
+        r.resource === canonical && r.dir === dir && (!minQty || r.amount >= minQty)
+      );
+      if (filtered.length === 0) return [];
+
+      function makePoint(items) {
+        const prices = items.map((r) => r.pricePerUnit).sort((a, b) => a - b);
+        const totalQty = items.reduce((sum, r) => sum + r.amount, 0);
+        const playerSet = new Set();
+        for (const r of items) {
+          if (r.otherAvatarId) playerSet.add(r.otherAvatarId);
+          else if (r.otherAvatarName) playerSet.add(r.otherAvatarName);
+        }
+        return {
+          ts: Math.max(...items.map((r) => r.ts)),
+          min: prices[0],
+          max: prices[prices.length - 1],
+          p25: TradeHistory.percentile(prices, 25),
+          median: TradeHistory.percentile(prices, 50),
+          p75: TradeHistory.percentile(prices, 75),
+          totalQty,
+          uniquePlayers: playerSet.size,
+          // Hover tooltip reads {pl, p, q, c} on individual offers — match that shape.
+          offers: items.map((r) => ({
+            pl: r.otherAvatarName || "Unknown",
+            p: r.pricePerUnit,
+            q: r.amount,
+            c: r.otherCityName || ("[" + r.otherCityId + "]"),
+          })),
+        };
+      }
+
+      if (raw) {
+        return filtered.slice().sort((a, b) => a.ts - b.ts).map((r) => makePoint([r]));
+      }
+
+      const dayMap = new Map();
+      for (const r of filtered) {
+        const d = new Date(r.ts);
+        const dayKey = d.getFullYear() + "-" +
+          String(d.getMonth() + 1).padStart(2, "0") + "-" +
+          String(d.getDate()).padStart(2, "0");
+        if (!dayMap.has(dayKey)) dayMap.set(dayKey, []);
+        dayMap.get(dayKey).push(r);
+      }
+      return [...dayMap.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))
+        .map(([, items]) => makePoint(items));
+    }
+
+    const root = document.createElement("div");
+    root.className = "realized-trades-section";
+    root.style.cssText = "margin-bottom:8px;";
+    container.appendChild(root);
+
+    const header = document.createElement("div");
+    header.className = "trade-section-header";
+    header.innerHTML =
+      '<span class="trade-type-badge" style="background:rgba(180,160,80,0.15);color:#b9a44c;border:1px solid rgba(180,160,80,0.3);">Realized trades — price history</span>' +
+      '<span style="font-size:11px;color:var(--text-dim);font-weight:400;">actual fulfilled market trades scraped from the news feed</span>';
+    root.appendChild(header);
+
+    // Per-resource: only render rows where we have receipts on at least one side.
+    for (const res of RESOURCES) {
+      const resIdx = RES_IDX[res];
+      const sellCount = allReceipts.filter((r) => r.resource === res && r.dir === "sell").length;
+      const buyCount = allReceipts.filter((r) => r.resource === res && r.dir === "buy").length;
+      if (sellCount === 0 && buyCount === 0) continue;
+
+      const row = document.createElement("div");
+      row.className = "res-row";
+
+      const rowHeader = document.createElement("div");
+      rowHeader.className = "res-row-header " + RES_CLASSES[res];
+      rowHeader.innerHTML = '<img class="res-icon" src="' + RES_ICONS[res] + '" alt="" style="width:18px;height:18px;vertical-align:-3px;margin-right:6px;">' + RES_LABELS[res];
+      row.appendChild(rowHeader);
+
+      const sides = document.createElement("div");
+      sides.className = "res-row-sides";
+
+      // Left — Bought (we paid this)
+      const buySide = document.createElement("div");
+      buySide.className = "res-side";
+      const buyTitle = document.createElement("div");
+      buyTitle.className = "res-side-title";
+      buyTitle.innerHTML = '<span class="trade-type-badge trade-type-buy">Bought</span> — prices you actually paid';
+      buySide.appendChild(buyTitle);
+      buildReceiptChartCol(buySide, buyCount > 0, "bid");
+      sides.appendChild(buySide);
+
+      // Right — Sold (we received this)
+      const sellSide = document.createElement("div");
+      sellSide.className = "res-side";
+      const sellTitle = document.createElement("div");
+      sellTitle.className = "res-side-title";
+      sellTitle.innerHTML = '<span class="trade-type-badge trade-type-sell">Sold</span> — prices you actually received';
+      sellSide.appendChild(sellTitle);
+      buildReceiptChartCol(sellSide, sellCount > 0, "ask");
+      sides.appendChild(sellSide);
+
+      row.appendChild(sides);
+      root.appendChild(row);
+
+      function buildReceiptChartCol(parent, hasData, side) {
+        if (!hasData) {
+          const empty = document.createElement("div");
+          empty.style.cssText = "color:#445;font-size:11px;padding:12px 0;";
+          empty.textContent = side === "ask" ? "No sales recorded yet." : "No purchases recorded yet.";
+          parent.appendChild(empty);
+          return;
+        }
+        const wrap = document.createElement("div");
+        wrap.className = "chart-wrap";
+        const canvas = document.createElement("canvas");
+        canvas.style.display = "block";
+        const tooltip = document.createElement("div");
+        tooltip.className = "chart-tooltip";
+        wrap.appendChild(canvas);
+        wrap.appendChild(tooltip);
+        parent.appendChild(wrap);
+
+        const summary = document.createElement("div");
+        summary.className = "history-summary";
+        summary.style.marginTop = "8px";
+        parent.appendChild(summary);
+
+        const refresh = () => {
+          const days = getDays();
+          const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+          const filtered = allReceipts.filter((r) => r.ts >= cutoff);
+          const opts = {
+            showScatter: getShowScatter(),
+            includeOwn: true,
+            minQty: 0,
+            raw: getRaw(),
+            extractFn: extractReceiptSeries,
+          };
+          const hits = TradeChart.drawIQRChart(canvas, filtered, resIdx, side, opts);
+          TradeChart.setupHover(canvas, hits, tooltip);
+          renderReceiptsSummary(summary, filtered, res, side === "ask" ? "sell" : "buy");
+        };
+        refreshFns.push(refresh);
+      }
+    }
+  }
+
+  // Compact stat strip beneath each receipt chart: trades / qty / gold /
+  // weighted avg / partners — concise enough to live next to the chart
+  // without crowding it.
+  function renderReceiptsSummary(container, receipts, res, dir) {
+    container.innerHTML = "";
+    const items = receipts.filter((r) => r.resource === res && r.dir === dir);
+    if (items.length === 0) return;
+    let qty = 0, gold = 0;
+    const partners = new Set();
+    for (const r of items) {
+      qty += r.amount;
+      gold += r.amount * r.pricePerUnit;
+      if (r.otherAvatarId) partners.add(r.otherAvatarId);
+      else if (r.otherAvatarName) partners.add(r.otherAvatarName);
+    }
+    const avg = qty > 0 ? gold / qty : 0;
+    const fmt = (n) => Math.round(n).toLocaleString("en-US");
+    const fmtPrice = (n) => n.toFixed(n < 10 ? 2 : 1);
+    function card(label, value) {
+      return '<div class="hs-card"><div style="color:var(--text-dim);font-size:10px;text-transform:uppercase;">' + label + '</div>' +
+             '<div style="font-weight:600;font-size:14px;">' + value + '</div></div>';
+    }
+    container.innerHTML =
+      card("Trades", items.length) +
+      card("Quantity", fmt(qty)) +
+      card("Gold", fmt(gold)) +
+      card("Avg price", fmtPrice(avg)) +
+      card("Partners", partners.size);
+  }
+
+  // ---------- Full receipt log (table at the bottom) ----------
+  function renderReceiptsTable(container, allReceipts, RES_LABELS, RES_CLASSES, RES_ICONS, getDays, refreshFns) {
+    const root = document.createElement("div");
+    root.className = "receipts-section";
+    root.style.cssText = "margin-top:32px;padding-top:20px;border-top:1px solid var(--border);";
+    container.appendChild(root);
+
+    const fmt = (n) => Math.round(n).toLocaleString("en-US");
+    const fmtPrice = (n) => n.toFixed(n < 10 ? 2 : 1);
+
+    function paint() {
+      const days = getDays();
+      const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+      const receipts = allReceipts.filter((r) => r.ts >= cutoff).sort((a, b) => b.ts - a.ts);
+      root.innerHTML = "";
+
+      const header = document.createElement("div");
+      header.className = "trade-section-header";
+      header.innerHTML =
+        '<span class="trade-type-badge" style="background:rgba(180,160,80,0.15);color:#b9a44c;border:1px solid rgba(180,160,80,0.3);">Full receipt log (' + receipts.length + ')</span>' +
+        '<span style="font-size:11px;color:var(--text-dim);font-weight:400;">drilldown of every captured trade in this window</span>';
+      root.appendChild(header);
+
+      if (receipts.length === 0) {
+        const empty = document.createElement("div");
+        empty.style.cssText = "color:#445;font-size:12px;padding:8px 0;";
+        empty.textContent = "No completed trades in this window. Browse the trade advisor to capture more receipts.";
+        root.appendChild(empty);
+        return;
+      }
+
+      const MAX_ROWS = 100;
+      const table = document.createElement("table");
+      table.className = "report-table";
+      table.style.cssText = "margin-top:8px;";
+      const thead = document.createElement("thead");
+      thead.innerHTML =
+        '<tr>' +
+          '<th>When</th>' +
+          '<th>Dir</th>' +
+          '<th>Resource</th>' +
+          '<th class="right">Qty</th>' +
+          '<th class="right">Price</th>' +
+          '<th class="right">Total</th>' +
+          '<th>My city</th>' +
+          '<th>Partner</th>' +
+          '<th>From / to</th>' +
+        '</tr>';
+      table.appendChild(thead);
+      const tbody = document.createElement("tbody");
+      const shown = receipts.slice(0, MAX_ROWS);
+      for (const r of shown) {
+        const tr = document.createElement("tr");
+        const when = new Date(r.ts);
+        const whenText = when.toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" });
+        const badgeClass = r.dir === "sell" ? "trade-type-sell" : "trade-type-buy";
+        const dirLabel = r.dir === "sell" ? "Sold" : "Bought";
+        tr.innerHTML =
+          '<td style="white-space:nowrap;">' + whenText + '</td>' +
+          '<td><span class="trade-type-badge ' + badgeClass + '">' + dirLabel + '</span></td>' +
+          '<td class="' + RES_CLASSES[r.resource] + '">' +
+            '<img class="res-icon" src="' + RES_ICONS[r.resource] + '" alt=""> ' + RES_LABELS[r.resource] +
+          '</td>' +
+          '<td class="right">' + fmt(r.amount) + '</td>' +
+          '<td class="right">' + fmtPrice(r.pricePerUnit) + '</td>' +
+          '<td class="right">' + fmt(r.amount * r.pricePerUnit) + '</td>' +
+          '<td>' + escapeHtml(r.myCityName || ("[" + r.myCityId + "]")) + '</td>' +
+          '<td>' + escapeHtml(r.otherAvatarName || "—") + '</td>' +
+          '<td>' + escapeHtml(r.otherCityName || ("[" + r.otherCityId + "]")) + '</td>';
+        tbody.appendChild(tr);
+      }
+      table.appendChild(tbody);
+      const wrap = document.createElement("div");
+      wrap.className = "table-wrap";
+      wrap.appendChild(table);
+      root.appendChild(wrap);
+
+      if (receipts.length > MAX_ROWS) {
+        const more = document.createElement("div");
+        more.style.cssText = "font-size:11px;color:var(--text-dim);margin-top:4px;";
+        more.textContent = "Showing newest " + MAX_ROWS + " of " + receipts.length + " trades in window.";
+        root.appendChild(more);
+      }
+    }
+
+    paint();
+    refreshFns.push(paint);
+  }
+
+  function escapeHtml(s) {
+    return String(s == null ? "" : s)
+      .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
   // Build an offer table into a container element

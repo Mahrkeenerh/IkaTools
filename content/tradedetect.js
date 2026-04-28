@@ -22,14 +22,20 @@
   const ISLAND_PREFIX = "island_" + worldName + "_";
 
   let ownCityIds = null;            // Set<string> — our cityIds, refreshed on demand
+  let ownCityNames = null;          // Map<cityId, name> for our cities
   let ownAvatarId = null;           // string — our avatarId
   let cityIdIndex = null;           // Map<cityId, {avatarId, avatarName, cityName, islandId}>
+  let resourceMap = null;           // Map<localizedNameLower, canonicalKey> — built lazily
   let scanDebounce = null;
   // Per-row dedup. Each scanner builds a stable key from row identity
   // (date + foreign cityId for tradeAdvisor; eventId for militaryAdvisor)
   // so paginating or re-scanning never double-counts the same trade.
   const processedRows = new Set();
   const PROCESSED_ROWS_CAP = 5000;  // hard cap to bound memory across long sessions
+  // Receipt-row dedup is independent: a single news row can contribute to BOTH
+  // partner tracking and a receipt, but the dedup keys differ (receipt key
+  // includes resource + amount, partner key doesn't).
+  const processedReceipts = new Set();
   const inFlightFetches = new Map(); // cityId -> Promise (dedup concurrent fetches)
   const FETCH_GAP_MS = 1500;        // throttle gap between sequential resolves
   let lastFetchAt = 0;
@@ -41,6 +47,14 @@
       if (!it.done) processedRows.delete(it.value);
     }
     processedRows.add(key);
+  }
+
+  function rememberReceipt(key) {
+    if (processedReceipts.size >= PROCESSED_ROWS_CAP) {
+      const it = processedReceipts.values().next();
+      if (!it.done) processedReceipts.delete(it.value);
+    }
+    processedReceipts.add(key);
   }
 
   // Build a single cityIdIndex entry from an island record + city.
@@ -69,18 +83,104 @@
     if (ownCityIds) return ownCityIds;
     // Game dropdown is the most reliable source — populated even when bridge isn't ready.
     const ids = new Set();
+    const names = new Map();
     document.querySelectorAll("#dropDown_js_citySelectContainer li[selectvalue]").forEach((li) => {
       const v = li.getAttribute("selectvalue");
-      if (v) ids.add(String(v));
+      if (!v) return;
+      ids.add(String(v));
+      const a = li.querySelector("a[title]");
+      if (a) names.set(String(v), (a.getAttribute("title") || a.textContent || "").trim());
     });
-    if (ids.size > 0) { ownCityIds = ids; return ownCityIds; }
+    if (ids.size > 0) { ownCityIds = ids; ownCityNames = names; return ownCityIds; }
     // Fallback to bridge
     try {
       const cities = await IkUtils.getCities();
-      for (const c of cities) ids.add(String(c.id));
+      for (const c of cities) {
+        ids.add(String(c.id));
+        if (c.name) names.set(String(c.id), c.name);
+      }
     } catch (e) {}
     ownCityIds = ids;
+    ownCityNames = names;
     return ownCityIds;
+  }
+
+  // Build a localized resource name → canonical key map by reading the
+  // game's `LocalizationStrings = JSON.parse('…')` declaration from an inline
+  // <script>. Fully locale-agnostic: works wherever the game runs.
+  function buildResourceMap() {
+    if (resourceMap) return resourceMap;
+    const RES_KEYS = ["wood", "wine", "marble", "crystal", "sulfur", "gold"];
+    let inner = null;
+    for (const s of document.querySelectorAll("script")) {
+      const txt = s.textContent;
+      if (!txt || txt.indexOf("LocalizationStrings") === -1) continue;
+      // Match the JSON.parse argument; capture handles \\ and \' escapes.
+      const m = txt.match(/LocalizationStrings\s*=\s*JSON\.parse\('((?:[^'\\]|\\.)*)'\)/);
+      if (m) { inner = m[1]; break; }
+    }
+    if (!inner) return null;
+    let loc;
+    try {
+      // The captured text is a JS string literal body. JSON allows \uXXXX,
+      // \", \\, but not \' — the game's source uses single quotes so any
+      // escaped apostrophes need to be unescaped before JSON.parse.
+      loc = JSON.parse(inner.replace(/\\'/g, "'"));
+    } catch (e) {
+      console.warn(TAG, "failed to parse LocalizationStrings:", e);
+      return null;
+    }
+    const map = new Map();
+    for (const key of RES_KEYS) {
+      const localized = loc[key];
+      if (typeof localized === "string" && localized.length > 0) {
+        map.set(localized.trim().toLowerCase(), key);
+      }
+    }
+    resourceMap = map.size > 0 ? map : null;
+    return resourceMap;
+  }
+
+  function canonicalResource(localized) {
+    if (!localized) return null;
+    const map = buildResourceMap();
+    if (!map) return null;
+    return map.get(localized.trim().toLowerCase()) || null;
+  }
+
+  // Parse the game's date cell text. Czech / German / most European locales
+  // render "DD.MM.YYYY HH:mm"; some use slashes. Returns epoch ms or null.
+  function parseTimestamp(text) {
+    if (!text) return null;
+    const t = text.trim();
+    let m = t.match(/(\d{1,2})[.\/-](\d{1,2})[.\/-](\d{2,4})\s+(\d{1,2}):(\d{2})/);
+    if (m) {
+      let yr = parseInt(m[3], 10);
+      if (yr < 100) yr += 2000;
+      const d = new Date(yr, parseInt(m[2], 10) - 1, parseInt(m[1], 10),
+                         parseInt(m[4], 10), parseInt(m[5], 10), 0, 0);
+      const ms = d.getTime();
+      return Number.isFinite(ms) ? ms : null;
+    }
+    const fallback = Date.parse(t);
+    return Number.isFinite(fallback) ? fallback : null;
+  }
+
+  // "20 000" → 20000. Game uses non-breaking spaces and regular spaces as
+  // thousand separators; comma is a decimal point in Czech but trade amounts
+  // are always integers, so just strip everything non-digit.
+  function parseAmount(text) {
+    if (!text) return 0;
+    const cleaned = String(text).replace(/[^\d]/g, "");
+    if (!cleaned) return 0;
+    const n = parseInt(cleaned, 10);
+    return Number.isFinite(n) ? n : 0;
+  }
+
+  function cityIdFromAnyHref(a) {
+    if (!a) return null;
+    const m = (a.getAttribute("href") || "").match(/cityId=(\d+)/);
+    return m ? m[1] : null;
   }
 
   // Build a cityId → owner index from cached island records (lazy, in-memory).
@@ -406,54 +506,140 @@
     return !!subjectTd.querySelector("ul.resources br");
   }
 
+  // Pull resource + amount + price-per-unit + currency out of the subject's
+  // `<ul class="resources">`. Layout (locale-independent):
+  //   <li class="value">{amount} <img title="{localized resource}"></li>
+  //   "cena za kus:&nbsp;"            ← localized "price per unit:" text node
+  //   <li class="value">{price} <img title="{localized currency}"></li>
+  //   <br>
+  // Returns { resource, amount, pricePerUnit, currency } or null on shape miss.
+  function extractTradeDetails(subjectTd) {
+    const ul = subjectTd.querySelector("ul.resources");
+    if (!ul) return null;
+    const valueLis = ul.querySelectorAll("li.value");
+    if (valueLis.length < 2) return null;
+
+    const resLi = valueLis[0];
+    const priceLi = valueLis[1];
+    const resImg = resLi.querySelector("img");
+    const priceImg = priceLi.querySelector("img");
+    if (!resImg || !priceImg) return null;
+
+    const resource = canonicalResource(resImg.getAttribute("title") || resImg.getAttribute("alt"));
+    if (!resource || resource === "gold") return null; // gold isn't a tradable resource here
+    const currency = canonicalResource(priceImg.getAttribute("title") || priceImg.getAttribute("alt")) || "gold";
+
+    const amount = parseAmount(resLi.textContent);
+    const pricePerUnit = parseAmount(priceLi.textContent);
+    if (amount <= 0 || pricePerUnit <= 0) return null;
+
+    return { resource, amount, pricePerUnit, currency };
+  }
+
   async function scanTradeAdvisor(table) {
     const ourIds = await readOwnCityIds();
     const events = [];
+    const receipts = [];
     for (const row of table.querySelectorAll("tr")) {
       const subj = row.querySelector("td.subject");
       if (!subj) continue;
       if (!isMarketTradeRow(subj)) continue;
 
-      // Two cityId links: typically one ours + one foreign
+      // Two cityId links: the first is the BUYER's home, the second is the
+      // SELLER's city. One side will be ours; the other is the trade partner.
       const links = subj.querySelectorAll("a[href*='cityId=']");
       if (links.length < 2) continue;
-      let foreignCityId = null;
-      let foreignCityName = "";
-      for (const a of links) {
-        const cid = cityIdFromLink(a);
-        if (!cid) continue;
-        if (ourIds.has(String(cid))) continue;
-        foreignCityId = cid;
-        foreignCityName = (a.getAttribute("title") || a.textContent || "").trim();
-        break;
-      }
-      if (!foreignCityId) continue;
 
-      // Per-row dedup using the row's date cell + foreign cityId — every
-      // unique news-feed event has its own date stamp so this disambiguates
-      // pagination, repeated trades from the same player, etc.
+      const linkInfo = [];
+      for (const a of links) {
+        const cid = cityIdFromAnyHref(a);
+        if (!cid) continue;
+        linkInfo.push({
+          cityId: cid,
+          cityName: (a.getAttribute("title") || a.textContent || "").trim(),
+        });
+      }
+      if (linkInfo.length < 2) continue;
+
+      const buyer = linkInfo[0];
+      const seller = linkInfo[1];
+      const buyerOurs = ourIds.has(String(buyer.cityId));
+      const sellerOurs = ourIds.has(String(seller.cityId));
+
+      // Skip intra-account trades — both sides ours, no foreign partner.
+      if (buyerOurs && sellerOurs) continue;
+      // Skip if we recognise neither side (shouldn't happen in our news feed).
+      if (!buyerOurs && !sellerOurs) continue;
+
+      const foreign = sellerOurs ? buyer : seller;
+      const ours = sellerOurs ? seller : buyer;
+      // sellerOurs → foreign fleet bought from us → we sold.
+      // buyerOurs  → our fleet bought from foreign → we bought.
+      const dir = sellerOurs ? "sell" : "buy";
+
       const dateCell = row.querySelector("td.date");
       const dateText = dateCell ? dateCell.textContent.trim() : "";
-      const rowKey = "trd:" + foreignCityId + "|" + dateText;
-      if (processedRows.has(rowKey)) continue;
-      rememberRow(rowKey);
 
-      let hit = await lookupCityId(foreignCityId);
+      // Partner-tracking dedup (matches existing key shape, foreign-side only).
+      const rowKey = "trd:" + foreign.cityId + "|" + dateText;
+      const newPartnerRow = !processedRows.has(rowKey);
+      if (newPartnerRow) rememberRow(rowKey);
+
+      let hit = await lookupCityId(foreign.cityId);
       if (!hit || !hit.avatarId) {
         // Fall back to fetching the island view — runs in the background and
         // updates storage when it lands. We still record an event with what
         // we have so it isn't lost if the fetch fails.
-        hit = await fetchAndCacheIsland(foreignCityId);
+        hit = await fetchAndCacheIsland(foreign.cityId);
       }
-      events.push({
-        avatarId: hit ? hit.avatarId : null,
-        avatarName: hit ? hit.avatarName : "",
-        cityId: foreignCityId,
-        cityName: hit ? hit.cityName : foreignCityName,
-        source: "tradeAdvisor",
-      });
+
+      if (newPartnerRow) {
+        events.push({
+          avatarId: hit ? hit.avatarId : null,
+          avatarName: hit ? hit.avatarName : "",
+          cityId: foreign.cityId,
+          cityName: hit ? hit.cityName : foreign.cityName,
+          source: "tradeAdvisor",
+        });
+      }
+
+      // Receipt extraction. Independent dedup so re-scans only skip rows whose
+      // resource/amount we already stored — avoids losing receipts when the
+      // partner-row dedup fired but the receipt write was lost (e.g. on
+      // a missing localization map at first try).
+      const detail = extractTradeDetails(subj);
+      if (!detail) continue;
+      const ts = parseTimestamp(dateText);
+      if (!ts) continue;
+
+      const myCityName = (ownCityNames && ownCityNames.get(String(ours.cityId))) || ours.cityName;
+      const receipt = {
+        ts,
+        dir,
+        myCityId: ours.cityId,
+        myCityName,
+        otherCityId: foreign.cityId,
+        otherCityName: hit ? (hit.cityName || foreign.cityName) : foreign.cityName,
+        otherAvatarId: hit ? hit.avatarId : null,
+        otherAvatarName: hit ? hit.avatarName : "",
+        resource: detail.resource,
+        amount: detail.amount,
+        pricePerUnit: detail.pricePerUnit,
+        currency: detail.currency,
+      };
+      const rk = "rcpt:" + ts + "|" + dir + "|" + ours.cityId + "|" + foreign.cityId + "|" + detail.resource + "|" + detail.amount;
+      if (processedReceipts.has(rk)) continue;
+      rememberReceipt(rk);
+      receipts.push(receipt);
     }
     if (events.length > 0) await recordTraders(events);
+    if (receipts.length > 0 && globalThis.TradeReceipts) {
+      try {
+        await globalThis.TradeReceipts.persistReceipts(worldName, receipts);
+      } catch (err) {
+        console.warn(TAG, "receipt persist failed:", err);
+      }
+    }
   }
 
   // ---------- view detection / scheduling ----------

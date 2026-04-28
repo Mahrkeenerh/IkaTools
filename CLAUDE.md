@@ -51,7 +51,8 @@ No dev server — load unpacked extension directly from this directory in `chrom
   - `autofinish.js` — Auto-completes buildings when timer < 4m 55s (free finish)
   - `autopirate.js` — Auto-launches pirate raids when idle/unfocused, pirate toggle in game header bar. Pauses during DOM scan phase, not during background fetch phases.
   - `gamenotes.js` — In-game notes toolbar button with floating panel, syncs with popup notes via chrome.storage
-  - `tradedetect.js` — Passive scrape of `militaryAdvisor` (live trade missions, detected via `mission_icon.trade` class) and `tradeAdvisor` "Novinky z měst" feed (rows containing `<br>` inside `ul.resources` — the language-agnostic price-per-unit signal). Resolves news-feed cityIds via cached `island_{world}_{id}` records first, with an AJAX fallback (`?view=island&cityId=X&ajax=1` → parse `updateBackgroundData` → seed cache). Unresolved cityIds stash in `tradePartnersPending_{world}` and retry whenever a new island record lands. Writes `tradePartners_{world}`.
+  - `tradedetect.js` — Passive scrape of `militaryAdvisor` (live trade missions, detected via `mission_icon.trade` class) and `tradeAdvisor` "Novinky z měst" feed (rows containing `<br>` inside `ul.resources` — the language-agnostic price-per-unit signal). Resolves news-feed cityIds via cached `island_{world}_{id}` records first, with an AJAX fallback (`?view=island&cityId=X&ajax=1` → parse `updateBackgroundData` → seed cache). Unresolved cityIds stash in `tradePartnersPending_{world}` and retry whenever a new island record lands. Writes `tradePartners_{world}`. Each market trade row also produces a receipt (resource, amount, price-per-unit, direction) handed to `TradeReceipts.persistReceipts`. Direction is derived from the subject's two cityId links: link 1 = buyer's home, link 2 = seller's city — if our city is the seller it's `sell`, if our city is the buyer it's `buy`. Resource names are mapped via `LocalizationStrings = JSON.parse('…')` from the page's inline script (locale-agnostic).
+  - `tradereceipts.js` — Storage helper for completed-trade receipts (`globalThis.TradeReceipts`). Monthly chunks `tradeReceipts_{world}_{YYYY-MM}` + index `tradeReceiptsIdx_{world}`. Dedup key `ts|dir|myCityId|otherCityId|resource|amount`. 180-day retention matching `tradehistory.js`.
   - `tradehistory.js` — Trade snapshot persistence and history loading (`globalThis.TradeHistory`); loaded in game and in report.html
   - `tradechart.js` — Canvas-based IQR/sparkline chart rendering (`globalThis.TradeChart`); uses `TradeHistory.percentile`
   - `advisor.js` — Advisor toolbar with 7 report modes, data collection, progress bar
@@ -109,6 +110,8 @@ No dev server — load unpacked extension directly from this directory in `chrom
 | `friendList_{world}` / `friendSlots_{world}` | URL world | islandinfo | Friend player ID→name map and slot snapshots |
 | `tradePartners_{world}` | URL world | tradedetect | Trade partner index keyed by avatarId → `{name, lastTradeAt, tradeCount, cities, lastSource}`; consumed by islandinfo (magenta `#E040FB` highlight on city labels + panel rows), minimap/islandfilter (`_tradePartner` flag), and the "Trade partners" filter chip |
 | `tradePartnersPending_{world}` | URL world | tradedetect | Pending cityIds from news-feed events whose owners haven't been resolved yet; retried when new `island_{world}_{id}` records land |
+| `tradeReceipts_{world}_{YYYY-MM}` | URL world | tradereceipts | Monthly chunk of actual completed market trades scraped from the news feed: `{ ts, dir: "sell"\|"buy", myCityId, myCityName, otherCityId, otherCityName, otherAvatarId, otherAvatarName, resource, amount, pricePerUnit, currency }` |
+| `tradeReceiptsIdx_{world}` | URL world | tradereceipts | Index of available receipt months `{chunks: [...], lastTs}` |
 | `museumPartners_{world}` | URL world | museumpartners | Museum treaty partner list `[{id, name}]` |
 | `pirateCityId_{world}` / `pirateCities_{world}` | URL world | autopirate | Pirate city selection and cached city list |
 | `advisorReportData_{world}` | URL world | advisor | Last advisor report data |
@@ -125,7 +128,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 
 - 2-space indentation, double quotes, semicolons
 - IIFEs for content scripts (isolated scope)
-- Shared modules on `globalThis`: `IkUtils`, `MapRender`, `MapFilter`, `FilterRunner`, `IkScanner`, `CustomEval`, `IkFilter` (DevTools power-user alias), `IkData` (query-index read helper), `IkFilterPanel` (match count + coord hook), `inference`, `TradeHistory`, `TradeChart`
+- Shared modules on `globalThis`: `IkUtils`, `MapRender`, `MapFilter`, `FilterRunner`, `IkScanner`, `CustomEval`, `IkFilter` (DevTools power-user alias), `IkData` (query-index read helper), `IkFilterPanel` (match count + coord hook), `inference`, `TradeHistory`, `TradeChart`, `TradeReceipts`
 - camelCase variables/functions, UPPER_SNAKE_CASE constants
 - Arrow functions for callbacks
 
