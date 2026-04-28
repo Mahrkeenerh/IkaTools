@@ -29,9 +29,29 @@
   // (date + foreign cityId for tradeAdvisor; eventId for militaryAdvisor)
   // so paginating or re-scanning never double-counts the same trade.
   const processedRows = new Set();
+  const PROCESSED_ROWS_CAP = 5000;  // hard cap to bound memory across long sessions
   const inFlightFetches = new Map(); // cityId -> Promise (dedup concurrent fetches)
   const FETCH_GAP_MS = 1500;        // throttle gap between sequential resolves
   let lastFetchAt = 0;
+
+  function rememberRow(key) {
+    if (processedRows.size >= PROCESSED_ROWS_CAP) {
+      // Drop the oldest insertion — Sets preserve insertion order.
+      const it = processedRows.values().next();
+      if (!it.done) processedRows.delete(it.value);
+    }
+    processedRows.add(key);
+  }
+
+  // Build a single cityIdIndex entry from an island record + city.
+  function indexEntryFromCity(island, city) {
+    return {
+      avatarId: String(city.ownerId || ""),
+      avatarName: city.ownerName || "",
+      cityName: city.name || "",
+      islandId: island.id,
+    };
+  }
 
   // ---------- helpers ----------
 
@@ -75,12 +95,7 @@
       if (!island || !Array.isArray(island.cities)) continue;
       for (const city of island.cities) {
         if (!city || !city.id) continue;
-        idx.set(String(city.id), {
-          avatarId: String(city.ownerId || ""),
-          avatarName: city.ownerName || "",
-          cityName: city.name || "",
-          islandId: island.id,
-        });
+        idx.set(String(city.id), indexEntryFromCity(island, city));
       }
     }
     cityIdIndex = idx;
@@ -119,12 +134,8 @@
         // so the immediate resolveTraders() call sees the new entries.
         if (cityIdIndex) {
           for (const c of island.cities) {
-            cityIdIndex.set(String(c.id), {
-              avatarId: String(c.ownerId || ""),
-              avatarName: c.ownerName || "",
-              cityName: c.name || "",
-              islandId: island.id,
-            });
+            if (!c || !c.id) continue;
+            cityIdIndex.set(String(c.id), indexEntryFromCity(island, c));
           }
         }
         return cityIdIndex ? cityIdIndex.get(cityId) || null : null;
@@ -273,16 +284,15 @@
   }
 
   // Try to resolve any pending cityIds against the (possibly newly-populated)
-  // cityId index. Called after the index is rebuilt — e.g. after islandinfo.js
-  // stores a fresh island.
+  // cityId index. Called after the index is updated — e.g. after islandinfo.js
+  // stores a fresh island. Assumes cityIdIndex is already current; no rebuild here.
   async function resolvePending() {
     const data = await chrome.storage.local.get([KEY_PENDING, KEY_TRADERS]);
     const pending = data[KEY_PENDING] || {};
     if (Object.keys(pending).length === 0) return;
     const traders = data[KEY_TRADERS] || {};
 
-    cityIdIndex = null; // force rebuild
-    await buildCityIdIndex();
+    if (!cityIdIndex) await buildCityIdIndex();
 
     let changed = false;
     for (const cityId of Object.keys(pending)) {
@@ -370,7 +380,7 @@
       const evId = readEventId(row);
       const rowKey = "mil:" + (evId || (foreign.cityId + "|" + foreign.playerName));
       if (processedRows.has(rowKey)) continue;
-      processedRows.add(rowKey);
+      rememberRow(rowKey);
 
       // Resolve avatarId via cached islands (player name alone isn't unique).
       // Fall back to AJAX fetch when missing — we want a stable avatarId key.
@@ -426,7 +436,7 @@
       const dateText = dateCell ? dateCell.textContent.trim() : "";
       const rowKey = "trd:" + foreignCityId + "|" + dateText;
       if (processedRows.has(rowKey)) continue;
-      processedRows.add(rowKey);
+      rememberRow(rowKey);
 
       let hit = await lookupCityId(foreignCityId);
       if (!hit || !hit.avatarId) {
@@ -484,20 +494,41 @@
   // Fire one scan in case we landed directly on the view.
   scheduleScan();
 
-  // Re-run when game swaps templates via AJAX. We don't need to observe deeply
-  // — scheduleScan() is cheap and self-dedups via tableSignature().
-  const obs = new MutationObserver(() => scheduleScan());
+  // Re-run when game swaps templates via AJAX. The observer is on body+subtree
+  // (the advisor tables can land in different containers), so the callback
+  // MUST stay cheap — bail synchronously if no relevant container is in view.
+  // Calling scheduleScan() unconditionally on every mutation is what was
+  // slowing the game down: it spawned timers nonstop while the user played.
+  function hasRelevantTable() {
+    return !!(document.getElementById("js_MilitaryMovementsFleetMovementsTable")
+           || document.getElementById("inboxCity"));
+  }
+  const obs = new MutationObserver(() => {
+    if (scanDebounce) return;            // already queued
+    if (!hasRelevantTable()) return;     // advisor not open — nothing to do
+    scheduleScan();
+  });
   obs.observe(document.body, { childList: true, subtree: true });
 
-  // When a new island record lands in storage, retry pending cityId resolutions.
+  // When an island record lands in storage, update the cached cityId index
+  // incrementally (instead of invalidating + rebuilding via get(null) which
+  // is expensive on long sessions with thousands of stored islands), then
+  // retry pending cityId resolutions.
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+    let touched = false;
     for (const key of Object.keys(changes)) {
-      if (key.startsWith(ISLAND_PREFIX)) {
-        cityIdIndex = null; // invalidate cached index
-        resolvePending();
-        break;
+      if (!key.startsWith(ISLAND_PREFIX)) continue;
+      const island = changes[key].newValue;
+      if (!island || !Array.isArray(island.cities)) continue;
+      if (cityIdIndex) {
+        for (const city of island.cities) {
+          if (!city || !city.id) continue;
+          cityIdIndex.set(String(city.id), indexEntryFromCity(island, city));
+        }
       }
+      touched = true;
     }
+    if (touched) resolvePending();
   });
 })();
