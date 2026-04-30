@@ -649,6 +649,19 @@
     restoreState(data.pirateState);
     if (enabled && pirateCityId) start();
     injectPirateToggle();
+
+    // Complete a pending manual fortress open requested before the city-switch reload
+    chrome.storage.local.get("pendingPirateFortress", (d) => {
+      const pending = d.pendingPirateFortress;
+      if (!pending) return;
+      chrome.storage.local.remove("pendingPirateFortress");
+      // Ignore stale intents (>15s old) so abandoned tabs don't surprise the user later
+      if (Date.now() - (pending.ts || 0) > 15000) return;
+      if (location.search.includes("cityId=" + pending.cityId)) {
+        // Small delay so the page's own AJAX handler is ready
+        setTimeout(() => navigate("?view=pirateFortress&activeTab=tabBootyQuest&cityId=" + pending.cityId + "&position=17"), 400);
+      }
+    });
   });
 
   // --- Messages from popup ---
@@ -665,6 +678,19 @@
     }
     if (msg.type === "pirate-aggressive-toggle") {
       aggressive = msg.enabled;
+    }
+    if (msg.type === "pirate-open-fortress") {
+      const cityId = msg.cityId || pirateCityId;
+      if (!cityId) return;
+      if (location.search.includes("cityId=" + cityId)) {
+        navigate("?view=pirateFortress&activeTab=tabBootyQuest&cityId=" + cityId + "&position=17");
+      } else {
+        // City switch triggers a full page reload — persist intent so the
+        // fresh content script can complete the fortress open after init.
+        chrome.storage.local.set({ pendingPirateFortress: { cityId, ts: Date.now() } }, () => {
+          navigate("?view=city&cityId=" + cityId);
+        });
+      }
     }
     if (msg.type === "pirate-config") {
       if (msg.cityId !== undefined) pirateCityId = msg.cityId;

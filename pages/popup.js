@@ -848,6 +848,20 @@
     }
   });
 
+  $("pirate-open-btn").addEventListener("click", () => {
+    const cityId = parseInt(pirateCity.value, 10) || null;
+    if (!cityId) {
+      alert("Select a pirate city first.");
+      return;
+    }
+    if (!ikariamTabId) {
+      alert("No active Ikariam tab.");
+      return;
+    }
+    chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-open-fortress", cityId }).catch(() => {});
+    chrome.tabs.update(ikariamTabId, { active: true });
+  });
+
   function sendPirateHours() {
     const s = pirateStart.value !== "" ? parseInt(pirateStart.value, 10) : null;
     const e = pirateEnd.value !== "" ? parseInt(pirateEnd.value, 10) : null;
