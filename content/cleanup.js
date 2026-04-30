@@ -34,6 +34,17 @@
 
     document.querySelectorAll("li.ambrosia, li.ambrosiaNoSpin").forEach(el => el.remove());
 
+    // Pirate fortress slot (always position 17 — built fortress or empty sea-based ground)
+    const fortressSlot = document.querySelector("#position17.pirateFortress, #position17.buildingGround.sea");
+    if (fortressSlot) {
+      fortressSlot.remove();
+      document.getElementById("js_CityPosition17Scroll")?.remove();
+      document.getElementById("js_CityPosition17Countdown")?.remove();
+    }
+
+    document.getElementById("pirateFortressBackground")?.remove();
+    document.getElementById("pirateFortressShip")?.remove();
+
     // Hide instead of remove — game timers keep referencing hidden fields inside these
     // "bohů" = Czech for "gods" (ambrosia/premium timer label) — NOTE: language-dependent,
     // also matches English "gods" and the happyHour class as a fallback
