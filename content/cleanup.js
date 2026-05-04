@@ -34,16 +34,24 @@
 
     document.querySelectorAll("li.ambrosia, li.ambrosiaNoSpin").forEach(el => el.remove());
 
-    // Pirate fortress slot (always position 17 — built fortress or empty sea-based ground)
+    // Pirate fortress slot (always position 17 — built fortress or empty sea-based ground).
+    // Hide instead of remove — the game's per-state DOM update handler walks position
+    // and pirateFortress* elements on every refresh, including after auto-finish; if any
+    // are missing the handler throws and aborts mid-update, leaving building visuals
+    // (e.g. the just-finished port's level) stale until manual reload.
     const fortressSlot = document.querySelector("#position17.pirateFortress, #position17.buildingGround.sea");
     if (fortressSlot) {
-      fortressSlot.remove();
-      document.getElementById("js_CityPosition17Scroll")?.remove();
-      document.getElementById("js_CityPosition17Countdown")?.remove();
+      fortressSlot.style.display = "none";
+      const s17Scroll = document.getElementById("js_CityPosition17Scroll");
+      if (s17Scroll) s17Scroll.style.display = "none";
+      const s17Countdown = document.getElementById("js_CityPosition17Countdown");
+      if (s17Countdown) s17Countdown.style.display = "none";
     }
 
-    document.getElementById("pirateFortressBackground")?.remove();
-    document.getElementById("pirateFortressShip")?.remove();
+    const fortressBg = document.getElementById("pirateFortressBackground");
+    if (fortressBg) fortressBg.style.display = "none";
+    const fortressShip = document.getElementById("pirateFortressShip");
+    if (fortressShip) fortressShip.style.display = "none";
 
     // Hide instead of remove — game timers keep referencing hidden fields inside these
     // "bohů" = Czech for "gods" (ambrosia/premium timer label) — NOTE: language-dependent,
