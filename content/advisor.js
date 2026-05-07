@@ -407,6 +407,10 @@
   // Parse spy reports from safehouse Reports tab (tabReports) into an array.
   // Each report has header metadata + detail content (units or resources).
   const SPY_RES_MAP = { icon_wood: "wood", icon_wine: "wine", icon_marble: "marble", icon_glass: "crystal", icon_sulfur: "sulfur" };
+  // Resources are always listed in this fixed order in the resourcesTable —
+  // used as a fallback when the icon URL is content-hashed (CDN) rather than
+  // the legacy icon_* path.
+  const SPY_RES_ORDER = ["wood", "wine", "marble", "crystal", "sulfur"];
   // Extract the next unseen paginator offset from a spy reports page.
   // The paginator only shows adjacent page links, so we walk iteratively.
   function getNextSpyOffset(doc, seen) {
@@ -480,17 +484,21 @@
         if (resTable) {
           report.type = "resources";
           report.resources = {};
+          let dataRowIdx = 0;
           for (const tr of resTable.querySelectorAll("tr")) {
             const img = tr.querySelector("td.unitname img");
             const countCell = tr.querySelector("td.count");
             if (!img || !countCell) continue;
+            const count = parseInt(countCell.textContent.replace(/[\s,.\u00a0]/g, ""), 10) || 0;
+            // Try legacy icon_* path first, then fall back to row position.
             const src = img.getAttribute("src") || "";
-            for (const [frag, key] of Object.entries(SPY_RES_MAP)) {
-              if (src.includes(frag)) {
-                report.resources[key] = parseInt(countCell.textContent.replace(/[\s,.\u00a0]/g, ""), 10) || 0;
-                break;
-              }
+            let key = null;
+            for (const [frag, k] of Object.entries(SPY_RES_MAP)) {
+              if (src.includes(frag)) { key = k; break; }
             }
+            if (!key && dataRowIdx < SPY_RES_ORDER.length) key = SPY_RES_ORDER[dataRowIdx];
+            if (key) report.resources[key] = count;
+            dataRowIdx++;
           }
         }
         // Units / ships
@@ -1652,11 +1660,38 @@
       if (!log[r.id]) {
         log[r.id] = r;
         added++;
-      } else if (r.success !== undefined && log[r.id].success === undefined) {
-        // Backfill success flag into legacy entries that pre-date the field.
-        log[r.id].success = r.success;
-        updated++;
+        continue;
       }
+      const existing = log[r.id];
+      let changed = false;
+      // Backfill success flag into legacy entries that pre-date the field.
+      if (r.success !== undefined && existing.success === undefined) {
+        existing.success = r.success;
+        changed = true;
+      }
+      // Backfill detail fields when the prior parse missed them (e.g. older
+      // parser couldn't recognise content-hashed resource icons). Only fill
+      // when missing — never overwrite, in case the user already curated.
+      if (r.type && !existing.type) { existing.type = r.type; changed = true; }
+      if (r.resources && Object.keys(r.resources).length > 0 &&
+          (!existing.resources || Object.keys(existing.resources).length === 0)) {
+        existing.resources = r.resources;
+        if (!existing.type) existing.type = "resources";
+        changed = true;
+      }
+      if (r.units && Object.keys(r.units).length > 0 &&
+          (!existing.units || Object.keys(existing.units).length === 0)) {
+        existing.units = r.units;
+        if (!existing.type) existing.type = "units";
+        changed = true;
+      }
+      if (r.ships && Object.keys(r.ships).length > 0 &&
+          (!existing.ships || Object.keys(existing.ships).length === 0)) {
+        existing.ships = r.ships;
+        if (!existing.type) existing.type = "units";
+        changed = true;
+      }
+      if (changed) updated++;
     }
     if (added > 0 || updated > 0) {
       await new Promise(r => chrome.storage.local.set({ [storageKey]: log }, r));

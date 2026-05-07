@@ -2723,7 +2723,7 @@
           <th>Result</th>
           <th class="right">Agents</th>
           <th>Details</th>
-          ${showTrash ? "" : "<th></th>"}
+          <th></th>
           <th></th>
         </tr>`;
 
@@ -2778,6 +2778,7 @@
               <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
               <td class="spy-details" style="font-size:12px;">${details}</td>
               <td><button class="spy-log-restore" data-id="${r.id}" title="Restore report">restore</button></td>
+              <td><button class="spy-log-purge" data-id="${r.id}" title="Delete permanently — entry can be re-fetched on next spy pass">delete</button></td>
             `;
           } else {
             const lootCell = r.type === "resources"
@@ -2857,6 +2858,18 @@
         const id = btn.dataset.id;
         if (!log[id]) return;
         delete log[id].deleted;
+        chrome.storage.local.set({ [storageKey]: log });
+        buildRows();
+      });
+
+      // Permanent-delete handler — removes the entry entirely so it can be
+      // re-fetched (and re-parsed) on the next spy pass.
+      wrap.addEventListener("click", (e) => {
+        const btn = e.target.closest(".spy-log-purge");
+        if (!btn) return;
+        const id = btn.dataset.id;
+        if (!log[id]) return;
+        delete log[id];
         chrome.storage.local.set({ [storageKey]: log });
         buildRows();
       });
