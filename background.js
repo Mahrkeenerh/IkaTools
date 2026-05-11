@@ -1,5 +1,6 @@
 // Service worker — routes messages between content script and offscreen document,
-// and runs long-running CT scan fetch loops in background (survives page navigation).
+// runs long-running CT scan fetch loops in background, and fires scheduled
+// miracle activations via chrome.alarms (survives service-worker restarts).
 
 // ============================================================================
 // Background CT scan — fetch loops that persist across page navigations
@@ -847,6 +848,67 @@ async function runBgScan(opts) {
 }
 
 // ============================================================================
+// Miracle scheduler — fires `?action=CityScreen&function=activateWonder` at
+// the user's chosen time. Alarm name === storage key so the listener can
+// recover everything after a service-worker restart.
+// ============================================================================
+
+const MIRACLE_KEY_PREFIX = "miracleSchedule_";
+
+async function fireMiracle(storageKey) {
+  const stored = await chrome.storage.local.get(storageKey);
+  const rec = stored[storageKey];
+  if (!rec || !rec.origin || !rec.cityId || !rec.position) {
+    await chrome.storage.local.remove(storageKey);
+    return;
+  }
+  // Mirror the game's ajaxHandlerCall — same query params plus &ajax=1 and
+  // the XHR header. The activate endpoint has no CSRF actionRequest token,
+  // so a credentialed GET is sufficient.
+  const url = `${rec.origin}/?action=CityScreen&cityId=${rec.cityId}&function=activateWonder&position=${rec.position}&ajax=1`;
+  let ok = false;
+  let error = null;
+  try {
+    const resp = await fetch(url, {
+      credentials: "include",
+      headers: { "X-Requested-With": "XMLHttpRequest" },
+    });
+    ok = resp.ok;
+    if (!ok) error = `HTTP ${resp.status}`;
+  } catch (e) {
+    error = e && e.message ? e.message : String(e);
+  }
+
+  // Always clear the schedule entry after firing — the alarm is one-shot
+  // and the UI relies on the missing key to flip back to idle.
+  await chrome.storage.local.remove(storageKey);
+
+  // Keep a small ring-buffer of recent fires per world so the user can
+  // verify what happened from devtools / popup later. 20 entries cap.
+  const world = rec.world || "unknown";
+  const logKey = "miracleScheduleLog_" + world;
+  const logData = await chrome.storage.local.get(logKey);
+  const log = Array.isArray(logData[logKey]) ? logData[logKey] : [];
+  log.unshift({
+    firedAt: Date.now(),
+    fireAt: rec.fireAt,
+    scheduledAt: rec.scheduledAt,
+    cityId: rec.cityId,
+    position: rec.position,
+    wonderName: rec.wonderName || "",
+    ok,
+    error,
+  });
+  if (log.length > 20) log.length = 20;
+  await chrome.storage.local.set({ [logKey]: log });
+}
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (!alarm || !alarm.name || !alarm.name.startsWith(MIRACLE_KEY_PREFIX)) return;
+  fireMiracle(alarm.name).catch((e) => console.error("[miracle] fire failed:", e));
+});
+
+// ============================================================================
 // Original message routing
 // ============================================================================
 
@@ -906,6 +968,36 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     }
     chrome.tabs.create(opts);
     return;
+  }
+
+  if (msg.type === "miracle-schedule") {
+    const rec = msg.record;
+    if (!rec || !rec.world || !rec.cityId || !rec.position || !rec.fireAt || !rec.origin) {
+      sendResponse({ ok: false, error: "Invalid record" });
+      return;
+    }
+    const key = MIRACLE_KEY_PREFIX + rec.world + "_" + rec.cityId;
+    (async () => {
+      await chrome.alarms.clear(key);
+      await chrome.storage.local.set({ [key]: rec });
+      await chrome.alarms.create(key, { when: rec.fireAt });
+      sendResponse({ ok: true });
+    })().catch((e) => sendResponse({ ok: false, error: e && e.message ? e.message : String(e) }));
+    return true;
+  }
+
+  if (msg.type === "miracle-cancel") {
+    if (!msg.world || !msg.cityId) {
+      sendResponse({ ok: false, error: "Missing world/cityId" });
+      return;
+    }
+    const key = MIRACLE_KEY_PREFIX + msg.world + "_" + msg.cityId;
+    (async () => {
+      await chrome.alarms.clear(key);
+      await chrome.storage.local.remove(key);
+      sendResponse({ ok: true });
+    })().catch((e) => sendResponse({ ok: false, error: e && e.message ? e.message : String(e) }));
+    return true;
   }
 
   if (msg.type === "solve-captcha") {
