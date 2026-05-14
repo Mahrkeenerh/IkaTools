@@ -163,66 +163,22 @@ globalThis.IkUtils = (() => {
     return result;
   }
 
-  // Build a lookup index from spyLog_{world} keyed by cityId, by
-  // coord+player+city, and by island coord (max timestamp across all looted
-  // cities). Skips entries without a `looted` timestamp or marked as `deleted`.
-  async function getLootedIndex(worldName) {
-    const w = worldName || getUrlWorldName() || "unknown";
-    const key = "spyLog_" + w;
-    const data = await chrome.storage.local.get(key);
-    const log = data[key] || {};
-    const byCityId = new Map();
-    const byCoordPlayerCity = new Map();
-    const byCoord = new Map();
-    for (const id of Object.keys(log)) {
-      const r = log[id];
-      if (!r || !r.looted || r.deleted) continue;
-      const ts = r.looted;
-      if (r.targetCityId) {
-        const cid = String(r.targetCityId);
-        if ((byCityId.get(cid) || 0) < ts) byCityId.set(cid, ts);
-      }
-      if (r.targetCoords && r.targetPlayer && r.targetCity) {
-        const k = r.targetCoords + "|" + r.targetPlayer.toLowerCase() + "|" + r.targetCity.toLowerCase();
-        if ((byCoordPlayerCity.get(k) || 0) < ts) byCoordPlayerCity.set(k, ts);
-      }
-      if (r.targetCoords) {
-        if ((byCoord.get(r.targetCoords) || 0) < ts) byCoord.set(r.targetCoords, ts);
-      }
+  // Scan inline scripts for the page's own-city ID list. Returns a Set of
+  // cityId strings, or null if no `ownCity` records were found (which means
+  // either the page hasn't finished injecting its inline data yet OR we're
+  // on a context that doesn't carry relatedCityData). Callers that act on
+  // ownership should treat null as "unknown" and bail.
+  function getOwnCityIds() {
+    const set = new Set();
+    for (const script of document.querySelectorAll("script")) {
+      const text = script.textContent;
+      if (!text || text.indexOf("ownCity") === -1) continue;
+      const re = /"city_(\d+)"\s*:\s*\{[^}]*"relationship"\s*:\s*"ownCity"/g;
+      let m;
+      while ((m = re.exec(text)) !== null) set.add(m[1]);
     }
-    return { byCityId, byCoordPlayerCity, byCoord };
+    return set.size > 0 ? set : null;
   }
 
-  // Look up the looted timestamp for a single city given the index from
-  // getLootedIndex. Prefers cityId match (stable across renames), falls back
-  // to coord+player+city for legacy spy log entries that lack targetCityId.
-  function lookupLooted(index, cityId, coords, playerName, cityName) {
-    if (!index) return 0;
-    if (cityId) {
-      const ts = index.byCityId.get(String(cityId));
-      if (ts) return ts;
-    }
-    if (coords && playerName && cityName) {
-      const k = coords + "|" + String(playerName).toLowerCase() + "|" + String(cityName).toLowerCase();
-      const ts = index.byCoordPlayerCity.get(k);
-      if (ts) return ts;
-    }
-    return 0;
-  }
-
-  // Format a "looted X ago" duration string. Returns a short form ("5d", "3h", "20m").
-  function formatLootedAge(ts) {
-    if (!ts) return "";
-    const ms = Date.now() - ts;
-    if (ms < 0) return "just now";
-    const mins = Math.floor(ms / 60000);
-    if (mins < 1) return "just now";
-    if (mins < 60) return mins + "m ago";
-    const hrs = Math.floor(mins / 60);
-    if (hrs < 24) return hrs + "h ago";
-    const days = Math.floor(hrs / 24);
-    return days + "d ago";
-  }
-
-  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems, parseBackgroundData, getLootedIndex, lookupLooted, formatLootedAge };
+  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems, parseBackgroundData, getOwnCityIds };
 })();

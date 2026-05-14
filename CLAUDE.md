@@ -59,6 +59,8 @@ No dev server — load unpacked extension directly from this directory in `chrom
   - `advisor.js` — Advisor toolbar with 7 report modes, data collection, progress bar
   - `upgradeinfo.js` — Injects missing-resource amounts onto building upgrade panels
   - `winetimer.js` — Shows wine stock duration in the resource bar
+  - `citymarks.js` — Per-city `{lootable, looted, empty}` marking store (`globalThis.CityMarks`). Owns `cityMarks_{world}` storage, the 3-button widget factory `CityMarks.createWidget(cityId)`, and the one-time migrations from legacy `spyLog[*].looted` flags and `mapFilters` chip types. Loaded second (right after utils.js) so every consumer sees the same API.
+  - `battlereport.js` — Watches for the singular battle report overlay (`#militaryAdvisorReportView`); reads attacker+defender cityIds from the `.attacker`/`.defender` row links, skips own cityIds via `relatedCityData[*].relationship === "ownCity"` scraped from inline scripts, and injects a "Target:" row with the CityMarks widget after the defender row.
 - `pages/` — Extension UI pages
   - `popup.html` / `popup.js` — Extension popup with Maps / CT / Pirate / Notes / Settings tabs. Maps tab triggers scans + shows gallery; CT tab shows last scan results with live alliance filter.
   - `report.html` / `report.js` — Advisor report page: multi-city data summary, trading history charts
@@ -99,6 +101,8 @@ No dev server — load unpacked extension directly from this directory in `chrom
 | `ctScan_{world}` | URL world | background CT phase | Last CT scan result set (players, ctPlayers, allyCounts, timestamp, allyFilter, ownExcluded) |
 | `cityData_{world}_{cityId}` | URL world | background cities phase | Per-city building layout from `?view=city&cityId=X`: id, name, ownerId/Name, islandId + coords, phase, isCapital, buildings[{pos, type, level, groundId, constructing?, completeAt?}], timestamp. Works on any cityId (foreign cities included — server doesn't gate the view) |
 | `spyLog_{world}` | URL world | spylog | Additive archive of espionage reports (units + resources), keyed by report ID |
+| `cityMarks_{world}` | URL world | citymarks | Per-city target marking keyed by cityId: `{ [cityId]: { state, ts } }` where state ∈ {`lootable`, `looted`, `empty`}. Set from spy log table, battle report (`#militaryAdvisorReportView`), and island sidebar info panel via `CityMarks.createWidget(cityId)`. One-time migrated from legacy `spyLog[*].looted` flags (guarded by `cityMarksMigrated_{world}`). Filter chips (markLootable/markLooted/markEmpty/markUnmarked) read it; minimap/islandfilter/islandinfo enrich islands with `_mark` + `_looted` (the latter only set when state==="looted", kept for legacy filter aliases) |
+| `cityMarksMigrated_{world}` / `cityMarksFilterChipsMigrated` | URL world / global | citymarks | One-time migration flags — presence means migration already ran |
 | `mapIndex` | global | CT orchestrator | Gallery ordering (newest first) |
 | `mapFilters` | global | filter panel | Filter config (groups, ops, enabled) |
 | `customJsPresets` | global | filter panel | Saved JS preset chips `[{id, name, code}]` |

@@ -11,7 +11,7 @@
   let filterConfig = null;
   let ctPlayerIds = null; // Set of ownerIds with an available CT
   let ctCheckedIds = null; // Set of ownerIds actually checked in last CT scan
-  let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
+  let markIndex = null; // {byCityId: Map<cid, {state, ts}>} from CityMarks
   let traderIds = new Set(); // avatarIds of recent trade partners
   let virtualCities = null; // array indexed by position; null entries = buildplace
   let tilesObserver = null;
@@ -49,8 +49,13 @@
     }
   }
 
-  async function loadLootedData() {
-    lootedIndex = await IkUtils.getLootedIndex();
+  async function loadMarkData() {
+    if (globalThis.CityMarks) {
+      await CityMarks.migrate();
+      markIndex = await CityMarks.getIndex();
+    } else {
+      markIndex = { byCityId: new Map() };
+    }
   }
 
   async function loadTraderData() {
@@ -127,7 +132,9 @@
       const place = parseScore(sc.place);
       const allyTag = c.ownerAllyTag || "";
       const isPiracy = !!(c.actions && c.actions.piracy_raid);
-      const looted = IkUtils.lookupLooted(lootedIndex, c.id, coords, c.ownerName, c.name);
+      const markEntry = markIndex && c.id != null ? markIndex.byCityId.get(String(c.id)) : null;
+      const markState = markEntry ? markEntry.state : null;
+      const looted = markState === "looted" ? (markEntry.ts || 0) : 0;
 
       result.push({
         // Island-level fields (shared across all cities on this island)
@@ -157,6 +164,7 @@
         }],
         _ctAvailable: ctPlayerIds ? ctPlayerIds.has(ownerId) : false,
         _ctChecked: ctCheckedIds ? ctCheckedIds.has(ownerId) : false,
+        _mark: markState,
         _looted: looted,
         _tradePartner: traderIds.has(ownerId),
       });
@@ -252,7 +260,7 @@
     ]);
     filterConfig = data.mapFilters || null;
     await loadCtData();
-    await loadLootedData();
+    await loadMarkData();
     await loadTraderData();
     virtualCities = null;
 
@@ -348,8 +356,8 @@
         applyDimming();
       });
     }
-    if (changes["spyLog_" + worldName]) {
-      loadLootedData().then(async () => {
+    if (changes["cityMarks_" + worldName]) {
+      loadMarkData().then(async () => {
         virtualCities = null;
         FilterRunner.invalidateAll();
         await refreshCustomResults();

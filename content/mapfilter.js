@@ -41,9 +41,11 @@ globalThis.MapFilter = (() => {
     { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
     { type: "armyMin", value: null, label: "Player army >=", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
     { type: "tradePartner", value: true, label: "Trade partners", color: "#E040FB", group: "Players" },
-    // Spy log — independent of full scan, no requiresRich
-    { type: "looted", value: true, label: "Looted", color: "#E04444", group: "Spy" },
-    { type: "notLooted", value: true, label: "Not looted", color: "#5ab87a", group: "Spy" },
+    // City marks — manual {lootable, looted, empty} per-city tags, independent of full scan
+    { type: "markLootable", value: true, label: "Lootable", color: "#5ab87a", group: "Marks" },
+    { type: "markLooted", value: true, label: "Looted", color: "#E04444", group: "Marks" },
+    { type: "markEmpty", value: true, label: "Empty", color: "#9aa0a8", group: "Marks" },
+    { type: "markUnmarked", value: true, label: "Unmarked", color: "#5a78a8", group: "Marks" },
   ];
 
   function matchFilter(isl, filter, ctx) {
@@ -77,8 +79,13 @@ globalThis.MapFilter = (() => {
         return (isl._maxArmy || 0) >= n;
       }
       case "tradePartner": return !!isl._tradePartner;
-      case "looted": return !!isl._looted;
-      case "notLooted": return !isl._looted;
+      case "markLootable": return isl._mark === "lootable";
+      case "markLooted": return isl._mark === "looted";
+      case "markEmpty": return isl._mark === "empty";
+      case "markUnmarked": return !isl._mark;
+      // Legacy aliases — pre-multi-state filter configs may still carry these.
+      case "looted": return isl._mark === "looted";
+      case "notLooted": return isl._mark !== "looted";
       case "customJs": {
         if (!ctx || !ctx.presetResults) return false;
         const presetMap = ctx.presetResults.get(filter.value);
@@ -146,7 +153,8 @@ globalThis.MapFilter = (() => {
 //   _players         Array<{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, trader, cityIds, looted}>
 //   _ctAvailable     boolean
 //   _ctChecked       boolean
-//   _looted          number          (timestamp of last looted spy report, 0 if never)
+//   _looted          number          (timestamp of last "looted" mark, 0 otherwise — kept for legacy filter use)
+//   _mark            string|null     ("lootable" | "looted" | "empty" | null)
 //
 // Examples:
 //   IkFilter.set(i => i._allyTags && i._allyTags.has("-DR-"))

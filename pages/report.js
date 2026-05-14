@@ -2656,9 +2656,23 @@
     if (!urlWorld) return;
 
     const storageKey = `spyLog_${urlWorld}`;
-    chrome.storage.local.get(storageKey, (data) => {
+    const marksKey = `cityMarks_${urlWorld}`;
+    if (globalThis.CityMarks) CityMarks.migrate(urlWorld);
+    chrome.storage.local.get([storageKey, marksKey], (data) => {
       const log = data[storageKey];
       if (!log || Object.keys(log).length === 0) return;
+      let marks = data[marksKey] || {};
+
+      function markState(cityId) {
+        if (cityId == null) return null;
+        const m = marks[String(cityId)];
+        return m ? m.state : null;
+      }
+      function markTs(cityId) {
+        if (cityId == null) return 0;
+        const m = marks[String(cityId)];
+        return m ? (m.ts || 0) : 0;
+      }
 
       let showTrash = false;
 
@@ -2765,7 +2779,9 @@
               : "—";
 
           if (r.type === "units") tr.classList.add("spy-military");
-          if (r.looted) tr.classList.add("spy-looted");
+          const state = markState(r.targetCityId);
+          if (state === "looted") tr.classList.add("spy-looted");
+          if (state) tr.classList.add(`spy-mark-${state}`);
 
           if (showTrash) {
             tr.innerHTML = `
@@ -2781,9 +2797,7 @@
               <td><button class="spy-log-purge" data-id="${r.id}" title="Delete permanently — entry can be re-fetched on next spy pass">delete</button></td>
             `;
           } else {
-            const lootCell = r.type === "resources"
-              ? `<button class="spy-log-loot${r.looted ? " looted" : ""}" data-id="${r.id}" title="${r.looted ? "Unmark" : "Mark as looted"}">${r.looted ? "✓" : "💰"}</button>${r.looted ? `<span class="spy-loot-time" title="${new Date(r.looted).toLocaleString()}">${timeAgo(r.looted)}</span>` : ""}`
-              : "";
+            const ageText = state === "looted" ? CityMarks.formatAge(markTs(r.targetCityId)) : "";
             tr.innerHTML = `
               <td style="white-space:nowrap;font-size:12px;">${r.date || "—"}</td>
               <td>${r.targetPlayer || "—"}</td>
@@ -2793,9 +2807,20 @@
               <td>${resultShort}</td>
               <td class="right">${r.agentsLost != null ? `${r.agentsLost}/${r.agentsDeployed}` : "—"}</td>
               <td class="spy-details" style="font-size:12px;">${details}</td>
-              <td class="spy-loot-cell">${lootCell}</td>
+              <td class="spy-mark-cell"></td>
               <td><button class="spy-log-del" data-id="${r.id}" title="Delete report">del</button></td>
             `;
+            const markCell = tr.querySelector(".spy-mark-cell");
+            if (r.targetCityId != null && globalThis.CityMarks) {
+              markCell.appendChild(CityMarks.createWidget(r.targetCityId, { worldName: urlWorld }));
+              if (ageText) {
+                const ts = document.createElement("span");
+                ts.className = "spy-loot-time";
+                ts.textContent = " " + ageText;
+                ts.title = new Date(markTs(r.targetCityId)).toLocaleString();
+                markCell.appendChild(ts);
+              }
+            }
           }
           tbody.appendChild(tr);
         }
@@ -2808,36 +2833,14 @@
         buildRows();
       });
 
-      // Looted toggle handler
-      wrap.addEventListener("click", (e) => {
-        const btn = e.target.closest(".spy-log-loot");
-        if (!btn) return;
-        const id = btn.dataset.id;
-        const entry = log[id];
-        if (!entry) return;
-        const tr = btn.closest("tr");
-        const cell = btn.closest(".spy-loot-cell");
-        if (entry.looted) {
-          delete entry.looted;
-          btn.classList.remove("looted");
-          btn.textContent = "💰";
-          btn.title = "Mark as looted";
-          tr.classList.remove("spy-looted");
-          const ts = cell.querySelector(".spy-loot-time");
-          if (ts) ts.remove();
-        } else {
-          entry.looted = Date.now();
-          btn.classList.add("looted");
-          btn.textContent = "✓";
-          btn.title = "Unmark";
-          tr.classList.add("spy-looted");
-          const ts = document.createElement("span");
-          ts.className = "spy-loot-time";
-          ts.textContent = timeAgo(entry.looted);
-          ts.title = new Date(entry.looted).toLocaleString();
-          cell.appendChild(ts);
-        }
-        chrome.storage.local.set({ [storageKey]: log });
+      // Re-render rows when marks change from another surface (battle report,
+      // island sidebar). The widget itself updates its own button state via a
+      // dedicated listener; this listener handles the row class + age text.
+      chrome.storage.onChanged.addListener((changes, area) => {
+        if (area !== "local") return;
+        if (!changes[marksKey]) return;
+        marks = changes[marksKey].newValue || {};
+        buildRows();
       });
 
       // Soft-delete handler

@@ -492,7 +492,7 @@
   let allianceIndex = null;
   let allianceColorMap = {};
   let queryIndex = null; // derived rich-data blob (queryIndex_{world})
-  let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
+  let markIndex = null; // {byCityId: Map<cid, {state, ts}>} from CityMarks
   let traderIds = new Set(); // avatarIds of recent trade partners
 
   async function loadAllianceIndex() {
@@ -509,8 +509,14 @@
     islandsByCoord = null; // invalidate dim-path lookup
   }
 
-  async function loadLootedIndex() {
-    lootedIndex = await IkUtils.getLootedIndex();
+  async function loadMarkIndex() {
+    if (globalThis.CityMarks) {
+      await CityMarks.migrate();
+      await CityMarks.migrateFilterChips();
+      markIndex = await CityMarks.getIndex();
+    } else {
+      markIndex = { byCityId: new Map() };
+    }
   }
 
   async function loadTraders() {
@@ -563,10 +569,34 @@
   // them without storage round-trips. Underscore fields are conventional
   // "computed-by-enrichment" markers consumed by mapfilter.matchFilter.
   function enrichIslandsWithRichData(islands) {
-    const lootedByCoord = lootedIndex ? lootedIndex.byCoord : null;
+    const byCityIdMark = markIndex ? markIndex.byCityId : null;
     const hasTraders = traderIds && traderIds.size > 0;
+
+    // Roll up the strongest mark across an island's player records.
+    // Priority: lootable > looted > empty (lootable = "should hit", surfaces first).
+    const PRIORITY = { lootable: 3, looted: 2, empty: 1 };
+    function rollupMark(players) {
+      if (!byCityIdMark || !players || players.length === 0) return { state: null, ts: 0 };
+      let bestState = null;
+      let bestTs = 0;
+      for (const p of players) {
+        if (!p.cityIds) continue;
+        for (const cid of p.cityIds) {
+          const m = byCityIdMark.get(String(cid));
+          if (!m) continue;
+          if (bestState == null || PRIORITY[m.state] > PRIORITY[bestState] ||
+              (m.state === bestState && m.ts > bestTs)) {
+            bestState = m.state;
+            bestTs = m.ts || 0;
+          }
+        }
+      }
+      return { state: bestState, ts: bestTs };
+    }
+
     if (!queryIndex || !queryIndex.islandsByCoord) {
-      // Clear stale enrichment so old data doesn't leak through
+      // No rich data — clear all derived fields; marks can't be rolled up
+      // without player.cityIds, so islands stay unmarked at this layer.
       for (const isl of islands) {
         isl._allyTags = null;
         isl._ownerNamesText = null;
@@ -574,13 +604,13 @@
         isl._players = [];
         isl._ctAvailable = false;
         isl._ctChecked = false;
-        isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
+        isl._mark = null;
+        isl._looted = 0;
         isl._tradePartner = false;
       }
       return;
     }
     const byCoord = queryIndex.islandsByCoord;
-    const lootedByCityId = lootedIndex ? lootedIndex.byCityId : null;
     for (const isl of islands) {
       const entry = byCoord[isl.x + ":" + isl.y];
       if (!entry) {
@@ -590,27 +620,36 @@
         isl._players = [];
         isl._ctAvailable = false;
         isl._ctChecked = false;
-        isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
+        isl._mark = null;
+        isl._looted = 0;
         isl._tradePartner = false;
         continue;
       }
       isl._allyTags = new Set(entry.allyTags || []);
       isl._ownerNamesText = entry.ownerNamesText || "";
       isl._maxArmy = entry.maxArmy || 0;
-      // Clone player records so we can stamp .looted without mutating the cached queryIndex.
+      // Clone player records so we can stamp per-player mark info without
+      // mutating the cached queryIndex.
       isl._players = (entry.players || []).map((p) => {
+        let mark = null;
         let looted = 0;
-        if (lootedByCityId && p.cityIds) {
+        if (byCityIdMark && p.cityIds) {
           for (const cid of p.cityIds) {
-            const ts = lootedByCityId.get(cid) || 0;
-            if (ts > looted) looted = ts;
+            const m = byCityIdMark.get(String(cid));
+            if (!m) continue;
+            if (m.state === "looted" && m.ts > looted) looted = m.ts;
+            if (!mark || (PRIORITY[m.state] || 0) > (PRIORITY[mark.state] || 0)) {
+              mark = { state: m.state, ts: m.ts || 0 };
+            }
           }
         }
-        return { ...p, looted };
+        return { ...p, mark, looted };
       });
       isl._ctAvailable = !!entry.ctAvailable;
       isl._ctChecked = !!entry.ctChecked;
-      isl._looted = lootedByCoord ? (lootedByCoord.get(isl.x + ":" + isl.y) || 0) : 0;
+      const rollup = rollupMark(isl._players);
+      isl._mark = rollup.state;
+      isl._looted = rollup.state === "looted" ? rollup.ts : 0;
       isl._tradePartner = hasTraders && isl._players.some((p) => traderIds.has(String(p.id)));
     }
   }
@@ -830,7 +869,7 @@
       dataLoading = true;
       currentMapData = data[key];
       await loadAllianceIndex();
-      await loadLootedIndex();
+      await loadMarkIndex();
       await loadTraders();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
@@ -1118,7 +1157,7 @@
           currentMapData = existing[mapKey] || mapData;
           cachedBaseMap = null;
           dataLoading = true;
-          Promise.all([loadAllianceIndex(), loadLootedIndex()]).then(() => {
+          Promise.all([loadAllianceIndex(), loadMarkIndex()]).then(() => {
             dataLoading = false;
             showMapUI();
             drawMinimap();
@@ -1134,10 +1173,10 @@
     const allyIdxKey = "allianceIndex_" + worldName;
     const mapKey = "map_" + worldName;
     const queryIdxKey = "queryIndex_" + worldName;
-    const spyLogKey = "spyLog_" + worldName;
+    const cityMarksKey = "cityMarks_" + worldName;
     const tradersKey = "tradePartners_" + worldName;
-    if (changes[spyLogKey]) {
-      loadLootedIndex().then(async () => {
+    if (changes[cityMarksKey]) {
+      loadMarkIndex().then(async () => {
         cachedBaseMap = null;
         islandsByCoord = null;
         FilterRunner.invalidateAll();

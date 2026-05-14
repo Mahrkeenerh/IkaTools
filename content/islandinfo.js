@@ -8,7 +8,7 @@
   let friendIds = new Set();
   let partnerIds = new Set();
   let traderIds = new Set();
-  let lootedIndex = null; // {byCityId, byCoordPlayerCity, byCoord} from spy log
+  let markIndex = null; // {byCityId: Map<cid, {state, ts}>} from CityMarks
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
   let currentIsland = null; // last extracted island, used by refreshLootedLabels
@@ -130,8 +130,18 @@
     traderIds = new Set(Object.keys(map));
   }
 
-  async function loadLooted() {
-    lootedIndex = await IkUtils.getLootedIndex(worldName);
+  async function loadMarks() {
+    if (globalThis.CityMarks) {
+      await CityMarks.migrate(worldName);
+      markIndex = await CityMarks.getIndex(worldName);
+    } else {
+      markIndex = { byCityId: new Map() };
+    }
+  }
+
+  function getMark(cityId) {
+    if (!markIndex || cityId == null) return null;
+    return markIndex.byCityId.get(String(cityId)) || null;
   }
 
   // Extract updateBackgroundData from inline scripts — shared helper
@@ -518,40 +528,46 @@
       row1.appendChild(viewBtn);
       wrap.appendChild(row1);
 
-      // Second row — "Looted X ago" in red, only for cities with a spy log
-      // entry that's been marked looted.
-      const lootedTs = IkUtils.lookupLooted(lootedIndex, city.id, islandCoords, city.ownerName, city.name);
-      if (lootedTs) {
-        const lootRow = document.createElement("div");
-        lootRow.className = "ik-loot-label";
-        lootRow.dataset.cityId = String(city.id);
-        lootRow.title = "Looted " + new Date(lootedTs).toLocaleString();
-        lootRow.textContent = "Looted " + IkUtils.formatLootedAge(lootedTs);
-        Object.assign(lootRow.style, {
-          fontSize: "9px",
-          color: "#ff5555",
-          background: "rgba(0,0,0,0.85)",
-          padding: "1px 4px",
-          borderRadius: "3px",
-          whiteSpace: "nowrap",
-          lineHeight: "12px",
-          textAlign: "center",
-          pointerEvents: "none",
-          fontWeight: "bold",
-        });
-        wrap.appendChild(lootRow);
+      // Second row — state badge (lootable / looted Xd ago / empty), only for
+      // cities marked via CityMarks.
+      const mark = getMark(city.id);
+      if (mark && globalThis.CityMarks) {
+        const style = CityMarks.getStyle(mark.state);
+        if (style) {
+          const markRow = document.createElement("div");
+          markRow.className = "ik-mark-label";
+          markRow.dataset.cityId = String(city.id);
+          const text = mark.state === "looted"
+            ? style.label + " " + CityMarks.formatAge(mark.ts)
+            : style.label;
+          markRow.textContent = style.icon + " " + text;
+          markRow.title = style.label + (mark.ts ? " — " + new Date(mark.ts).toLocaleString() : "");
+          Object.assign(markRow.style, {
+            fontSize: "9px",
+            color: style.color,
+            background: "rgba(0,0,0,0.85)",
+            padding: "1px 4px",
+            borderRadius: "3px",
+            whiteSpace: "nowrap",
+            lineHeight: "12px",
+            textAlign: "center",
+            pointerEvents: "none",
+            fontWeight: "bold",
+          });
+          wrap.appendChild(markRow);
+        }
       }
 
       scrollEl.appendChild(wrap);
     }
   }
 
-  // Re-inject city labels with up-to-date looted timestamps. Called when the
-  // spy log changes (e.g. user toggled "looted" in the report page).
-  async function refreshLootedLabels() {
+  // Re-inject city labels with up-to-date mark state. Called when CityMarks
+  // changes (toggled from any surface: spy log, sidebar, battle report).
+  async function refreshMarkLabels() {
     if (document.body.id !== "island" || !currentIsland) return;
-    await loadLooted();
-    // Strip existing labels and re-inject so looted state appears/disappears.
+    await loadMarks();
+    // Strip existing labels and re-inject so mark state appears/disappears.
     document.querySelectorAll(".ik-city-label").forEach((el) => el.remove());
     injectCityLabels(currentIsland);
   }
@@ -598,6 +614,94 @@
     return params.get("islandId") || params.get("id") || null;
   }
 
+  // --- Inject "Target:" row with mark widget into the selected-city sidebar ---
+  // Sidebar layout (island view, after clicking a non-own city):
+  //   #sidebar .sidebar_cityDetails table.cityinfo
+  //     <tr> rows for name / title / player / ally / score / spies
+  // We add a new <tr> after the active-spies row, bound to the cityId we can
+  // read from the city's action links (espionage / transport).
+  // Pull the cityId of the city currently shown in the sidebar. Foreign-city
+  // sidebars have it on the espionage/transport action links; own-city
+  // sidebars hide those links and only expose it via the selected map tile's
+  // `saved-href` attribute.
+  function readSelectedCityId() {
+    const re = /destinationCityId=(\d+)/;
+    const tryHref = (el) => {
+      if (!el) return null;
+      const h = el.getAttribute("href") || el.getAttribute("saved-href") || "";
+      const m = h.match(re);
+      return m ? m[1] : null;
+    };
+    return tryHref(document.querySelector("#js_selectedCityAction3Link"))
+      || tryHref(document.querySelector("#js_selectedCityAction2Link"))
+      || tryHref(document.querySelector('[id^="cityLocation"].selected[saved-href]'));
+  }
+
+  async function injectSidebarMark() {
+    if (document.body.id !== "island") return;
+    const table = document.querySelector("#sidebar .sidebar_cityDetails table.cityinfo");
+    if (!table) return;
+    if (table.querySelector(".ik-sidebar-mark-row")) return;
+
+    const cityId = readSelectedCityId();
+    if (!cityId) return;
+
+    // Own cities can't be targets. Only show the widget if a stale mark
+    // already exists (so the user can clear it); the widget will hide itself
+    // again once the mark is removed.
+    const own = IkUtils.getOwnCityIds();
+    const isOwn = own && own.has(cityId);
+    let existingMark = null;
+    if (globalThis.CityMarks) {
+      existingMark = await CityMarks.get(cityId);
+    }
+    if (isOwn && !existingMark) return;
+
+    const tr = document.createElement("tr");
+    tr.className = "ik-sidebar-mark-row alt";
+    tr.dataset.cityId = cityId;
+    if (isOwn) tr.dataset.ownCity = "1";
+    const labelTd = document.createElement("td");
+    labelTd.className = "nameValue";
+    labelTd.innerHTML = isOwn
+      ? '<span title="Own city — clear the stale mark">Clear mark:</span>'
+      : "<span>Target:</span>";
+    const widgetTd = document.createElement("td");
+    widgetTd.colSpan = 3;
+    if (globalThis.CityMarks) {
+      const onChange = (newState) => {
+        // Once the user clears a mark on their own city, hide the row so the
+        // widget can't be re-used to set a new (invalid) mark.
+        if (isOwn && newState == null) tr.remove();
+      };
+      widgetTd.appendChild(CityMarks.createWidget(cityId, { compact: true, onChange }));
+    }
+    tr.appendChild(labelTd);
+    tr.appendChild(widgetTd);
+
+    // Insert after the active-spies row when present, else append.
+    const spiesRow = table.querySelector("#js_selectedCityActiveSpies");
+    if (spiesRow && spiesRow.parentNode) {
+      spiesRow.parentNode.insertBefore(tr, spiesRow.nextSibling);
+    } else {
+      const tbody = table.querySelector("tbody") || table;
+      tbody.appendChild(tr);
+    }
+  }
+
+  // Re-inject the sidebar widget only when the selected city has actually
+  // changed. The game's DOM churns a lot (walkers, animations) so a no-op
+  // path is important.
+  let lastSidebarCityId = null;
+  function refreshSidebarMark() {
+    if (document.body.id !== "island") { lastSidebarCityId = null; return; }
+    const curId = readSelectedCityId();
+    if (curId === lastSidebarCityId && document.querySelector(".ik-sidebar-mark-row")) return;
+    lastSidebarCityId = curId;
+    document.querySelectorAll(".ik-sidebar-mark-row").forEach((el) => el.remove());
+    if (curId) injectSidebarMark();
+  }
+
   // --- Init ---
   async function init() {
     if (document.body.id !== "island") return;
@@ -611,7 +715,7 @@
     const stored = await chrome.storage.local.get(KEY_PANEL_EXPANDED);
     if (stored[KEY_PANEL_EXPANDED] !== undefined) expanded = stored[KEY_PANEL_EXPANDED];
 
-    await loadLooted();
+    await loadMarks();
 
     const island = await extractAndStore();
     currentIsland = island;
@@ -619,10 +723,11 @@
       createPanel(island);
       injectCityLabels(island);
     }
+    injectSidebarMark();
   }
 
-  // Load cached friends + partners + traders + looted first, then scrape visible friends
-  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadLooted()]).then(() => {
+  // Load cached friends + partners + traders + marks first, then scrape visible friends
+  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadMarks()]).then(() => {
     scrapeFriends();
     init();
   });
@@ -661,6 +766,19 @@
     friendObs.observe(friendContainer, { childList: true, subtree: true, attributes: true });
   }
 
+  // Watch the sidebar for selected-city changes — the game rebuilds the
+  // cityinfo table whenever the user clicks a different city slot.
+  let sidebarDebounce = null;
+  const sidebarObs = new MutationObserver(() => {
+    if (document.body.id !== "island") return;
+    if (sidebarDebounce) return;
+    sidebarDebounce = setTimeout(() => {
+      sidebarDebounce = null;
+      refreshSidebarMark();
+    }, 80);
+  });
+  sidebarObs.observe(document.body, { childList: true, subtree: true });
+
   // Refresh panel when museum partners are saved/updated
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
@@ -685,8 +803,8 @@
         init();
       }
     }
-    if (changes["spyLog_" + worldName]) {
-      refreshLootedLabels();
+    if (changes["cityMarks_" + worldName]) {
+      refreshMarkLabels();
     }
   });
 
