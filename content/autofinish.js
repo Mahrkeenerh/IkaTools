@@ -16,9 +16,11 @@
 
   function parseTime(text) {
     let total = 0;
-    const h = text.match(/(\d+)\s*h/);
-    const m = text.match(/(\d+)\s*m/);
-    const s = text.match(/(\d+)\s*s/);
+    const d = text.match(/(\d+)\s*d/i);
+    const h = text.match(/(\d+)\s*h/i);
+    const m = text.match(/(\d+)\s*m/i);
+    const s = text.match(/(\d+)\s*s/i);
+    if (d) total += parseInt(d[1], 10) * 86400;
     if (h) total += parseInt(h[1], 10) * 3600;
     if (m) total += parseInt(m[1], 10) * 60;
     if (s) total += parseInt(s[1], 10);
