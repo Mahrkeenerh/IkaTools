@@ -112,7 +112,7 @@ No dev server — load unpacked extension directly from this directory in `chrom
 | `minimapEnabled` / `minimapPosition` / `minimapScale` / `minimapLayer` / `hideZeroCities` / `vpTrimRight` / `vpTrimBottom` | global | minimap | Minimap UI state |
 | `scanInProgress` / `scanProgress` / `scanResult` | global (transient) | scanner | DOM scan coordination with popup |
 | `ctScanRunning` / `ctScanProgress` | global (transient) | background | Background scan coordination |
-| `friendList_{world}` / `friendSlots_{world}` | URL world | islandinfo | Friend player ID→name map and slot snapshots |
+| `friendSlots_{world}` | URL world | islandinfo | Friend slot map: `{ slotId: {id, name} }`. Slots are sticky in-game (never re-numbered), so this is the single source of truth — removed friends just drop out. Legacy `friendList_{world}` (id→name) is migrated on first read and removed. |
 | `tradePartners_{world}` | URL world | tradedetect | Trade partner index keyed by avatarId → `{name, lastTradeAt, tradeCount, cities, lastSource}`; consumed by islandinfo (magenta `#E040FB` highlight on city labels + panel rows), minimap/islandfilter (`_tradePartner` flag), and the "Trade partners" filter chip |
 | `tradePartnersPending_{world}` | URL world | tradedetect | Pending cityIds from news-feed events whose owners haven't been resolved yet; retried when new `island_{world}_{id}` records land |
 | `tradeReceipts_{world}_{YYYY-MM}` | URL world | tradereceipts | Monthly chunk of actual completed market trades scraped from the news feed: `{ ts, dir: "sell"\|"buy", myCityId, myCityName, otherCityId, otherCityName, otherAvatarId, otherAvatarName, resource, amount, pricePerUnit, currency }` |

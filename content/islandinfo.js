@@ -17,90 +17,107 @@
   const worldName = IkUtils.getUrlWorldName() || "unknown";
   const STORAGE_PREFIX = "island_" + worldName + "_";
   const KEY_ALLIANCE_INDEX = "allianceIndex_" + worldName;
-  const KEY_FRIEND_LIST = "friendList_" + worldName;
+  // friendSlots_{world}: slotId -> {id, name}. Slots are sticky (game never re-numbers),
+  // so this single map is the source of truth — removed slots simply disappear.
   const KEY_FRIEND_SLOTS = "friendSlots_" + worldName;
+  const KEY_FRIEND_LIST_LEGACY = "friendList_" + worldName; // deprecated, migrated on read
   const KEY_PARTNERS = "museumPartners_" + worldName;
   const KEY_TRADERS = "tradePartners_" + worldName;
   const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
   let friendCheckTimer = null;
 
-  // Read visible friend slots (IDs are global: page1=1-6, page2=7-12, etc.)
-  function readFriendSlots() {
+  // Read visible friend slots from the sidebar.
+  // Returns slotId -> {id, name} for filled slots, slotId -> null for visible-but-empty slots.
+  // Only visible slots are present (the page shows ~6 at a time).
+  function readVisibleSlots() {
     const container = document.querySelector("#js_viewFriends .friends");
     if (!container) return null;
-    const snapshot = {}; // slotId -> playerId|null
-    const names = {}; // playerId -> name
+    const slots = {};
     for (const li of container.querySelectorAll("li[id^='js_friendlistSlot']")) {
       const slotId = li.id.replace("js_friendlistSlot", "");
       const a = li.classList.contains("expandable") && li.querySelector(".name a");
       if (a) {
         const m = a.href.match(/playerId=(\d+)/);
-        if (m) {
-          snapshot[slotId] = m[1];
-          names[m[1]] = a.textContent.trim();
-        }
+        slots[slotId] = m ? { id: m[1], name: a.textContent.trim() } : null;
       } else {
-        snapshot[slotId] = null;
+        slots[slotId] = null;
       }
     }
-    return { snapshot, names };
+    return slots;
   }
 
-  // --- Scrape & cache friends from the sidebar list ---
+  // Load stored slot map, migrating from legacy {friendList, friendSlots-with-ids} shape if present.
+  async function loadStoredSlots() {
+    const data = await chrome.storage.local.get([KEY_FRIEND_SLOTS, KEY_FRIEND_LIST_LEGACY, "friendList"]);
+    const raw = data[KEY_FRIEND_SLOTS] || {};
+    const legacyNames = data[KEY_FRIEND_LIST_LEGACY] || data.friendList || {};
+    let migrated = false;
+    const slots = {};
+    for (const [slot, val] of Object.entries(raw)) {
+      if (val == null) continue;
+      if (typeof val === "object" && val.id) {
+        slots[slot] = { id: String(val.id), name: val.name || String(val.id) };
+      } else {
+        // Legacy: slot value was just the playerId
+        const id = String(val);
+        slots[slot] = { id, name: legacyNames[id] || id };
+        migrated = true;
+      }
+    }
+    if (migrated || data[KEY_FRIEND_LIST_LEGACY] != null) {
+      await chrome.storage.local.set({ [KEY_FRIEND_SLOTS]: slots });
+      await chrome.storage.local.remove(KEY_FRIEND_LIST_LEGACY);
+    }
+    return slots;
+  }
+
+  function deriveFriendIds(slots) {
+    return new Set(Object.values(slots).map((s) => s.id));
+  }
+
+  // --- Scrape & cache visible friends ---
   async function scrapeFriends() {
-    const result = readFriendSlots();
-    if (!result || Object.keys(result.names).length === 0) return;
+    const visible = readVisibleSlots();
+    if (!visible) return;
+    const hasFilled = Object.values(visible).some((v) => v && v.id);
+    if (!hasFilled) return;
 
-    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, KEY_FRIEND_SLOTS, "friendList"]);
-    const stored = data[KEY_FRIEND_LIST] || data.friendList || {};
-    const oldSlots = data[KEY_FRIEND_SLOTS] || {};
-    const merged = { ...stored, ...result.names };
-    // Merge visible slots into full snapshot (page 1 = slots 1-6, page 2 = 7-12, etc.)
-    const allSlots = { ...oldSlots, ...result.snapshot };
-    await chrome.storage.local.set({
-      [KEY_FRIEND_LIST]: merged,
-      [KEY_FRIEND_SLOTS]: allSlots,
-    });
-    friendIds = new Set(Object.keys(merged));
+    const slots = await loadStoredSlots();
+    let changed = false;
+    for (const [slot, val] of Object.entries(visible)) {
+      if (!val) continue;
+      const cur = slots[slot];
+      if (!cur || cur.id !== val.id || cur.name !== val.name) {
+        slots[slot] = val;
+        changed = true;
+      }
+    }
+    if (changed) await chrome.storage.local.set({ [KEY_FRIEND_SLOTS]: slots });
+    friendIds = deriveFriendIds(slots);
   }
 
-  // Compare current visible slots against stored snapshot, remove unfriended players
+  // Compare visible slots against stored slots, drop slots that are now empty (unfriended).
   async function validateFriends() {
-    const result = readFriendSlots();
-    if (!result) return;
+    const visible = readVisibleSlots();
+    if (!visible) return;
 
-    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, KEY_FRIEND_SLOTS, "friendList"]);
-    const stored = data[KEY_FRIEND_LIST] || data.friendList || {};
-    const oldSlots = data[KEY_FRIEND_SLOTS] || {};
+    const slots = await loadStoredSlots();
     let changed = false;
-
-    // Friends don't shift — if a slot was filled and is now empty, that friend was removed
-    for (const [slot, curId] of Object.entries(result.snapshot)) {
-      const oldId = oldSlots[slot];
-      if (oldId && !curId) {
-        delete stored[oldId];
+    for (const [slot, val] of Object.entries(visible)) {
+      if (val) {
+        const cur = slots[slot];
+        if (!cur || cur.id !== val.id || cur.name !== val.name) {
+          slots[slot] = val;
+          changed = true;
+        }
+      } else if (slots[slot]) {
+        // Slot was filled, now visibly empty → that friend was removed (by us or them)
+        delete slots[slot];
         changed = true;
       }
     }
-
-    // Add any newly visible friends
-    for (const [id, name] of Object.entries(result.names)) {
-      if (!stored[id]) {
-        stored[id] = name;
-        changed = true;
-      }
-    }
-
-    const allSlots = { ...oldSlots, ...result.snapshot };
-    if (changed) {
-      await chrome.storage.local.set({
-        [KEY_FRIEND_LIST]: stored,
-        [KEY_FRIEND_SLOTS]: allSlots,
-      });
-      friendIds = new Set(Object.keys(stored));
-    } else {
-      await chrome.storage.local.set({ [KEY_FRIEND_SLOTS]: allSlots });
-    }
+    if (changed) await chrome.storage.local.set({ [KEY_FRIEND_SLOTS]: slots });
+    friendIds = deriveFriendIds(slots);
   }
 
   // Debounced friend list validation — called when DOM changes
@@ -113,9 +130,8 @@
   }
 
   async function loadFriends() {
-    // Fall back to legacy global key if world-scoped key is empty
-    const data = await chrome.storage.local.get([KEY_FRIEND_LIST, "friendList"]);
-    friendIds = new Set(Object.keys(data[KEY_FRIEND_LIST] || data.friendList || {}));
+    const slots = await loadStoredSlots();
+    friendIds = deriveFriendIds(slots);
   }
 
   async function loadPartners() {
