@@ -609,7 +609,7 @@
     applyStyle(body, { marginTop: "6px" });
 
     const hint = document.createElement("div");
-    hint.textContent = 'Return a boolean. Fields: _allyTags (Set), _ownerNamesText, _maxArmy, _players [{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, trader}], _ctAvailable, cities, tradegood, wonder, owner, x, y';
+    hint.textContent = 'Return a boolean. Fields: _allyTags (Set), _ownerNamesText, _maxArmy, _players [{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, gold}], _ctAvailable, cities, tradegood, wonder, owner, x, y';
     applyStyle(hint, { color: "#667", fontSize: "9px", lineHeight: "1.4", marginBottom: "4px", fontFamily: "sans-serif" });
     body.appendChild(hint);
 

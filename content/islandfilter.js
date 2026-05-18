@@ -128,7 +128,7 @@
       const army = Math.round(parseScore(sc.army_score_main) / 100);
       const building = Math.round(parseScore(sc.building_score_main) / 100);
       const research = Math.round(parseScore(sc.research_score_main) / 100);
-      const trader = Math.round(parseScore(sc.trader_score_secondary) / 100);
+      const gold = parseScore(sc.trader_score_secondary);
       const place = parseScore(sc.place);
       const allyTag = c.ownerAllyTag || "";
       const isPiracy = !!(c.actions && c.actions.piracy_raid);
@@ -158,7 +158,7 @@
           state: c.state || "",
           cities: 1,
           maxLevel: parseInt(c.level || 0, 10),
-          place, building, research, army, trader,
+          place, building, research, army, gold,
           cityIds: c.id != null ? [String(c.id)] : [],
           looted,
         }],

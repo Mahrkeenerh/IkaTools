@@ -150,7 +150,7 @@ globalThis.MapFilter = (() => {
 //   _allyTags        Set<string>     (alliance tags on the island)
 //   _ownerNamesText  string          ("\n"-joined lowercased owner names)
 //   _maxArmy         number          (max army score across cities)
-//   _players         Array<{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, trader, cityIds, looted}>
+//   _players         Array<{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, gold, cityIds, looted}>
 //   _ctAvailable     boolean
 //   _ctChecked       boolean
 //   _looted          number          (timestamp of last "looted" mark, 0 otherwise — kept for legacy filter use)

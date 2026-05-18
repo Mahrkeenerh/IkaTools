@@ -316,7 +316,7 @@
           building: Math.round(parseScore(sc.building_score_main) / 100),
           research: Math.round(parseScore(sc.research_score_main) / 100),
           army: Math.round(parseScore(sc.army_score_main) / 100),
-          trader: Math.round(parseScore(sc.trader_score_secondary) / 100),
+          gold: parseScore(sc.trader_score_secondary),
         },
       });
     }

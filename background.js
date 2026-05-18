@@ -190,7 +190,7 @@ function bgBuildIslandWrites(collectedIslands, opts) {
           building: Math.round(parseScore(scoreData.building_score_main) / 100),
           research: Math.round(parseScore(scoreData.research_score_main) / 100),
           army: Math.round(parseScore(scoreData.army_score_main) / 100),
-          trader: Math.round(parseScore(scoreData.trader_score_secondary) / 100),
+          gold: parseScore(scoreData.trader_score_secondary),
         },
       });
     }
@@ -272,7 +272,7 @@ function bgBuildQueryIndex(writes, opts) {
           prev.building = Math.max(prev.building, scores.building || 0);
           prev.research = Math.max(prev.research, scores.research || 0);
           prev.army = Math.max(prev.army, army);
-          prev.trader = Math.max(prev.trader, scores.trader || 0);
+          prev.gold = Math.max(prev.gold, scores.gold || 0);
           if (cidStr) prev.cityIds.push(cidStr);
         } else {
           playerMap.set(oid, {
@@ -287,7 +287,7 @@ function bgBuildQueryIndex(writes, opts) {
             building: scores.building || 0,
             research: scores.research || 0,
             army,
-            trader: scores.trader || 0,
+            gold: scores.gold || 0,
             cityIds: cidStr ? [cidStr] : [],
           });
         }

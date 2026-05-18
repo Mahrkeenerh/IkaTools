@@ -282,7 +282,7 @@
           building: Math.round(parseScore(scoreData.building_score_main) / 100),
           research: Math.round(parseScore(scoreData.research_score_main) / 100),
           army: Math.round(parseScore(scoreData.army_score_main) / 100),
-          trader: Math.round(parseScore(scoreData.trader_score_secondary) / 100),
+          gold: parseScore(scoreData.trader_score_secondary),
         },
       });
     }
@@ -527,8 +527,9 @@
         { key: "level", label: "Lv" },
         { key: "alliance", label: "Ally" },
         { key: "building", label: "Build" },
-        { key: "research", label: "Res" },
+        { key: "research", label: "Sci" },
         { key: "army", label: "Army" },
+        { key: "gold", label: "Gold" },
         { key: "citizens", label: "Citz" },
       ];
 
@@ -554,6 +555,7 @@
           <td style="padding:3px 4px;">${fmt(city.scores.building)}</td>
           <td style="padding:3px 4px;">${fmt(city.scores.research)}</td>
           <td style="padding:3px 4px;">${fmt(city.scores.army)}</td>
+          <td style="padding:3px 4px;">${fmt(city.scores.gold)}</td>
           <td style="padding:3px 4px;">${city.scores.citizens != null ? fmt(city.scores.citizens) : '<span style="color:#556;">—</span>'}</td>
         </tr>`;
       }
