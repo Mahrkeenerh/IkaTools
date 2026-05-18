@@ -640,7 +640,7 @@
   // Unit upgrades don't affect this — they're flat research costs, not per-unit.
   const UNIT_SCORE = {
     s303: 1.4, s315: 0.6, s302: 1.2, s308: 6.2, s301: 0.4,
-    s313: 1.1, s304: 4.0, s319: 5.0,
+    s313: 1.1, s304: 4.0, s319: 1.6,
     s307: 4.4, s306: 11.2, s305: 31.0,
     s312: 2.5, s309: 5.8, s310: 4.0, s311: 10.0,
     s211: 6.2, s210: 5.0, s216: 24.0, s213: 6.8,
@@ -650,7 +650,7 @@
   // Movement parser emits CSS-class names instead of s-ids, so map them.
   const UNIT_NAME_TO_ID = {
     phalanx: "s303", spearman: "s315", swordsman: "s302", steamgiant: "s308",
-    slinger: "s301", archer: "s313", marksman: "s304",
+    slinger: "s301", archer: "s313", marksman: "s304", spartan: "s319",
     ram: "s307", catapult: "s306", mortar: "s305",
     gyrocopter: "s312", bombardier: "s309", cook: "s310", medic: "s311",
     ship_flamethrower: "s211", ship_ram: "s210", ship_steamboat: "s216",
@@ -700,7 +700,7 @@
     if (report.militaryMovements) {
       for (const m of report.militaryMovements) {
         for (const u of (m.units || [])) {
-          const id = u.name && u.name.startsWith("s") ? u.name : UNIT_NAME_TO_ID[u.name];
+          const id = u.id || (u.name && u.name.startsWith("s") ? u.name : UNIT_NAME_TO_ID[u.name]);
           if (!id) continue;
           transitByUnitId[id] = (transitByUnitId[id] || 0) + (u.count || 0);
         }
@@ -848,7 +848,7 @@
     let transitScore = 0;
     if (report.militaryMovements) {
       for (const m of report.militaryMovements) {
-        for (const u of (m.units || [])) transitScore += unitScore(u.name, u.count);
+        for (const u of (m.units || [])) transitScore += unitScore(u.id || u.name, u.count);
       }
     }
     let queueScore = 0;
@@ -1042,7 +1042,7 @@
 
       // Upkeep: units on the move cost double
       let moveUpkeep = 0;
-      for (const u of m.units) moveUpkeep += unitUpkeep(u.name, u.count) * 2;
+      for (const u of m.units) moveUpkeep += unitUpkeep(u.id || u.name, u.count) * 2;
 
       tr.innerHTML = `
         <td>${label}</td>

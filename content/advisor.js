@@ -827,7 +827,7 @@
   // CSS class name → unit ID (for relatedCities .armybutton / .fleetbutton parsing)
   const UNIT_CLASS_TO_ID = {
     phalanx: "s303", spearman: "s315", swordsman: "s302", slinger: "s301",
-    archer: "s313", marksman: "s304", ram: "s307", catapult: "s306",
+    archer: "s313", marksman: "s304", spartan: "s319", ram: "s307", catapult: "s306",
     cook: "s310", medic: "s311", steamgiant: "s308", mortar: "s305",
     gyrocopter: "s312", bombardier: "s309",
     ship_flamethrower: "s211", ship_ram: "s210", ship_ballista: "s213",
@@ -1103,11 +1103,14 @@
             resources.push({ type: resMatch ? resMatch[1] : "unknown", amount: count });
           } else if (cls.includes("ship_")) {
             const shipMatch = cls.match(/ship_(\w+)/);
-            units.push({ type: "ship", name: shipMatch ? shipMatch[1] : "ship", count });
+            const shipName = shipMatch ? shipMatch[1] : "ship";
+            const id = shipMatch ? UNIT_CLASS_TO_ID["ship_" + shipMatch[1]] || null : null;
+            units.push({ type: "ship", id, name: shipName, count });
           } else {
             const unitMatch = cls.match(/icon40 bold center (\w+)/);
             const unitName = unitMatch ? unitMatch[1] : "unknown";
-            units.push({ type: "unit", name: unitName, count });
+            const id = UNIT_CLASS_TO_ID[unitName] || null;
+            units.push({ type: "unit", id, name: unitName, count });
           }
         }
       }
