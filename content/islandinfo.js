@@ -23,8 +23,68 @@
   const KEY_FRIEND_LIST_LEGACY = "friendList_" + worldName; // deprecated, migrated on read
   const KEY_PARTNERS = "museumPartners_" + worldName;
   const KEY_TRADERS = "tradePartners_" + worldName;
+  // Per-avatar total score cache: { [avatarId]: { total, ts } }. Total comes from
+  // the page-side `js_selectedCityScore` element when a player is selected on the
+  // island view (passively scraped) or by fetching `?view=island&playerId=X`.
+  const KEY_AVATAR_TOTALS = "avatarTotals_" + worldName;
+  let avatarTotalsCache = {};
   const FRIEND_CHECK_INTERVAL = 10_000; // 10s debounce for invalidation checks
   let friendCheckTimer = null;
+  let refreshingTotals = false;
+
+  async function loadAvatarTotals() {
+    const data = await chrome.storage.local.get(KEY_AVATAR_TOTALS);
+    avatarTotalsCache = data[KEY_AVATAR_TOTALS] || {};
+  }
+
+  async function saveAvatarTotal(avatarId, total) {
+    if (!avatarId || total == null) return;
+    avatarTotalsCache[avatarId] = { total, ts: Date.now() };
+    await chrome.storage.local.set({ [KEY_AVATAR_TOTALS]: avatarTotalsCache });
+  }
+
+  // The cityDetails endpoint renders the per-city sidebar (the same one
+  // shown when the user clicks a city slot on the island), which carries
+  // `js_selectedCityScore` = the city owner's overall score. We pick any
+  // one foreign cityId per player on the island and parse from there.
+  function extractPlayerTotal(text) {
+    const m = text.match(/js_selectedCityScore[^>]*>\s*([\d\s.,]+?)\s*</);
+    if (!m) return null;
+    const n = parseInt(m[1].replace(/[\s.,]/g, ""), 10);
+    return isNaN(n) || n < 0 ? null : n;
+  }
+
+  async function fetchTotalByCityId(cityId) {
+    const base = location.origin + location.pathname;
+    const url = base + "?view=cityDetails&destinationCityId=" + encodeURIComponent(cityId);
+    try {
+      const resp = await fetch(url, {
+        credentials: "same-origin",
+        headers: { "X-Requested-With": "XMLHttpRequest" },
+      });
+      const text = await resp.text();
+      return extractPlayerTotal(text);
+    } catch (e) {
+      console.warn(TAG, "fetchTotalByCityId failed for", cityId, e);
+      return null;
+    }
+  }
+
+  // Read the currently-displayed selected-city score from the sidebar — fires
+  // for free whenever the user naturally clicks a player on the island.
+  function passiveScrapeSelectedTotal() {
+    const scoreEl = document.getElementById("js_selectedCityScore");
+    const ownerEl = document.getElementById("js_selectedCityOwnerName");
+    if (!scoreEl || !ownerEl) return;
+    const avatarMatch = (ownerEl.getAttribute("href") || "").match(/avatarId=(\d+)/);
+    if (!avatarMatch) return;
+    const avatarId = avatarMatch[1];
+    const total = parseInt(scoreEl.textContent.replace(/[\s .,]/g, ""), 10);
+    if (isNaN(total) || total < 0) return;
+    if (avatarTotalsCache[avatarId]?.total === total) return; // unchanged
+    saveAvatarTotal(avatarId, total);
+    if (currentIsland && panel) renderPanel(currentIsland);
+  }
 
   // Read visible friend slots from the sidebar.
   // Returns slotId -> {id, name} for filled slots, slotId -> null for visible-but-empty slots.
@@ -301,6 +361,43 @@
   let currentSort = { key: "level", dir: -1 };
   let expanded = true;
   const KEY_PANEL_EXPANDED = "islandPanelExpanded";
+  // Fetch totals for all unique foreign player avatars on this island.
+  // Only invoked by the Refresh button — no automatic fetching to keep network
+  // traffic explicit and user-controlled.
+  async function refreshTotalsForIsland(island, force) {
+    if (refreshingTotals) return;
+    const TTL = 60 * 60 * 1000; // 1h
+    const now = Date.now();
+    // One representative cityId per player — cityDetails returns the owner's total,
+    // so any of that player's cities will do.
+    const cityByOwner = new Map();
+    for (const c of island.cities) {
+      if (!c.ownerId || c.isOwn) continue;
+      if (!cityByOwner.has(c.ownerId)) cityByOwner.set(c.ownerId, c.id);
+    }
+    const toFetch = [...cityByOwner.entries()].filter(([avatarId]) => {
+      if (force) return true;
+      const c = avatarTotalsCache[avatarId];
+      return !c || (now - c.ts) > TTL;
+    });
+    if (toFetch.length === 0) return;
+    refreshingTotals = true;
+    if (currentIsland && panel) renderPanel(currentIsland);
+    try {
+      const queue = toFetch.slice();
+      const workers = Array.from({ length: Math.min(3, queue.length) }, async () => {
+        while (queue.length > 0) {
+          const [avatarId, cityId] = queue.shift();
+          const total = await fetchTotalByCityId(cityId);
+          if (total != null) await saveAvatarTotal(avatarId, total);
+        }
+      });
+      await Promise.all(workers);
+    } finally {
+      refreshingTotals = false;
+      if (currentIsland && panel) renderPanel(currentIsland);
+    }
+  }
 
   const TG_NAMES = ["", "Wine", "Marble", "Glass", "Sulfur"];
   const WONDER_NAMES = {
@@ -346,13 +443,33 @@
 
   function renderPanel(island) {
     if (!panel) return;
+    // 1 decimal under 10 (e.g. 2.5k, 9.9k), no decimals from 10 up (25k, 999k, 1M+).
     const fmt = (n) => {
       if (!n) return "-";
-      if (n >= 1e9) return (n / 1e9).toFixed(1).replace(/\.0$/, "") + "G";
-      if (n >= 1e6) return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M";
-      if (n >= 1e3) return Math.round(n / 1e3) + "k";
-      return n;
+      const fmtUnit = (v, suffix) => {
+        if (v >= 10) return Math.round(v) + suffix;
+        return v.toFixed(1).replace(/\.0$/, "") + suffix;
+      };
+      if (n >= 1e9) return fmtUnit(n / 1e9, "G");
+      if (n >= 1e6) return fmtUnit(n / 1e6, "M");
+      if (n >= 1e3) return fmtUnit(n / 1e3, "k");
+      return String(n);
     };
+
+    // Annotate cities with cached total + derived citizens (Total - B - R - A).
+    for (const city of island.cities) {
+      const cached = avatarTotalsCache[city.ownerId];
+      if (cached && cached.total != null) {
+        city.scores.total = cached.total;
+        city.scores.citizens = Math.max(
+          0,
+          cached.total - city.scores.building - city.scores.research - city.scores.army
+        );
+      } else {
+        city.scores.total = null;
+        city.scores.citizens = null;
+      }
+    }
 
     // --- Header (always visible) ---
     let html = `
@@ -362,6 +479,7 @@
           <span style="color:#556;"> [${island.x}:${island.y}]</span>
         </div>
         <div style="display:flex;gap:4px;">
+          <button class="ik-panel-btn" data-action="refresh" title="Refresh player totals (fetches each unique player on this island)"${refreshingTotals ? ' disabled' : ''}>${refreshingTotals ? '\u23F3' : '\u21BB'}</button>
           <button class="ik-panel-btn" data-action="toggle" title="${expanded ? 'Collapse' : 'Expand'}">${expanded ? '\u25BC' : '\u25B2'}</button>
         </div>
       </div>
@@ -411,6 +529,7 @@
         { key: "building", label: "Build" },
         { key: "research", label: "Res" },
         { key: "army", label: "Army" },
+        { key: "citizens", label: "Citz" },
       ];
 
       html += `<table style="width:100%;border-collapse:collapse;font-size:11px;border-top:1px solid #2a3040;">
@@ -435,6 +554,7 @@
           <td style="padding:3px 4px;">${fmt(city.scores.building)}</td>
           <td style="padding:3px 4px;">${fmt(city.scores.research)}</td>
           <td style="padding:3px 4px;">${fmt(city.scores.army)}</td>
+          <td style="padding:3px 4px;">${city.scores.citizens != null ? fmt(city.scores.citizens) : '<span style="color:#556;">—</span>'}</td>
         </tr>`;
       }
       html += "</tbody></table>";
@@ -456,6 +576,11 @@
       expanded = !expanded;
       chrome.storage.local.set({ [KEY_PANEL_EXPANDED]: expanded });
       renderPanel(island);
+    });
+    panel.querySelector('[data-action="refresh"]').addEventListener("click", (e) => {
+      e.stopPropagation();
+      if (refreshingTotals) return;
+      refreshTotalsForIsland(island, true);
     });
     panel.querySelectorAll("th[data-sort]").forEach((th) => {
       th.addEventListener("click", () => {
@@ -732,6 +857,7 @@
     if (stored[KEY_PANEL_EXPANDED] !== undefined) expanded = stored[KEY_PANEL_EXPANDED];
 
     await loadMarks();
+    await loadAvatarTotals();
 
     const island = await extractAndStore();
     currentIsland = island;
@@ -740,10 +866,12 @@
       injectCityLabels(island);
     }
     injectSidebarMark();
+    // Grab the selected-city total if a player happens to be selected already.
+    passiveScrapeSelectedTotal();
   }
 
-  // Load cached friends + partners + traders + marks first, then scrape visible friends
-  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadMarks()]).then(() => {
+  // Load cached friends + partners + traders + marks + avatar totals first
+  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadMarks(), loadAvatarTotals()]).then(() => {
     scrapeFriends();
     init();
   });
@@ -791,6 +919,7 @@
     sidebarDebounce = setTimeout(() => {
       sidebarDebounce = null;
       refreshSidebarMark();
+      passiveScrapeSelectedTotal();
     }, 80);
   });
   sidebarObs.observe(document.body, { childList: true, subtree: true });
