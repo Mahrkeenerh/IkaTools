@@ -1172,14 +1172,30 @@
   const devmodeToggle = $("devmode-toggle");
   const captchaTabBtn = $("captcha-tab-btn");
 
+  const islandWatchTestRow = $("island-watch-test-row");
+
   function applyDevMode(on) {
     captchaTabBtn.style.display = on ? "" : "none";
     if (citiesScanBtn) citiesScanBtn.style.display = on ? "" : "none";
+    if (islandWatchTestRow) islandWatchTestRow.style.display = on ? "" : "none";
     // If captcha tab is active but dev mode turned off, switch to settings
     if (!on && captchaTabBtn.classList.contains("active")) {
       captchaTabBtn.click(); // deselect
       document.querySelector('[data-tab="settings"]').click();
     }
+  }
+
+  const islandWatchTestBtn = $("island-watch-test-btn");
+  if (islandWatchTestBtn) {
+    islandWatchTestBtn.addEventListener("click", () => {
+      if (!ikariamTabId) {
+        alert("Open an Ikariam tab first.");
+        return;
+      }
+      chrome.tabs.sendMessage(ikariamTabId, { type: "island-watch-test" }).catch((e) => {
+        alert("Could not reach the game tab: " + (e && e.message || e));
+      });
+    });
   }
 
   async function loadDevModeState() {

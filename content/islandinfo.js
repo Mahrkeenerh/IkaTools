@@ -522,14 +522,17 @@
         return currentSort.dir * (va - vb);
       });
 
+      const TINT_SCI = "rgba(80,140,220,0.10)";
+      const TINT_ARMY = "rgba(220,80,80,0.10)";
+      const TINT_GOLD = "rgba(220,180,60,0.12)";
       const cols = [
         { key: "name", label: "Player" },
         { key: "level", label: "Lv" },
         { key: "alliance", label: "Ally" },
         { key: "building", label: "Build" },
-        { key: "research", label: "Sci" },
-        { key: "army", label: "Army" },
-        { key: "gold", label: "Gold" },
+        { key: "research", label: "Sci", tint: TINT_SCI },
+        { key: "army", label: "Army", tint: TINT_ARMY },
+        { key: "gold", label: "Gold", tint: TINT_GOLD },
         { key: "citizens", label: "Citz" },
       ];
 
@@ -537,7 +540,8 @@
         <thead><tr style="color:#667;">`;
       for (const col of cols) {
         const arrow = currentSort.key === col.key ? (currentSort.dir > 0 ? "\u25B2" : "\u25BC") : "";
-        html += `<th style="padding:3px 4px;text-align:left;cursor:pointer;white-space:nowrap;" data-sort="${col.key}">${col.label}<span style="display:inline-block;width:10px;text-align:center;font-size:8px;">${arrow}</span></th>`;
+        const bg = col.tint ? `background:${col.tint};` : "";
+        html += `<th style="padding:3px 4px;text-align:left;cursor:pointer;white-space:nowrap;${bg}" data-sort="${col.key}">${col.label}<span style="display:inline-block;width:10px;text-align:center;font-size:8px;">${arrow}</span></th>`;
       }
       html += "</tr></thead><tbody>";
 
@@ -553,9 +557,9 @@
           <td style="padding:3px 4px;">${city.level}</td>
           <td style="padding:3px 4px;color:#7ec8e3;font-size:10px;">${city.allyTag || "-"}</td>
           <td style="padding:3px 4px;">${fmt(city.scores.building)}</td>
-          <td style="padding:3px 4px;">${fmt(city.scores.research)}</td>
-          <td style="padding:3px 4px;">${fmt(city.scores.army)}</td>
-          <td style="padding:3px 4px;">${fmt(city.scores.gold)}</td>
+          <td style="padding:3px 4px;background:${TINT_SCI};">${fmt(city.scores.research)}</td>
+          <td style="padding:3px 4px;background:${TINT_ARMY};">${fmt(city.scores.army)}</td>
+          <td style="padding:3px 4px;background:${TINT_GOLD};">${fmt(city.scores.gold)}</td>
           <td style="padding:3px 4px;">${city.scores.citizens != null ? fmt(city.scores.citizens) : '<span style="color:#556;">—</span>'}</td>
         </tr>`;
       }

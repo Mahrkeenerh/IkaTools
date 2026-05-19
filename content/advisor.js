@@ -8,7 +8,7 @@
   const MAX_SCIENTISTS_BY_LEVEL = [0, 8, 11, 16, 22, 28, 35, 43, 51, 60, 69, 79, 89, 99, 111, 122, 134, 146, 158, 171, 185, 198, 212, 227, 241, 256, 271, 287, 302, 318, 335, 351, 368];
   // Max priests by temple level (index = level). Known values from Ikariam game data up to 28;
   // levels 25 and 27 linearly interpolated from neighbours (756, 848). Above 28, falls back to fetched max.
-  const MAX_PRIESTS_BY_LEVEL = [0, 12, 23, 37, 54, 73, 94, 117, 141, 168, 195, 224, 255, 287, 320, 355, 390, 427, 464, 503, 543, 583, 625, 668, 711, 756, 801, 848, 895];
+  const MAX_PRIESTS_BY_LEVEL = [0, 12, 22, 37, 54, 73, 94, 117, 141, 168, 195, 224, 255, 287, 320, 355, 390, 427, 464, 503, 543, 583, 625, 668, 711, 756, 801, 848, 895];
 
   function maxByBuildingLevel(buildings, internalName, table) {
     if (!Array.isArray(buildings)) return null;
