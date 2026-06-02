@@ -220,4 +220,68 @@ window.addEventListener("ik-refresh-scrollbar", () => {
   } catch (e) {}
 });
 
+// Read spy-mission template data + slider pool for the "Try all" planner.
+// All risk/success math runs in the content script; this just hands over the
+// inputs (ikariam.getTemplateData() is page-context only) plus the spy pool.
+window.addEventListener("ik-read-spy-data", () => {
+  const result = { ok: false };
+  try {
+    const tp = ikariam.getTemplateData();
+    // Discover the cityId driving the sliders from the slider controlData.
+    let cityId = null;
+    const sliders = ikariam.controller.sliders || {};
+    for (const k in sliders) {
+      const s = sliders[k];
+      if (s && s.controlData && s.controlData.cityId != null) { cityId = s.controlData.cityId; break; }
+    }
+    const agentSlider = cityId != null ? sliders["slider_missioncity" + cityId] : null;
+    const sel = document.getElementById("missionSelect");
+    result.ok = true;
+    result.cityId = cityId;
+    result.pool = agentSlider ? agentSlider.maxValue : null;
+    result.selectedMission = sel ? sel.value : (tp.cEspionageMissionInvasion != null ? String(tp.cEspionageMissionInvasion) : null);
+    result.targetFreeSpies = tp.targetFreeSpies;
+    result.targetCityLevel = tp.targetCityLevel;
+    result.targetSafehouseLevel = tp.targetSafehouseLevel;
+    result.isTargetInactive = tp.isTargetInactive;
+    result.remainingRisk = tp.remainingRisk;
+    result.targetGovFactor = tp.targetGovFactor;
+    result.missionData = tp.missionData;
+    result.consts = {
+      minChance: tp.cEspionageMinChance,
+      maxChance: tp.cEspionageMaxChance,
+      maxSucc: tp.cEspionageMaxSuccessChance,
+      inact: tp.cSpyRiskReductionFactorInactivity,
+      noSafe: tp.cSpyRiskReductionFactorNoSafehouse,
+      decoyRed: tp.cEspionageDecoyRiskREduction,
+      minDecoy: tp.cEspionageMinDecoyRisk,
+      basicDecoy: tp.cEspionageBasicDecoyRisk,
+      decoyKey: tp.cEspionageDecoy,
+      wine: tp.cTradegoodWine,
+      sulfur: tp.cTradegoodSulfur,
+      gold: tp.cGold,
+    };
+  } catch (e) {
+    result.error = (e && e.message) || String(e);
+  }
+  window.dispatchEvent(new CustomEvent("ik-spy-data", { detail: result }));
+});
+
+// Apply a chosen (agents, decoys) combo to the in-game spy sliders.
+// Reset both to 0 first so the shared-pool range clamp can't reject the values.
+window.addEventListener("ik-set-spy-sliders", (e) => {
+  try {
+    const { cityId, agents, decoys } = e.detail || {};
+    const sliders = ikariam.controller.sliders || {};
+    const a = sliders["slider_missioncity" + cityId];
+    const d = sliders["slider_decoycity" + cityId];
+    if (a) a.setActualValue(0);
+    if (d) d.setActualValue(0);
+    if (a) a.setActualValue(agents);
+    if (d) d.setActualValue(decoys);
+  } catch (err) {
+    console.error("[IkBridge] set spy sliders failed:", err);
+  }
+});
+
 } // end ajaxHandlerCall guard
