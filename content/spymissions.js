@@ -115,6 +115,13 @@
 
   const PLOT = { left: 46, right: 16, top: 14, bottom: 34 };
 
+  // Round a max detection % up to a tidy axis ceiling (min 10, cap 100).
+  function niceCeil(v) {
+    if (!(v > 0)) return 10;
+    const step = v <= 18 ? 5 : 10;
+    return Math.max(10, Math.min(100, Math.ceil(v / step) * step));
+  }
+
   // green (few caught) -> red (many caught)
   function caughtColor(expCaught, minC, maxC) {
     const t = maxC > minC ? (expCaught - minC) / (maxC - minC) : 0;
@@ -122,60 +129,56 @@
     return `hsl(${hue}, 72%, 46%)`;
   }
 
-  function drawChart(canvas, points, selIdx) {
+  function drawChart(canvas, points, selIdx, xMax) {
     const ctx = canvas.getContext("2d");
     const W = canvas.width, H = canvas.height;
     ctx.clearRect(0, 0, W, H);
-    const px = (v) => PLOT.left + (v / 100) * (W - PLOT.left - PLOT.right);
+    const px = (v) => PLOT.left + (v / xMax) * (W - PLOT.left - PLOT.right);
     const py = (v) => H - PLOT.bottom - (v / 100) * (H - PLOT.top - PLOT.bottom);
+    const xStep = xMax <= 20 ? 5 : xMax <= 60 ? 10 : 20;
 
     // grid + axes
     ctx.strokeStyle = "#2a3040";
     ctx.fillStyle = "#8890a0";
     ctx.font = "10px sans-serif";
     ctx.lineWidth = 1;
-    for (let t = 0; t <= 100; t += 20) {
+    for (let t = 0; t <= 100; t += 20) {  // horizontal grid + success (Y) labels
+      ctx.globalAlpha = 0.5;
+      ctx.beginPath(); ctx.moveTo(px(0), py(t)); ctx.lineTo(px(xMax), py(t)); ctx.stroke();
+      ctx.globalAlpha = 1;
+      ctx.textAlign = "right"; ctx.fillText(t + "", PLOT.left - 6, py(t) + 3);
+    }
+    for (let t = 0; t <= xMax; t += xStep) {  // vertical grid + detection (X) labels
       ctx.globalAlpha = 0.5;
       ctx.beginPath(); ctx.moveTo(px(t), py(0)); ctx.lineTo(px(t), py(100)); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(px(0), py(t)); ctx.lineTo(px(100), py(t)); ctx.stroke();
       ctx.globalAlpha = 1;
       ctx.textAlign = "center"; ctx.fillText(t + "", px(t), py(0) + 14);
-      ctx.textAlign = "right"; ctx.fillText(t + "", PLOT.left - 6, py(t) + 3);
     }
     ctx.fillStyle = "#aab2c4";
     ctx.textAlign = "center";
-    ctx.fillText("detection %  (← safer)", (px(0) + px(100)) / 2, H - 4);
+    ctx.fillText("detection %  (← safer)", (px(0) + px(xMax)) / 2, H - 4);
     ctx.save();
     ctx.translate(12, (py(0) + py(100)) / 2);
     ctx.rotate(-Math.PI / 2);
     ctx.fillText("success %", 0, 0);
     ctx.restore();
 
-    // expected-caught color range over the efficient front
-    const front = points.filter((p) => p.onFront).sort((a, b) => a.detect - b.detect);
+    // expected-caught color range across all shown dots
+    const curve = points.slice().sort((a, b) => a.detect - b.detect);
     let minC = Infinity, maxC = -Infinity;
-    for (const p of front) { if (p.expCaught < minC) minC = p.expCaught; if (p.expCaught > maxC) maxC = p.expCaught; }
+    for (const p of curve) { if (p.expCaught < minC) minC = p.expCaught; if (p.expCaught > maxC) maxC = p.expCaught; }
 
-    // off-front (clickable) cloud
-    ctx.fillStyle = "#6a7080";
-    ctx.globalAlpha = 0.4;
-    for (const p of points) {
-      if (p.onFront) continue;
-      ctx.beginPath(); ctx.arc(px(p.detect), py(p.success), 3, 0, 7); ctx.fill();
-    }
-    ctx.globalAlpha = 1;
-
-    // front line
-    if (front.length > 1) {
+    // connecting curve
+    if (curve.length > 1) {
       ctx.strokeStyle = "#3a4656";
       ctx.lineWidth = 1.5;
       ctx.beginPath();
-      front.forEach((p, i) => { const x = px(p.detect), y = py(p.success); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      curve.forEach((p, i) => { const x = px(p.detect), y = py(p.success); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
       ctx.stroke();
     }
 
-    // front points
-    for (const p of front) {
+    // dots — one per detection %, colored green->red by expected spies caught
+    for (const p of curve) {
       const x = px(p.detect), y = py(p.success);
       ctx.fillStyle = caughtColor(p.expCaught, minC, maxC);
       ctx.strokeStyle = "rgba(255,255,255,0.5)";
@@ -202,7 +205,7 @@
   // --- panel UI -----------------------------------------------------------
 
   let panel = null;
-  let state = null; // { data, mid, points (each with .onFront), selIdx }
+  let state = null; // { data, mid, points (sorted by detection %), selIdx }
 
   function fmtCost(p) {
     const parts = [];
@@ -215,8 +218,6 @@
     const foot = panel.querySelector("#ik-spy-foot");
     const p = state.points[state.selIdx];
     if (!p) { foot.innerHTML = '<span style="color:#7a8290">Click a point to set the sliders.</span>'; return; }
-    const offFront = p.onFront ? "" :
-      '<br><span style="color:#9a7a4a">off the efficient front — another combo beats this on risk &amp; success</span>';
     const status = applied
       ? '<span style="color:#7fd17f">✓ sliders set — press the game\'s send button</span>'
       : '<span style="color:#7a8290">click a point to set the sliders</span>';
@@ -227,26 +228,24 @@
         '<span style="color:#e08a8a">caught ' + p.detect + "%</span> · " +
         '<span style="color:#c0c4cc">empty-handed ' + p.empty + "%</span><br>" +
         '<span style="color:#aab2c4">~' + p.expCaught.toFixed(2) + " spies caught/run · " + fmtCost(p) + "</span>" +
-        offFront +
         "<br>" + status +
       "</div>";
   }
 
   function recompute() {
     const all = buildLandscape(state.data, state.mid);
-    // Collapse to the cheapest combo per (detection, success) coordinate so the
-    // only thing hidden is pure decoy waste; every distinct outcome stays clickable.
+    // One dot per detection %: keep only the highest-success combo at each risk
+    // level (ties broken by the cheaper combo). Anything else at the same
+    // detection is strictly worse, so it's hidden.
     const cell = new Map();
     for (const p of all) {
-      const k = p.detect + "|" + p.success;
-      const cur = cell.get(k);
-      if (!cur || p.decoys < cur.decoys || (p.decoys === cur.decoys && p.agents < cur.agents)) cell.set(k, p);
+      const cur = cell.get(p.detect);
+      if (!cur || p.success > cur.success ||
+        (p.success === cur.success && (p.agents + p.decoys) < (cur.agents + cur.decoys))) {
+        cell.set(p.detect, p);
+      }
     }
-    const points = [...cell.values()];
-    for (const p of points) {
-      p.onFront = !points.some((q) => q !== p && q.detect <= p.detect && q.success >= p.success &&
-        (q.detect < p.detect || q.success > p.success));
-    }
+    const points = [...cell.values()].sort((a, b) => a.detect - b.detect);
     state.points = points;
     const canvas = panel.querySelector("#ik-spy-canvas");
     if (!points.length) {
@@ -254,10 +253,12 @@
       panel.querySelector("#ik-spy-foot").textContent = "No valid combinations for this mission.";
       return;
     }
-    // Default selection: the knee of the efficient front.
-    const front = points.filter((p) => p.onFront).sort((a, b) => a.detect - b.detect || b.success - a.success);
-    state.selIdx = points.indexOf(front[kneeIndex(front)]);
-    drawChart(canvas, points, state.selIdx);
+    // Auto-scale the detection axis to the data so we don't show empty space.
+    const maxDetect = points.reduce((m, p) => Math.max(m, p.detect), 0);
+    state.xMax = niceCeil(maxDetect);
+    // Default selection: the knee of the curve (points already sorted by detection).
+    state.selIdx = kneeIndex(points);
+    drawChart(canvas, points, state.selIdx, state.xMax);
     renderFooter();
   }
 
@@ -267,9 +268,10 @@
     const rect = canvas.getBoundingClientRect();
     const mx = (e.clientX - rect.left) * (canvas.width / rect.width);
     const my = (e.clientY - rect.top) * (canvas.height / rect.height);
-    const px = (v) => PLOT.left + (v / 100) * (canvas.width - PLOT.left - PLOT.right);
+    const xMax = state.xMax || 100;
+    const px = (v) => PLOT.left + (v / xMax) * (canvas.width - PLOT.left - PLOT.right);
     const py = (v) => canvas.height - PLOT.bottom - (v / 100) * (canvas.height - PLOT.top - PLOT.bottom);
-    let best = -1, bestD = 16 * 16; // generous radius so faint dots are easy to hit
+    let best = -1, bestD = 16 * 16; // generous radius so dots are easy to hit
     state.points.forEach((p, i) => {
       const dx = px(p.detect) - mx, dy = py(p.success) - my;
       const d = dx * dx + dy * dy;
@@ -279,7 +281,7 @@
       state.selIdx = best;
       const p = state.points[best];
       applyCombo(state.data.cityId, p.agents, p.decoys);
-      drawChart(canvas, state.points, state.selIdx);
+      drawChart(canvas, state.points, state.selIdx, xMax);
       renderFooter(true);
     }
   }
@@ -303,7 +305,7 @@
       "</div>" +
       '<div style="padding:10px 12px">' +
         '<canvas id="ik-spy-canvas" width="496" height="300" style="width:496px;height:300px;max-width:100%;cursor:pointer;display:block"></canvas>' +
-        '<div style="font-size:10px;color:#7a8290;margin-top:4px">dot color: <span style="color:#3ec23e">green</span> = few spies caught → <span style="color:#d23e3e">red</span> = many · faint dots = worse choices</div>' +
+        '<div style="font-size:10px;color:#7a8290;margin-top:4px">one dot per detection % (best success at that risk) · <span style="color:#3ec23e">green</span> = few spies caught → <span style="color:#d23e3e">red</span> = many</div>' +
         '<div id="ik-spy-foot" style="margin-top:8px;font-size:12px;min-height:60px">Computing…</div>' +
       "</div>";
     if (anchor.id === "missionForm") anchor.appendChild(el);
@@ -320,8 +322,7 @@
         "Couldn't read mission data — try switching the mission.";
       return;
     }
-    const sel = document.getElementById("missionSelect");
-    state = { data, mid: data.selectedMission || (sel && sel.value), front: [], dominated: [], selIdx: null };
+    state = { data, mid: getCurrentMid() || data.selectedMission, points: [], selIdx: null };
     recompute();
     // The new content grew the popup height — let the game's scrollbar catch up.
     IkUtils.ensureBridge().then(() => window.dispatchEvent(new CustomEvent("ik-refresh-scrollbar")));
@@ -329,20 +330,41 @@
 
   // --- injection ----------------------------------------------------------
 
+  // Read the selected mission id exactly like the game does, from the live
+  // <select>. We can't rely on a "change" event: Ikariam's custom dropdown
+  // calls spyMissionChanged() directly, so the native <select> never fires one.
+  function getCurrentMid() {
+    const sel = document.getElementById("missionSelect");
+    if (!sel) return null;
+    const opt = sel.options && sel.options[sel.selectedIndex];
+    return opt ? opt.value : sel.value;
+  }
+
+  // Watch the mission form for the in-place updates spyMissionChanged() makes
+  // (description text, mission image class) and re-plot whenever the selected
+  // mission actually changes.
+  function watchMission() {
+    // Observe the whole spy view, not just #missionForm: spyMissionChanged()
+    // updates the mission image / description, and those nodes' exact nesting
+    // isn't guaranteed. The callback is cheap and only re-plots on a real change.
+    const root = document.getElementById("mainview") || document.getElementById("missionForm");
+    if (!root || root.dataset.ikSpyMidWatch) return;
+    root.dataset.ikSpyMidWatch = "1";
+    const mo = new MutationObserver(() => {
+      if (!panel || !panel.isConnected || !state) return;
+      const mid = getCurrentMid();
+      if (mid != null && mid !== state.mid) { state.mid = mid; recompute(); }
+    });
+    mo.observe(root, { attributes: true, childList: true, subtree: true, characterData: true });
+  }
+
   function ensureEmbed() {
     if (!document.getElementById("missionForm") || !document.getElementById("missionSummary")) return;
     if (panel && panel.isConnected) return; // already embedded in this view
     panel = buildPanel();
     if (!panel) return;
     state = null;
-    // Re-plot live when the mission dropdown changes.
-    const sel = document.getElementById("missionSelect");
-    if (sel && !sel.dataset.ikSpyHook) {
-      sel.dataset.ikSpyHook = "1";
-      sel.addEventListener("change", () => {
-        if (panel && panel.isConnected && state) { state.mid = sel.value; recompute(); }
-      });
-    }
+    watchMission();
     loadAndCompute();
   }
 
