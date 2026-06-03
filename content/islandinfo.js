@@ -550,7 +550,7 @@
         const isFriend = !city.isOwn && friendIds.has(city.ownerId);
         const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
         const isTrader = !city.isOwn && !isFriend && !isPartner && traderIds.has(city.ownerId);
-        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : isTrader ? `color:${TRADER_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
+        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isTrader ? `color:${TRADER_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
         const rowBg = "";
         html += `<tr class="ik-city-row" data-position="${city.position}" style="cursor:pointer;border-bottom:1px solid #1e2535;${rowBg}" title="Click to view ${city.name}">
           <td style="padding:3px 4px;${nameStyle}"><div>${city.ownerName}${badge}</div><div style="font-size:9px;color:#667;">${city.name}</div></td>
@@ -641,7 +641,7 @@
       const isFriend = !city.isOwn && friendIds.has(city.ownerId);
       const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
       const isTrader = !city.isOwn && !isFriend && !isPartner && traderIds.has(city.ownerId);
-      const nameColor = city.isOwn ? OWN_COLOR : isFriend ? FRIEND_COLOR : isPartner ? PARTNER_COLOR : isTrader ? TRADER_COLOR : "#dde";
+      const nameColor = city.isOwn ? OWN_COLOR : isPartner ? PARTNER_COLOR : isFriend ? FRIEND_COLOR : isTrader ? TRADER_COLOR : "#dde";
       const nameBold = city.isOwn || isFriend || isPartner || isTrader ? "font-weight:bold;" : "";
       label.innerHTML = `${allyPart}<span style="color:${nameColor};${nameBold}">${city.ownerName}</span>`;
 
