@@ -732,7 +732,9 @@
   function injectShipsNeeded() {
     const container = document.querySelector(".barbarianCityResources");
     if (!container) return;
-    if (container.querySelector("#ik-ships-needed")) return;
+    // The div is inserted as a sibling of .barbarianCityInfos (outside the
+    // container), so guard on the document, not the container subtree.
+    if (document.getElementById("ik-ships-needed")) return;
 
     let totalGoods = 0;
     for (const id of BARB_RESOURCE_IDS) {
@@ -753,6 +755,64 @@
     } else {
       container.after(div);
     }
+  }
+
+  // --- Barbarian village: always-present per-level ships lookup table ---
+  // Goods = wood+wine+marble+crystal+sulphur (gold goes straight to the
+  // treasury, not into cargo ships). Source: Ikariam wiki "Maximum resources
+  // available to pillage", levels 1-19. Shown as a wide strip so the current
+  // level's ship count is readable even while the live resource counts (which
+  // drive injectShipsNeeded) are still loading after a level switch.
+  const BARB_GOODS_BY_LEVEL = [
+    500, 575, 725, 950, 1250, 1625, 1995, 2500, 3100, 3880,
+    4840, 5980, 7300, 8800, 10480, 12340, 14380, 16600, 19000,
+  ];
+
+  function injectBarbLookup() {
+    const speech = document.querySelector(".barbarianCityKingSpeech");
+    if (!speech) return;
+
+    let panel = document.getElementById("ik-barb-lookup");
+    if (!panel) {
+      panel = document.createElement("div");
+      panel.id = "ik-barb-lookup";
+      panel.style.cssText =
+        "margin:6px 0 2px; padding:5px 6px; border:1px solid #cba85f; " +
+        "border-radius:4px; background:rgba(255,248,225,0.55);";
+      const title = document.createElement("div");
+      title.textContent = "⚓ Ships needed by barbarian level (" + SHIP_CAPACITY + " cargo / ship)";
+      title.style.cssText = "font-size:11px; font-weight:bold; opacity:0.8; margin-bottom:4px;";
+      const grid = document.createElement("div");
+      grid.style.cssText = "display:flex; flex-wrap:wrap; gap:2px;";
+      BARB_GOODS_BY_LEVEL.forEach((goods, i) => {
+        const lvl = i + 1;
+        const ships = Math.ceil(goods / SHIP_CAPACITY);
+        const cell = document.createElement("div");
+        cell.dataset.level = lvl;
+        cell.title = `Level ${lvl}: ${goods.toLocaleString()} goods → ${ships} ships`;
+        cell.style.cssText =
+          "width:30px; text-align:center; padding:2px 0; border:1px solid #d9c79a; " +
+          "border-radius:3px; background:#fffdf6; line-height:1.15;";
+        cell.innerHTML =
+          `<div style="font-size:10px; opacity:0.6;">${lvl}</div>` +
+          `<div style="font-size:15px; font-weight:bold;">${ships}</div>`;
+        grid.appendChild(cell);
+      });
+      panel.appendChild(title);
+      panel.appendChild(grid);
+      speech.after(panel);
+    }
+
+    // Highlight the current level (read fresh each call so it tracks level
+    // changes). Levels above the table (20+) simply leave nothing highlighted.
+    const lvlEl = document.getElementById("js_islandBarbarianLevel");
+    const cur = lvlEl ? parseInt(lvlEl.textContent.replace(/\D/g, ""), 10) : NaN;
+    panel.querySelectorAll("[data-level]").forEach((cell) => {
+      const on = parseInt(cell.dataset.level, 10) === cur;
+      cell.style.background = on ? "#ffe082" : "#fffdf6";
+      cell.style.borderColor = on ? "#e6a817" : "#d9c79a";
+      cell.style.boxShadow = on ? "0 0 0 1px #e6a817" : "none";
+    });
   }
 
   // --- Extract current island ID from URL query params ---
@@ -965,11 +1025,13 @@
   let barbTimer = null;
   const barbObs = new MutationObserver(() => {
     if (document.body.id !== "island") return;
-    if (document.getElementById("ik-ships-needed")) return;
     if (barbTimer) return;
     barbTimer = setTimeout(() => {
       barbTimer = null;
       injectShipsNeeded();
+      // Re-run every batch (no early-out): the lookup panel re-injects after a
+      // village re-render and keeps the current-level highlight in sync.
+      injectBarbLookup();
     }, 300);
   });
   barbObs.observe(document.body, { childList: true, subtree: true });
