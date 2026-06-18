@@ -783,12 +783,19 @@
   // --- Barbarian village: always-present per-level ships lookup table ---
   // Goods = wood+wine+marble+crystal+sulphur (gold goes straight to the
   // treasury, not into cargo ships). Source: Ikariam wiki "Maximum resources
-  // available to pillage", levels 1-19. Shown as a wide strip so the current
-  // level's ship count is readable even while the live resource counts (which
-  // drive injectShipsNeeded) are still loading after a level switch.
+  // available to pillage", levels 1-19 (first row) and 20-39 (second row).
+  // Shown as a wide strip so the current level's ship count is readable even
+  // while the live resource counts (which drive injectShipsNeeded) are still
+  // loading after a level switch.
   const BARB_GOODS_BY_LEVEL = [
     500, 575, 725, 950, 1250, 1625, 1995, 2500, 3100, 3880,
     4840, 5980, 7300, 8800, 10480, 12340, 14380, 16600, 19000,
+  ];
+  // Levels 20-39 (Fandom wiki "Barbarian Kings", goods = wood+wine+marble+
+  // crystal+sulphur, gold excluded). Rendered as a second strip row.
+  const BARB_GOODS_BY_LEVEL_20_39 = [
+    21801, 25000, 28600, 32778, 37000, 41801, 47000, 52600, 58600, 65000,
+    72300, 80203, 89600, 99600, 110500, 122300, 135000, 148600, 163100, 178500,
   ];
 
   function injectBarbLookup() {
@@ -805,29 +812,35 @@
       const title = document.createElement("div");
       title.textContent = "⚓ Ships needed by barbarian level (" + SHIP_CAPACITY + " cargo / ship)";
       title.style.cssText = "font-size:11px; font-weight:bold; opacity:0.8; margin-bottom:4px;";
-      const grid = document.createElement("div");
-      grid.style.cssText = "display:flex; flex-wrap:wrap; gap:2px;";
-      BARB_GOODS_BY_LEVEL.forEach((goods, i) => {
-        const lvl = i + 1;
-        const ships = Math.ceil(goods / SHIP_CAPACITY);
-        const cell = document.createElement("div");
-        cell.dataset.level = lvl;
-        cell.title = `Level ${lvl}: ${goods.toLocaleString()} goods → ${ships} ships`;
-        cell.style.cssText =
-          "width:30px; text-align:center; padding:2px 0; border:1px solid #d9c79a; " +
-          "border-radius:3px; background:#fffdf6; line-height:1.15;";
-        cell.innerHTML =
-          `<div style="font-size:10px; opacity:0.6;">${lvl}</div>` +
-          `<div style="font-size:15px; font-weight:bold;">${ships}</div>`;
-        grid.appendChild(cell);
-      });
+      const buildRow = (goodsArr, startLevel) => {
+        const grid = document.createElement("div");
+        grid.style.cssText = "display:flex; flex-wrap:wrap; gap:2px; margin-bottom:2px;";
+        goodsArr.forEach((goods, i) => {
+          const lvl = startLevel + i;
+          const ships = Math.ceil(goods / SHIP_CAPACITY);
+          const cell = document.createElement("div");
+          cell.dataset.level = lvl;
+          cell.title = `Level ${lvl}: ${goods.toLocaleString()} goods → ${ships} ships`;
+          cell.style.cssText =
+            "width:28px; text-align:center; padding:2px 0; border:1px solid #d9c79a; " +
+            "border-radius:3px; background:#fffdf6; line-height:1.15;";
+          cell.innerHTML =
+            `<div style="font-size:10px; opacity:0.6;">${lvl}</div>` +
+            `<div style="font-size:15px; font-weight:bold;">${ships}</div>`;
+          grid.appendChild(cell);
+        });
+        return grid;
+      };
       panel.appendChild(title);
-      panel.appendChild(grid);
+      // Level 0 (0 goods → 0 ships) prefixes the first row so it spans 0-19,
+      // aligning column-for-column with the 20-39 row below it.
+      panel.appendChild(buildRow([0, ...BARB_GOODS_BY_LEVEL], 0));
+      panel.appendChild(buildRow(BARB_GOODS_BY_LEVEL_20_39, 20));
       speech.after(panel);
     }
 
     // Highlight the current level (read fresh each call so it tracks level
-    // changes). Levels above the table (20+) simply leave nothing highlighted.
+    // changes). Levels above the table (40+) simply leave nothing highlighted.
     const lvlEl = document.getElementById("js_islandBarbarianLevel");
     const cur = lvlEl ? parseInt(lvlEl.textContent.replace(/\D/g, ""), 10) : NaN;
     panel.querySelectorAll("[data-level]").forEach((cell) => {
