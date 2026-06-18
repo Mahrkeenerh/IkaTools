@@ -13,6 +13,8 @@
   let ctCheckedIds = null; // Set of ownerIds actually checked in last CT scan
   let markIndex = null; // {byCityId: Map<cid, {state, ts}>} from CityMarks
   let traderIds = new Set(); // avatarIds of recent trade partners
+  let pirateIds = new Set(); // avatarIds of saved piracy-leaderboard loot targets (empty when toggle off)
+  let ignoredIds = new Set(); // avatarIds marked as ignoring CT offers (CtIgnored)
   let virtualCities = null; // array indexed by position; null entries = buildplace
   let tilesObserver = null;
 
@@ -63,6 +65,19 @@
     const data = await chrome.storage.local.get("tradePartners_" + worldName);
     const map = data["tradePartners_" + worldName] || {};
     traderIds = new Set(Object.keys(map));
+  }
+
+  // Saved piracy-leaderboard loot targets — gated by the global toggle.
+  async function loadPirateData() {
+    const worldName = IkUtils.getUrlWorldName() || "unknown";
+    const key = "pirateTargets_" + worldName;
+    const data = await chrome.storage.local.get([key, "pirateTargetsEnabled"]);
+    const on = data.pirateTargetsEnabled !== false; // default on
+    pirateIds = on ? new Set(Object.keys(data[key] || {})) : new Set();
+  }
+
+  async function loadIgnoredData() {
+    ignoredIds = globalThis.CtIgnored ? await CtIgnored.getIds() : new Set();
   }
 
   // Read the ownership category from the game's own class list on the tile.
@@ -167,6 +182,8 @@
         _mark: markState,
         _looted: looted,
         _tradePartner: traderIds.has(ownerId),
+        _pirateTarget: pirateIds.has(ownerId),
+        _ctIgnored: ignoredIds.has(ownerId),
       });
     }
     return result;
@@ -262,6 +279,8 @@
     await loadCtData();
     await loadMarkData();
     await loadTraderData();
+    await loadPirateData();
+    await loadIgnoredData();
     virtualCities = null;
 
     const ready = await waitForIslandDOM();
@@ -367,6 +386,24 @@
     }
     if (changes["tradePartners_" + worldName]) {
       loadTraderData().then(async () => {
+        virtualCities = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+      });
+    }
+    if (changes["pirateTargets_" + worldName] || changes.pirateTargetsEnabled) {
+      loadPirateData().then(async () => {
+        virtualCities = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+      });
+    }
+    if (changes["ctIgnored_" + worldName]) {
+      loadIgnoredData().then(async () => {
         virtualCities = null;
         FilterRunner.invalidateAll();
         await refreshCustomResults();

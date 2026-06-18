@@ -36,11 +36,14 @@ globalThis.MapFilter = (() => {
     // `parameterized` filters render as rule rows, not chips, in the panel.
     // `requiresRich` flags filters that should be hidden when no query index exists.
     { type: "ctAvailable", value: true, label: "CT available", color: "#00FFAA", group: "Cultural Treaty", requiresRich: true },
+    { type: "ctIgnored", value: true, label: "CT ignored", color: "#d08a3a", group: "Cultural Treaty", requiresRich: true },
+    { type: "ctNotIgnored", value: true, label: "Not ignored", color: "#00AA88", group: "Cultural Treaty", requiresRich: true },
     { type: "hasInactive", value: true, label: "Has inactive", color: "#999966", group: "Players", requiresRich: true },
     { type: "allyTag", value: "", label: "Alliance tag", color: "#FFAA00", group: "Players", requiresRich: true, parameterized: true, paramKind: "allyTag", paramPlaceholder: "tag" },
     { type: "playerName", value: "", label: "Player name contains", color: "#FF77DD", group: "Players", requiresRich: true, parameterized: true, paramKind: "text", paramPlaceholder: "substring" },
     { type: "armyMin", value: null, label: "Player army >=", color: "#FF6644", group: "Players", requiresRich: true, parameterized: true, paramKind: "number", paramPlaceholder: "e.g. 50000" },
     { type: "tradePartner", value: true, label: "Trade partners", color: "#E040FB", group: "Players" },
+    { type: "pirateTarget", value: true, label: "Loot targets", color: "#FF7043", group: "Players" },
     // City marks — manual {lootable, looted, empty} per-city tags, independent of full scan
     { type: "markLootable", value: true, label: "Lootable", color: "#5ab87a", group: "Marks" },
     { type: "markLooted", value: true, label: "Looted", color: "#E04444", group: "Marks" },
@@ -63,6 +66,8 @@ globalThis.MapFilter = (() => {
         return !!isl[filter.value];
       // Rich predicates — read precomputed underscore fields stamped by enrichment
       case "ctAvailable": return !!isl._ctAvailable;
+      case "ctIgnored": return !!isl._ctIgnored;
+      case "ctNotIgnored": return !isl._ctIgnored;
       case "hasInactive": return isl._players && isl._players.some(p => p.state === "inactive");
       case "allyTag": {
         if (!filter.value || !isl._allyTags) return false;
@@ -79,6 +84,7 @@ globalThis.MapFilter = (() => {
         return (isl._maxArmy || 0) >= n;
       }
       case "tradePartner": return !!isl._tradePartner;
+      case "pirateTarget": return !!isl._pirateTarget;
       case "markLootable": return isl._mark === "lootable";
       case "markLooted": return isl._mark === "looted";
       case "markEmpty": return isl._mark === "empty";
@@ -153,6 +159,7 @@ globalThis.MapFilter = (() => {
 //   _players         Array<{id, name, ally, allyId, state, cities, maxLevel, place, building, research, army, gold, cityIds, looted}>
 //   _ctAvailable     boolean
 //   _ctChecked       boolean
+//   _ctIgnored       boolean         (any player on the island is marked as ignoring CT offers)
 //   _looted          number          (timestamp of last "looted" mark, 0 otherwise — kept for legacy filter use)
 //   _mark            string|null     ("lootable" | "looted" | "empty" | null)
 //

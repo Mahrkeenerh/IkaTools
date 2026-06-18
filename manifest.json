@@ -27,7 +27,7 @@
     {
       "matches": ["*://*.ikariam.gameforge.com/*"],
       "exclude_matches": ["*://forum.ikariam.gameforge.com/*"],
-      "js": ["content/utils.js", "content/citymarks.js", "content/customeval.js", "content/cleanup.js", "content/content.js", "content/mapfilter.js", "content/filterrunner.js", "content/maprender.js", "content/scanner.js", "content/minimap.js", "content/filterpanel.js", "content/islandfilter.js", "content/islandinfo.js", "content/autofinish.js", "content/autopirate.js", "content/miraclescheduler.js", "content/tradehistory.js", "content/advisor.js", "content/upgradeinfo.js", "content/winetimer.js", "content/gamenotes.js", "content/culturaltreaty.js", "content/cargoall.js", "content/museumpartners.js", "content/tradereceipts.js", "content/tradedetect.js", "content/battlereport.js", "content/spymissions.js"],
+      "js": ["content/utils.js", "content/citymarks.js", "content/ctignored.js", "content/customeval.js", "content/cleanup.js", "content/content.js", "content/mapfilter.js", "content/filterrunner.js", "content/maprender.js", "content/scanner.js", "content/minimap.js", "content/filterpanel.js", "content/islandfilter.js", "content/islandinfo.js", "content/autofinish.js", "content/autopirate.js", "content/miraclescheduler.js", "content/tradehistory.js", "content/advisor.js", "content/upgradeinfo.js", "content/winetimer.js", "content/gamenotes.js", "content/culturaltreaty.js", "content/cargoall.js", "content/museumpartners.js", "content/tradereceipts.js", "content/tradedetect.js", "content/piracytargets.js", "content/battlereport.js", "content/spymissions.js"],
       "run_at": "document_idle"
     }
   ],

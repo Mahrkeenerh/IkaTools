@@ -22,6 +22,7 @@
   const posLeft = $("pos-left");
   const posRight = $("pos-right");
   const cleanupToggle = $("cleanup-toggle");
+  const pirateTargetsToggle = $("pirate-targets-toggle");
 
   let ikariamTabId = null;
   let ikariamWorldName = null; // world name extracted from the active tab URL
@@ -70,6 +71,7 @@
     loadGallery();
     loadMinimapState();
     loadCleanupState();
+    loadPirateTargetsState();
     loadPirateState();
     loadNotes();
     if (ikariamTabId) { checkScanState(); checkCtState(); refreshButtonStates(); }
@@ -703,6 +705,17 @@
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "cleanup-toggle", enabled }).catch(() => {});
     }
+  });
+
+  // --- Loot targets (piracy leaderboard) toggle ---
+  // Content scripts react to the storage change directly (no message needed).
+  async function loadPirateTargetsState() {
+    const data = await chrome.storage.local.get("pirateTargetsEnabled");
+    pirateTargetsToggle.checked = data.pirateTargetsEnabled !== false; // default on
+  }
+
+  pirateTargetsToggle.addEventListener("change", () => {
+    chrome.storage.local.set({ pirateTargetsEnabled: pirateTargetsToggle.checked });
   });
 
   // --- Auto pirate ---

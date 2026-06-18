@@ -494,6 +494,8 @@
   let queryIndex = null; // derived rich-data blob (queryIndex_{world})
   let markIndex = null; // {byCityId: Map<cid, {state, ts}>} from CityMarks
   let traderIds = new Set(); // avatarIds of recent trade partners
+  let pirateIds = new Set(); // avatarIds of saved piracy-leaderboard loot targets (empty when toggle off)
+  let ignoredIds = new Set(); // avatarIds marked as ignoring CT offers (CtIgnored)
 
   async function loadAllianceIndex() {
     const worldName = IkUtils.getUrlWorldName() || "unknown";
@@ -524,6 +526,19 @@
     const data = await chrome.storage.local.get("tradePartners_" + worldName);
     const map = data["tradePartners_" + worldName] || {};
     traderIds = new Set(Object.keys(map));
+  }
+
+  // Saved piracy-leaderboard loot targets — gated by the global toggle.
+  async function loadPirates() {
+    const worldName = IkUtils.getUrlWorldName() || "unknown";
+    const key = "pirateTargets_" + worldName;
+    const data = await chrome.storage.local.get([key, "pirateTargetsEnabled"]);
+    const on = data.pirateTargetsEnabled !== false; // default on
+    pirateIds = on ? new Set(Object.keys(data[key] || {})) : new Set();
+  }
+
+  async function loadIgnored() {
+    ignoredIds = globalThis.CtIgnored ? await CtIgnored.getIds() : new Set();
   }
 
   // --- Local filter evaluation state (no globals in MapFilter) ---
@@ -571,6 +586,8 @@
   function enrichIslandsWithRichData(islands) {
     const byCityIdMark = markIndex ? markIndex.byCityId : null;
     const hasTraders = traderIds && traderIds.size > 0;
+    const hasPirates = pirateIds && pirateIds.size > 0;
+    const hasIgnored = ignoredIds && ignoredIds.size > 0;
 
     // Roll up the strongest mark across an island's player records.
     // Priority: lootable > looted > empty (lootable = "should hit", surfaces first).
@@ -607,6 +624,8 @@
         isl._mark = null;
         isl._looted = 0;
         isl._tradePartner = false;
+        isl._pirateTarget = false;
+        isl._ctIgnored = false;
       }
       return;
     }
@@ -623,6 +642,8 @@
         isl._mark = null;
         isl._looted = 0;
         isl._tradePartner = false;
+        isl._pirateTarget = false;
+        isl._ctIgnored = false;
         continue;
       }
       isl._allyTags = new Set(entry.allyTags || []);
@@ -651,6 +672,8 @@
       isl._mark = rollup.state;
       isl._looted = rollup.state === "looted" ? rollup.ts : 0;
       isl._tradePartner = hasTraders && isl._players.some((p) => traderIds.has(String(p.id)));
+      isl._pirateTarget = hasPirates && isl._players.some((p) => pirateIds.has(String(p.id)));
+      isl._ctIgnored = hasIgnored && isl._players.some((p) => ignoredIds.has(String(p.id)));
     }
   }
 
@@ -871,6 +894,8 @@
       await loadAllianceIndex();
       await loadMarkIndex();
       await loadTraders();
+      await loadPirates();
+      await loadIgnored();
       // Pre-evaluate any restored custom JS predicate against the freshly loaded data
       await refreshCustomResults();
       await refreshPresetResults();
@@ -1175,6 +1200,8 @@
     const queryIdxKey = "queryIndex_" + worldName;
     const cityMarksKey = "cityMarks_" + worldName;
     const tradersKey = "tradePartners_" + worldName;
+    const piratesKey = "pirateTargets_" + worldName;
+    const ignoredKey = "ctIgnored_" + worldName;
     if (changes[cityMarksKey]) {
       loadMarkIndex().then(async () => {
         cachedBaseMap = null;
@@ -1188,6 +1215,28 @@
     }
     if (changes[tradersKey]) {
       loadTraders().then(async () => {
+        cachedBaseMap = null;
+        islandsByCoord = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+        drawMinimap();
+      });
+    }
+    if (changes[piratesKey] || changes.pirateTargetsEnabled) {
+      loadPirates().then(async () => {
+        cachedBaseMap = null;
+        islandsByCoord = null;
+        FilterRunner.invalidateAll();
+        await refreshCustomResults();
+        await refreshPresetResults();
+        applyDimming();
+        drawMinimap();
+      });
+    }
+    if (changes[ignoredKey]) {
+      loadIgnored().then(async () => {
         cachedBaseMap = null;
         islandsByCoord = null;
         FilterRunner.invalidateAll();

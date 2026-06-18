@@ -5,9 +5,11 @@
   const FRIEND_COLOR = "#00FF88"; // green for friends
   const PARTNER_COLOR = "#FFD700"; // gold for museum treaty partners
   const TRADER_COLOR = "#E040FB"; // magenta for trade partners (don't attack!)
+  const PIRATE_COLOR = "#FF7043"; // orange for saved piracy-leaderboard loot targets
   let friendIds = new Set();
   let partnerIds = new Set();
   let traderIds = new Set();
+  let pirateCoefs = new Map(); // ownerId -> loot coefficient (booty multiplier); empty when toggle off
   let markIndex = null; // {byCityId: Map<cid, {state, ts}>} from CityMarks
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
@@ -23,6 +25,7 @@
   const KEY_FRIEND_LIST_LEGACY = "friendList_" + worldName; // deprecated, migrated on read
   const KEY_PARTNERS = "museumPartners_" + worldName;
   const KEY_TRADERS = "tradePartners_" + worldName;
+  const KEY_PIRATES = "pirateTargets_" + worldName;
   // Per-avatar total score cache: { [avatarId]: { total, ts } }. Total comes from
   // the page-side `js_selectedCityScore` element when a player is selected on the
   // island view (passively scraped) or by fetching `?view=island&playerId=X`.
@@ -204,6 +207,18 @@
     const data = await chrome.storage.local.get(KEY_TRADERS);
     const map = data[KEY_TRADERS] || {};
     traderIds = new Set(Object.keys(map));
+  }
+
+  // Saved piracy-leaderboard loot targets -> ownerId:coef. The coefficient is
+  // the booty multiplier when raiding that player (the indicator). Toggle-gated.
+  async function loadPirates() {
+    const data = await chrome.storage.local.get([KEY_PIRATES, "pirateTargetsEnabled"]);
+    const on = data.pirateTargetsEnabled !== false; // default on
+    pirateCoefs = new Map();
+    if (on) {
+      const map = data[KEY_PIRATES] || {};
+      for (const id in map) pirateCoefs.set(id, map[id] && map[id].coef || 0);
+    }
   }
 
   async function loadMarks() {
@@ -550,10 +565,15 @@
         const isFriend = !city.isOwn && friendIds.has(city.ownerId);
         const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
         const isTrader = !city.isOwn && !isFriend && !isPartner && traderIds.has(city.ownerId);
-        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isTrader ? `color:${TRADER_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
+        // Loot badge shows for every saved target, even friends/partners/traders.
+        const hasLoot = !city.isOwn && pirateCoefs.has(city.ownerId);
+        // Pirate name-color only when no friendlier relationship claims it.
+        const isPirate = hasLoot && !isFriend && !isPartner && !isTrader;
+        const nameStyle = city.isOwn ? `color:${OWN_COLOR};font-weight:bold;` : isPartner ? `color:${PARTNER_COLOR};font-weight:bold;` : isFriend ? `color:${FRIEND_COLOR};font-weight:bold;` : isTrader ? `color:${TRADER_COLOR};font-weight:bold;` : isPirate ? `color:${PIRATE_COLOR};font-weight:bold;` : city.state === "vacation" ? "color:#888;font-style:italic;" : city.state === "inactive" ? "color:#666;" : "color:#e0e8f0;";
+        const lootBadge = hasLoot ? ` <span style="color:${PIRATE_COLOR};font-size:9px;" title="Loot coefficient — booty multiplier when raided">🏴×${pirateCoefs.get(city.ownerId)}</span>` : "";
         const rowBg = "";
         html += `<tr class="ik-city-row" data-position="${city.position}" style="cursor:pointer;border-bottom:1px solid #1e2535;${rowBg}" title="Click to view ${city.name}">
-          <td style="padding:3px 4px;${nameStyle}"><div>${city.ownerName}${badge}</div><div style="font-size:9px;color:#667;">${city.name}</div></td>
+          <td style="padding:3px 4px;${nameStyle}"><div>${city.ownerName}${badge}${lootBadge}</div><div style="font-size:9px;color:#667;">${city.name}</div></td>
           <td style="padding:3px 4px;">${city.level}</td>
           <td style="padding:3px 4px;color:#7ec8e3;font-size:10px;">${city.allyTag || "-"}</td>
           <td style="padding:3px 4px;">${fmt(city.scores.building)}</td>
@@ -641,9 +661,12 @@
       const isFriend = !city.isOwn && friendIds.has(city.ownerId);
       const isPartner = !city.isOwn && partnerIds.has(city.ownerId);
       const isTrader = !city.isOwn && !isFriend && !isPartner && traderIds.has(city.ownerId);
-      const nameColor = city.isOwn ? OWN_COLOR : isPartner ? PARTNER_COLOR : isFriend ? FRIEND_COLOR : isTrader ? TRADER_COLOR : "#dde";
-      const nameBold = city.isOwn || isFriend || isPartner || isTrader ? "font-weight:bold;" : "";
-      label.innerHTML = `${allyPart}<span style="color:${nameColor};${nameBold}">${city.ownerName}</span>`;
+      const hasLoot = !city.isOwn && pirateCoefs.has(city.ownerId);
+      const isPirate = hasLoot && !isFriend && !isPartner && !isTrader;
+      const nameColor = city.isOwn ? OWN_COLOR : isPartner ? PARTNER_COLOR : isFriend ? FRIEND_COLOR : isTrader ? TRADER_COLOR : isPirate ? PIRATE_COLOR : "#dde";
+      const nameBold = city.isOwn || isFriend || isPartner || isTrader || isPirate ? "font-weight:bold;" : "";
+      const lootBadge = hasLoot ? ` <span style="color:${PIRATE_COLOR};">🏴×${pirateCoefs.get(city.ownerId)}</span>` : "";
+      label.innerHTML = `${allyPart}<span style="color:${nameColor};${nameBold}">${city.ownerName}</span>${lootBadge}`;
 
       const labelBg = "rgba(0,0,0,0.85)";
       Object.assign(label.style, {
@@ -844,6 +867,16 @@
       || tryHref(document.querySelector('[id^="cityLocation"].selected[saved-href]'));
   }
 
+  // Owner avatarId + name of the city currently shown in the sidebar — used for
+  // the per-player "ignoring CT offers" toggle (CtIgnored is keyed by avatarId).
+  function readSelectedOwner() {
+    const el = document.getElementById("js_selectedCityOwnerName");
+    if (!el) return null;
+    const m = (el.getAttribute("href") || "").match(/avatarId=(\d+)/);
+    if (!m) return null;
+    return { id: m[1], name: el.textContent.trim() };
+  }
+
   async function injectSidebarMark() {
     if (document.body.id !== "island") return;
     const table = document.querySelector("#sidebar .sidebar_cityDetails table.cityinfo");
@@ -882,6 +915,17 @@
         if (isOwn && newState == null) tr.remove();
       };
       widgetTd.appendChild(CityMarks.createWidget(cityId, { compact: true, onChange }));
+    }
+    // Per-player "ignoring CT offers" toggle — sits next to the city marks but
+    // is keyed by the owner's avatarId, not the cityId. Foreign cities only.
+    if (!isOwn && globalThis.CtIgnored) {
+      const owner = readSelectedOwner();
+      if (owner) {
+        const sep = document.createElement("span");
+        sep.style.cssText = "display:inline-block;width:8px;";
+        widgetTd.appendChild(sep);
+        widgetTd.appendChild(CtIgnored.createButton(owner.id, { name: owner.name, compact: true }));
+      }
     }
     tr.appendChild(labelTd);
     tr.appendChild(widgetTd);
@@ -937,7 +981,7 @@
   }
 
   // Load cached friends + partners + traders + marks + avatar totals first
-  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadMarks(), loadAvatarTotals()]).then(() => {
+  Promise.all([loadFriends(), loadPartners(), loadTraders(), loadPirates(), loadMarks(), loadAvatarTotals()]).then(() => {
     scrapeFriends();
     init();
   });
@@ -1013,6 +1057,16 @@
         panel = null;
         init();
       }
+    }
+    if (changes[KEY_PIRATES] || changes.pirateTargetsEnabled) {
+      loadPirates().then(() => {
+        if (document.body.id === "island" && panel) {
+          initialized = false;
+          panel.remove();
+          panel = null;
+          init();
+        }
+      });
     }
     if (changes["cityMarks_" + worldName]) {
       refreshMarkLabels();

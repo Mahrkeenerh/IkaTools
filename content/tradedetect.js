@@ -545,8 +545,10 @@
       if (!subj) continue;
       if (!isMarketTradeRow(subj)) continue;
 
-      // Two cityId links: the first is the BUYER's home, the second is the
-      // SELLER's city. One side will be ours; the other is the trade partner.
+      // Two cityId links matching the goods flow origin → destination, e.g.
+      // "…flotila z {SELLER} dorazila do {BUYER} a přivezla zboží". The goods
+      // come FROM the first city (seller) and land AT the second (buyer). One
+      // side is ours; the other is the trade partner.
       const links = subj.querySelectorAll("a[href*='cityId=']");
       if (links.length < 2) continue;
 
@@ -561,8 +563,8 @@
       }
       if (linkInfo.length < 2) continue;
 
-      const buyer = linkInfo[0];
-      const seller = linkInfo[1];
+      const seller = linkInfo[0];
+      const buyer = linkInfo[1];
       const buyerOurs = ourIds.has(String(buyer.cityId));
       const sellerOurs = ourIds.has(String(seller.cityId));
 
