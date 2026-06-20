@@ -73,6 +73,7 @@
     loadCleanupState();
     loadPirateTargetsState();
     loadPirateState();
+    renderPirateHistory();
     loadNotes();
     if (ikariamTabId) { checkScanState(); checkCtState(); refreshButtonStates(); }
   });
@@ -722,6 +723,7 @@
   const pirateToggle = $("pirate-toggle");
   const convertToggle = $("convert-toggle");
   const aggressiveToggle = $("aggressive-toggle");
+  const hideFortressToggle = $("hide-fortress-toggle");
   const pirateCity = $("pirate-city");
   const pirateStart = $("pirate-start");
   const pirateEnd = $("pirate-end");
@@ -739,6 +741,85 @@
   chrome.storage.local.get("pirateStatus", (data) => renderPirateStats(data.pirateStatus));
   chrome.storage.onChanged.addListener((changes) => {
     if (changes.pirateStatus) renderPirateStats(changes.pirateStatus.newValue);
+  });
+
+  // --- Daily activity history (real-data readout for tuning) ---
+  const pirateHistory = $("pirate-history");
+  function fmtDur(ms) {
+    const m = Math.round(ms / 60000);
+    if (m < 60) return m + "m";
+    return Math.floor(m / 60) + "h" + String(m % 60).padStart(2, "0");
+  }
+  function fmtK(n) {
+    return n >= 1000 ? (n / 1000).toFixed(1) + "k" : Math.round(n).toString();
+  }
+  function renderPirateHistory() {
+    if (!pirateHistory || !ikariamWorldName) return;
+    chrome.storage.local.get("pirateDailyLog_" + ikariamWorldName, (data) => {
+      const log = data["pirateDailyLog_" + ikariamWorldName];
+      const exportBtn = $("pirate-export-log");
+      if (!log || !Object.keys(log).length) {
+        pirateHistory.style.display = "none";
+        if (exportBtn) exportBtn.style.display = "none";
+        return;
+      }
+      if (exportBtn) exportBtn.style.display = "block";
+      // Reward model mirrors the Expected-yield panel (avg per tier)
+      const T1_PTS = 115, T2_PTS = 276;
+      const days = Object.keys(log).sort().reverse().slice(0, 7);
+      let rows = "";
+      let totRaids = 0, totPts = 0, totWork = 0, totFg = 0, totDays = 0;
+      for (const day of days) {
+        const r = log[day];
+        const uRaids = r.userRaids || 0;
+        const pts = (r.t1 + (r.ut1 || 0)) * T1_PTS + (r.t2 + (r.ut2 || 0)) * T2_PTS;
+        const duty = (r.workMs + r.fgMs) > 0 ? Math.round(r.workMs / (r.workMs + r.fgMs) * 100) : 0;
+        const md = day.slice(5); // MM-DD
+        const manual = uRaids ? `+${uRaids}m ` : "";
+        rows += `${md}  ${String(r.raids).padStart(3)} raids ${manual}  ${fmtK(pts).padStart(5)} pts  ` +
+          `work ${fmtDur(r.workMs)} / ${duty}% duty\n`;
+        totRaids += r.raids + uRaids; totPts += pts; totWork += r.workMs; totFg += r.fgMs; totDays++;
+      }
+      const avgDuty = (totWork + totFg) > 0 ? Math.round(totWork / (totWork + totFg) * 100) : 0;
+      const header = `<b style="color:#e0e4ec">Last ${totDays}d</b>  ` +
+        `<span style="color:#5ca0f2">${fmtK(totPts / totDays)} pts/day avg</span>  ` +
+        `<span style="color:#556">${Math.round(totRaids / totDays)} raids/day, ${avgDuty}% duty</span>\n`;
+      pirateHistory.style.display = "block";
+      pirateHistory.innerHTML = header + `<span style="white-space:pre">${rows}</span>`;
+    });
+  }
+  chrome.storage.onChanged.addListener((changes) => {
+    if (ikariamWorldName && changes["pirateDailyLog_" + ikariamWorldName]) renderPirateHistory();
+  });
+
+  // Export the full daily + event timeline as JSON for offline analysis
+  const pirateExportBtn = $("pirate-export-log");
+  if (pirateExportBtn) pirateExportBtn.addEventListener("click", () => {
+    if (!ikariamWorldName) return;
+    const idxKey = "pirateEventsIdx_" + ikariamWorldName;
+    const dailyKey = "pirateDailyLog_" + ikariamWorldName;
+    chrome.storage.local.get([idxKey, dailyKey], (data) => {
+      const idx = data[idxKey] || { days: [] };
+      const chunkKeys = idx.days.map((d) => "pirateEvents_" + ikariamWorldName + "_" + d);
+      chrome.storage.local.get(chunkKeys, (chunks) => {
+        const events = {};
+        for (const d of idx.days) events[d] = chunks["pirateEvents_" + ikariamWorldName + "_" + d] || [];
+        const out = {
+          world: ikariamWorldName,
+          exportedAt: new Date().toISOString(),
+          eventTypes: "on/off, raid{tier,dur} (bot), userRaid{tier} (manual), break{ms,forced}, convert, return, phase{p}, focus/blur, visible/hidden, captcha",
+          daily: data[dailyKey] || {},
+          events,
+        };
+        const blob = new Blob([JSON.stringify(out, null, 2)], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = "pirate-log-" + ikariamWorldName + "-" + new Date().toISOString().slice(0, 10) + ".json";
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+      });
+    });
   });
 
   // Advanced timing param IDs and their storage keys
@@ -791,7 +872,7 @@
     const pirateCityScopedKey = pirateWorldName ? "pirateCityId_" + pirateWorldName : null;
     const keys = [
       "pirateEnabled", "pirateConvertEnabled", "pirateAggressive", "pirateCityId",
-      "pirateSleepStart", "pirateSleepEnd",
+      "pirateSleepStart", "pirateSleepEnd", "hideFortressEnabled",
       ...PIRATE_ADV.map((a) => a.key),
     ];
     if (pirateCityScopedKey) keys.push(pirateCityScopedKey);
@@ -800,6 +881,7 @@
     pirateToggle.checked = !!data.pirateEnabled;
     convertToggle.checked = !!data.pirateConvertEnabled;
     aggressiveToggle.checked = !!data.pirateAggressive;
+    hideFortressToggle.checked = data.hideFortressEnabled ?? true;
     pirateStart.value = data.pirateSleepStart ?? 1;
     pirateEnd.value = data.pirateSleepEnd ?? 7;
 
@@ -846,6 +928,14 @@
     chrome.storage.local.set({ pirateAggressive: enabled });
     if (ikariamTabId) {
       chrome.tabs.sendMessage(ikariamTabId, { type: "pirate-aggressive-toggle", enabled }).catch(() => {});
+    }
+  });
+
+  hideFortressToggle.addEventListener("change", () => {
+    const enabled = hideFortressToggle.checked;
+    chrome.storage.local.set({ hideFortressEnabled: enabled });
+    if (ikariamTabId) {
+      chrome.tabs.sendMessage(ikariamTabId, { type: "hide-fortress-toggle", enabled }).catch(() => {});
     }
   });
 

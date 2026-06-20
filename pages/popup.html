@@ -450,7 +450,9 @@ body {
 </div>
 
 <div id="pirate-panel" class="panel">
-  <div id="pirate-stats-bar" style="padding:8px 12px;margin-bottom:12px;background:var(--bg-panel);border-radius:6px;font-size:12px;color:var(--text-muted);line-height:1.6"></div>
+  <div id="pirate-stats-bar" style="padding:8px 12px;margin-bottom:8px;background:var(--bg-panel);border-radius:6px;font-size:12px;color:var(--text-muted);line-height:1.6"></div>
+  <div id="pirate-history" style="padding:8px 12px;margin-bottom:6px;background:#0d1018;border-radius:6px;font-size:11px;color:#8890a0;line-height:1.6;font-family:monospace;display:none"></div>
+  <button class="btn btn-secondary btn-sm" id="pirate-export-log" style="display:none;margin-bottom:12px" title="Download the full per-day activity + event timeline as JSON for analysis">Export pirate log (JSON)</button>
 
   <div class="setting-row">
     <label class="toggle">
@@ -480,6 +482,16 @@ body {
     <div class="setting-label">
       <span>Aggressive mode</span>
       <span class="setting-desc">Halves all pauses, breaks, and idle delays (mission durations unchanged) — for last-day comp pushes</span>
+    </div>
+  </div>
+  <div class="setting-row">
+    <label class="toggle">
+      <input type="checkbox" id="hide-fortress-toggle">
+      <span class="slider"></span>
+    </label>
+    <div class="setting-label">
+      <span>Hide pirate fortress</span>
+      <span class="setting-desc">Hides the fortress building on the city view (independent of "remove premium clutter")</span>
     </div>
   </div>
   <div class="setting-row" id="pirate-config" style="flex-wrap: wrap; gap: 8px;">

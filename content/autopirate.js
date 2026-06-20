@@ -29,16 +29,23 @@
   let cfg = {
     sleepStart: 1,       // hour when bot stops
     sleepEnd: 7,          // hour when bot can resume
-    baseMu: 2.9,          // log-normal center (higher = slower)
-    baseSigma: 1.0,       // log-normal spread
-    breakMin: 4,           // streak break min duration (minutes)
-    breakMax: 10,          // streak break max duration (minutes)
-    streakLo: 10,          // min raids before break hazard starts
-    streakHi: 20,          // raids where break becomes near-certain
-    distractChance: 0.10,  // chance to enter distracted state per raid
-    t2Base: 0.10,          // base T2 chance (early in streak)
-    t2Ramp: 0.60,          // T2 sigmoid max addition (peaks near break)
-    t2Distract: 0.45,      // T2 chance during distraction state
+    // High-throughput profile (TUNE_VERSION 2): same humanization mechanics
+    // (distraction, fatigue, tempo, breaks, post-break re-engagement) but the
+    // distribution is shifted faster — shorter/tighter delays, longer streaks,
+    // shorter breaks. Tuned from real log data toward ~30-35k pts/day.
+    baseMu: 2.5,          // log-normal center (higher = slower)
+    baseSigma: 0.6,       // log-normal spread (lower = fewer long-delay outliers)
+    breakMin: 2,           // streak break min duration (minutes)
+    breakMax: 5,           // streak break max duration (minutes)
+    streakLo: 18,          // min raids before break hazard starts
+    streakHi: 28,          // raids where break becomes near-certain
+    distractChance: 0.06,  // chance to enter distracted state per raid
+    // T2 kept close to the original pattern (ramp toward break + distraction
+    // elevation), just trimmed slightly — T1 is a bit denser post-nav-fix, but
+    // the small points cost (~2%) is worth the natural-looking variety.
+    t2Base: 0.08,          // base T2 chance (early in streak)
+    t2Ramp: 0.50,          // T2 sigmoid max addition (peaks near break)
+    t2Distract: 0.38,      // T2 chance during distraction state
     forceBreakChance: 0.20, // chance T2 triggers immediate break
     backToBackChance: 0.15, // chance to allow consecutive T2
   };
@@ -146,11 +153,174 @@
     }
   }
 
+  // --- Daily activity log (real-data capture for tuning) ---
+  // Durable per-day record of raid counts + a work/foreground duty-cycle, so
+  // expected-vs-actual can be compared and timing params tuned from real data.
+  // Unlike the session counters this is NOT reset daily — it's the history.
+  // Survives reloads/SW restarts via read-modify-add merge; pruned to the last
+  // DAILY_LOG_KEEP days.
+  const DAILY_LOG_KEEP = 30;
+  const DLOG_FIELDS = ["raids", "t1", "t2", "userRaids", "ut1", "ut2", "breaks", "breakMs", "converts", "workMs", "fgMs"];
+  function emptyDLog() {
+    const o = {};
+    for (const f of DLOG_FIELDS) o[f] = 0;
+    return o;
+  }
+  let dLog = emptyDLog();
+  let lastTickTs = 0;
+  let lastLogFlush = 0;
+
+  function logKey() { return "pirateDailyLog_" + IkUtils.getUrlWorldName(); }
+
+  function dayKey() {
+    const d = new Date();
+    return d.getFullYear() + "-" +
+      String(d.getMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getDate()).padStart(2, "0");
+  }
+
+  function logEmpty() {
+    return DLOG_FIELDS.every((f) => !dLog[f]);
+  }
+
+  function flushLog() {
+    if (logEmpty()) return;
+    const d = dLog;
+    dLog = emptyDLog();
+    lastLogFlush = Date.now();
+    const key = logKey();
+    const day = dayKey();
+    chrome.storage.local.get(key, (res) => {
+      const log = res[key] || {};
+      const r = log[day] || Object.assign(emptyDLog(), { firstTs: Date.now() });
+      for (const f of DLOG_FIELDS) r[f] = (r[f] || 0) + d[f];
+      r.lastTs = Date.now();
+      log[day] = r;
+      const days = Object.keys(log).sort();
+      while (days.length > DAILY_LOG_KEEP) delete log[days.shift()];
+      chrome.storage.local.set({ [key]: log });
+    });
+  }
+
+  // Attribute wall-clock between polls to work (bot could raid) vs foreground
+  // (blocked by active/focused user). Large gaps = PC asleep/tab suspended → dropped.
+  function accrueTickTime() {
+    const now = Date.now();
+    const prev = lastTickTs;
+    lastTickTs = now;
+    if (!prev) { trackPhase(); return; }
+    const delta = now - prev;
+    if (delta > 0 && delta <= 15000) {                // gap (PC asleep/suspended) → don't attribute
+      if (enabled && pirateCityId && isInActiveHours()) {
+        if (raidInProgress || Date.now() < nextActionTime) dLog.workMs += delta; // raid/delay/break = productive pacing
+        else if (!isIdle()) dLog.fgMs += delta;       // blocked by foreground user
+        else dLog.workMs += delta;                    // idle & ready to raid
+      }
+    }
+    trackPhase();
+    if (now - lastLogFlush > 30000) flushLog();
+    if (evBuf.length && now - lastEvFlush > 10000) flushEvents();
+  }
+
+  // --- Granular event stream (full reconstruction of the day) ---
+  // Append-only timeline so every state change can be replayed: bot on/off,
+  // each raid/break/convert, phase transitions (sleep/foreground/ready/...),
+  // and raw focus/visibility changes. Chunked per day with a 14-day index,
+  // buffered in memory and flushed in batches. unlimitedStorage is enabled.
+  const EVENT_LOG_KEEP_DAYS = 14;
+  let evBuf = [];
+  let lastEvFlush = 0;
+  let prevPhase = null;
+  let captchaSeen = false;
+
+  function evDayOf(ts) {
+    const d = new Date(ts);
+    return d.getFullYear() + "-" +
+      String(d.getMonth() + 1).padStart(2, "0") + "-" +
+      String(d.getDate()).padStart(2, "0");
+  }
+  function evKey(day) { return "pirateEvents_" + IkUtils.getUrlWorldName() + "_" + day; }
+  function evIdxKey() { return "pirateEventsIdx_" + IkUtils.getUrlWorldName(); }
+
+  function logEvent(e, extra) {
+    // Track only while the bot runs — except "off" (logged at stop) and
+    // "userRaid" (manual missions are relevant even when the bot is disabled).
+    if (!enabled && e !== "off" && e !== "userRaid") return;
+    const ev = { t: Date.now(), e };
+    if (extra) Object.assign(ev, extra);
+    evBuf.push(ev);
+    if (evBuf.length >= 20 || Date.now() - lastEvFlush > 10000) flushEvents();
+  }
+
+  function flushEvents() {
+    if (!evBuf.length) return;
+    const batch = evBuf;
+    evBuf = [];
+    lastEvFlush = Date.now();
+    const byDay = {};
+    for (const ev of batch) (byDay[evDayOf(ev.t)] = byDay[evDayOf(ev.t)] || []).push(ev);
+    const days = Object.keys(byDay);
+    const idxKey = evIdxKey();
+    chrome.storage.local.get(days.map(evKey).concat(idxKey), (res) => {
+      const idx = res[idxKey] || { days: [] };
+      const toSet = {};
+      for (const day of days) {
+        const arr = res[evKey(day)] || [];
+        arr.push(...byDay[day]);
+        toSet[evKey(day)] = arr;
+        if (!idx.days.includes(day)) idx.days.push(day);
+      }
+      idx.days.sort();
+      const removeKeys = [];
+      while (idx.days.length > EVENT_LOG_KEEP_DAYS) removeKeys.push(evKey(idx.days.shift()));
+      toSet[idxKey] = idx;
+      chrome.storage.local.set(toSet, () => {
+        if (removeKeys.length) chrome.storage.local.remove(removeKeys);
+      });
+    });
+  }
+
+  function currentPhase() {
+    if (!enabled || !pirateCityId) return "off";
+    if (!isInActiveHours()) return "sleep";
+    if (raidInProgress) return "raiding";
+    if (Date.now() < nextActionTime) return "waiting";
+    if (!isIdle()) return "foreground";   // user present / tab focused → bot blocked
+    return "ready";                       // idle & able to raid
+  }
+
+  // Manual (user-clicked) pirate mission. The bot launches via AJAX nav and
+  // never fires a real click on a capture button, so any genuine click here is
+  // the user. Tracked even when the bot is off (still earns points for the day).
+  function logUserRaid(tier) {
+    dLog.userRaids++;
+    if (tier === 0) dLog.ut1++; else dLog.ut2++;
+    logEvent("userRaid", { tier });
+    flushLog();
+  }
+
+  document.addEventListener("click", (e) => {
+    const btn = e.target && e.target.closest && e.target.closest("#pirateCaptureBox a.button.capture");
+    if (!btn) return;
+    const btns = Array.from(document.querySelectorAll("#pirateCaptureBox a.button.capture"));
+    const idx = btns.indexOf(btn);
+    logUserRaid(idx < 0 ? 0 : idx);
+  }, true);
+
+  // Emit a "phase" event only when the derived phase changes (no per-tick spam).
+  function trackPhase() {
+    const p = currentPhase();
+    if (p === prevPhase) return;
+    prevPhase = p;
+    logEvent("phase", { p });
+  }
+
   // --- Idle detection ---
   function onActivity() {
     if (!document.hasFocus() || document.hidden) return;
     lastActivity = Date.now();
     if (inControl) {
+      logEvent("return");   // user came back and took over while bot was active
       handBack();
     }
   }
@@ -159,10 +329,15 @@
     document.addEventListener(e, onActivity, { passive: true, capture: true })
   );
   document.addEventListener("visibilitychange", () => {
+    logEvent(document.hidden ? "hidden" : "visible");
     if (!document.hidden) onActivity();
   });
   window.addEventListener("focus", () => {
+    logEvent("focus");
     onActivity();
+  });
+  window.addEventListener("blur", () => {
+    logEvent("blur");
   });
 
   function handBack() {
@@ -171,6 +346,29 @@
     lastNavigateTime = 0;
     convertTimers.forEach((id) => clearTimeout(id));
     convertTimers = [];
+    if (preRefreshTimer) { clearTimeout(preRefreshTimer); preRefreshTimer = null; }
+  }
+
+  // --- Pre-refresh nav fix ---
+  // Reload the fortress booty box the moment the mission returns (crew back), so
+  // the next capture button is ready *during* the remaining human delay instead of
+  // adding navigation latency after it. Hides per-raid nav cost inside the cooldown.
+  // Guarded so it only runs when the bot is idle and in control; otherwise the
+  // normal poll-driven navigation at nextActionTime still handles it (fallback).
+  let preRefreshTimer = null;
+  function schedulePreRefresh(ms) {
+    if (preRefreshTimer) clearTimeout(preRefreshTimer);
+    preRefreshTimer = setTimeout(() => {
+      preRefreshTimer = null;
+      if (!enabled || !inControl || !pirateCityId || raidInProgress || !isIdle()) return;
+      // Already have a fresh capture button, or the mission is somehow still running
+      if (document.querySelector("#pirateCaptureBox a.button.capture")) return;
+      if (document.querySelector("#pirateCaptureBox .red_box")) return;
+      const onPirateCity = document.body.id === "city" && location.search.includes("cityId=" + pirateCityId);
+      if (onPirateCity || document.querySelector("#pirateFortress_c")) {
+        navigate("?view=pirateFortress&activeTab=tabBootyQuest&cityId=" + pirateCityId + "&position=17");
+      }
+    }, ms);
   }
 
   function isIdle() {
@@ -253,6 +451,9 @@
 
       sessionBreakCount++;
       sessionBreakMs += d;
+      dLog.breaks++;
+      dLog.breakMs += d;
+      logEvent("break", { ms: Math.round(d), forced: wasForced });
       // deadline is approximate — actual nextActionTime includes mission duration,
       // but break is the dominant component and gets refined on next poll
       reportStats();
@@ -377,6 +578,8 @@
         submitBtn.click();
         raidsSinceLastConvert = 0;
         sessionConverts++;
+        dLog.converts++;
+        logEvent("convert");
         saveState();
       }, submitDelay);
     }, fillDelay);
@@ -385,6 +588,7 @@
   // --- Main loop ---
   function tryPirate() {
     try {
+      accrueTickTime();
       if (raidInProgress) { reportStats(); return; }
       if (scanActive) { reportStats(); return; }
       if (!enabled || !pirateCityId) {
@@ -422,8 +626,10 @@
       if (document.querySelector("#cinema_c")) return;
 
       if (document.querySelector("img.captchaImage")) {
+        if (!captchaSeen) { captchaSeen = true; logEvent("captcha"); }
         return;
       }
+      captchaSeen = false;
 
       // Close any open building/view panel (port, shipyard, etc.) that blocks fortress navigation
       const openView = document.querySelector(".templateView:not(#pirateFortress_c) .close");
@@ -460,6 +666,9 @@
         lastNavigateTime = 0;
         sessionRaids++;
         if (tier === 0) sessionT1++; else sessionT2++;
+        dLog.raids++;
+        if (tier === 0) dLog.t1++; else dLog.t2++;
+        logEvent("raid", { tier, dur: duration });
         raidsSinceLastConvert++;
         saveState();
         // Safety net: clear raidInProgress after 30s in case normal flow fails
@@ -469,6 +678,9 @@
           raidInProgress = false;
           tryConvert();
         }, (3000 + Math.random() * 1000) * tm());
+        // Nav fix: refresh the fortress ~2s after the crew returns so the next
+        // capture button loads during the remaining delay, not after it.
+        schedulePreRefresh(duration * 1000 + 2000);
         return;
       }
 
@@ -513,6 +725,8 @@
     if (checkTimer) return; // guard: don't reset state if already running
     scheduleNext();
     reportStats();
+    lastTickTs = 0; prevPhase = null;
+    logEvent("on");
     console.log(P, ts(), "Started — city=" + pirateCityId + ", sleep=" + cfg.sleepStart + ":00-" + cfg.sleepEnd + ":00, mu=" + cfg.baseMu + ", σ=" + cfg.baseSigma);
   }
 
@@ -541,6 +755,9 @@
     convertTimers = [];
     handBack();
     reportStats();
+    flushLog();
+    logEvent("off");
+    flushEvents();
     console.log(P, ts(), "Stopped |", sessionStats());
   }
 
@@ -594,16 +811,16 @@
   const CFG_KEYS = {
     sleepStart:       { storage: "pirateSleepStart",       min: 0,    max: 3,    round: true },
     sleepEnd:         { storage: "pirateSleepEnd",         min: 5,    max: 9,    round: true },
-    baseMu:           { storage: "pirateBaseMu",           min: 2.7,  max: 3.3,  round: false },
-    baseSigma:        { storage: "pirateBaseSigma",        min: 0.8,  max: 1.2,  round: false },
-    breakMin:         { storage: "pirateBreakMin",         min: 3,    max: 6,    round: true },
-    breakMax:         { storage: "pirateBreakMax",          min: 8,    max: 14,   round: true },
-    streakLo:         { storage: "pirateStreakLo",          min: 8,    max: 12,   round: true },
-    streakHi:         { storage: "pirateStreakHi",          min: 16,   max: 22,   round: true },
-    distractChance:   { storage: "pirateDistractChance",   min: 0.08, max: 0.15, round: false },
-    t2Base:           { storage: "pirateT2Base",            min: 0.06, max: 0.14, round: false },
-    t2Ramp:           { storage: "pirateT2Ramp",            min: 0.40, max: 0.70, round: false },
-    t2Distract:       { storage: "pirateT2Distract",        min: 0.30, max: 0.50, round: false },
+    baseMu:           { storage: "pirateBaseMu",           min: 2.5,  max: 2.8,  round: false },
+    baseSigma:        { storage: "pirateBaseSigma",        min: 0.5,  max: 0.75, round: false },
+    breakMin:         { storage: "pirateBreakMin",         min: 2,    max: 4,    round: true },
+    breakMax:         { storage: "pirateBreakMax",          min: 4,    max: 7,    round: true },
+    streakLo:         { storage: "pirateStreakLo",          min: 14,   max: 22,   round: true },
+    streakHi:         { storage: "pirateStreakHi",          min: 26,   max: 30,   round: true },
+    distractChance:   { storage: "pirateDistractChance",   min: 0.04, max: 0.09, round: false },
+    t2Base:           { storage: "pirateT2Base",            min: 0.06, max: 0.10, round: false },
+    t2Ramp:           { storage: "pirateT2Ramp",            min: 0.40, max: 0.58, round: false },
+    t2Distract:       { storage: "pirateT2Distract",        min: 0.30, max: 0.45, round: false },
     forceBreakChance: { storage: "pirateForceBreakChance", min: 0.15, max: 0.30, round: false },
     backToBackChance: { storage: "pirateBackToBack",        min: 0.08, max: 0.20, round: false },
   };
@@ -618,9 +835,15 @@
   const KEY_PIRATE_CITY = "pirateCityId_" + worldName;
   let scanActive = false;
 
+  // Bump to force a one-time re-roll of the throughput-related timing params into
+  // the current profile's ranges (sleep + T2 params are left untouched).
+  const TUNE_VERSION = 4;
+  const TUNE_KEYS = ["baseMu", "baseSigma", "breakMin", "breakMax", "streakLo", "streakHi",
+    "distractChance", "t2Base", "t2Ramp", "t2Distract"];
+
   const allStorageKeys = ["pirateEnabled", "pirateConvertEnabled", "pirateAggressive",
     KEY_PIRATE_CITY, "pirateCityId",
-    "pirateIdleTimeout", "pirateState", "scanInProgress",
+    "pirateIdleTimeout", "pirateState", "scanInProgress", "pirateTuneVersion",
     ...Object.values(CFG_KEYS).map((k) => k.storage)];
 
   chrome.storage.local.get(allStorageKeys, (data) => {
@@ -631,16 +854,24 @@
     pirateCityId = data[KEY_PIRATE_CITY] ?? data.pirateCityId ?? null;
     if (data.pirateIdleTimeout) idleTimeout = data.pirateIdleTimeout;
 
+    // One-time migration: re-roll throughput params into the new profile's ranges,
+    // overriding the user's previous stored values (they can re-tune in the panel).
+    const migrate = (data.pirateTuneVersion || 0) < TUNE_VERSION;
+
     // Initialize missing timing params with random values (preserves existing)
     const toSave = {};
     for (const [key, def] of Object.entries(CFG_KEYS)) {
-      if (data[def.storage] != null) {
+      if (migrate && TUNE_KEYS.includes(key)) {
+        cfg[key] = randomInRange(def.min, def.max, def.round);
+        toSave[def.storage] = cfg[key];
+      } else if (data[def.storage] != null) {
         cfg[key] = data[def.storage];
       } else {
         cfg[key] = randomInRange(def.min, def.max, def.round);
         toSave[def.storage] = cfg[key];
       }
     }
+    if (migrate) toSave.pirateTuneVersion = TUNE_VERSION;
     if (Object.keys(toSave).length > 0) chrome.storage.local.set(toSave);
 
     // Only the DOM map-jumping phase blocks pirates — background fetches don't
