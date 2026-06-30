@@ -1217,10 +1217,28 @@
     const total = cities.length * phases;
     let completed = 0;
 
-    // Phase 1: fetch all city views in parallel
+    // Stub result for friendly (deployed) cities — never inspected. None of their
+    // city-view data is used (report.js filters them out of every aggregation);
+    // their stationed army is fetched separately in Phase 2.5. The stub keeps them
+    // in `results` so the deployed list still shows their name and Phase 2.5 can
+    // attach their military.
+    const deployedStub = (city) => ({
+      city, buildingData: null, headerData: null, ownerName: "",
+      townHall: null, warehouse: null, military: { units: [] },
+      boPos: null, safehouse: null, safehouseLevel: null, shPos: null, trainingQueue: [],
+    });
+
+    // Phase 1: fetch all city views in parallel.
+    // Skip friendly (deployed) cities: their view=city data is discarded, and
+    // army/full mode re-fetches view=city for them in Phase 2.5 anyway. Skipping
+    // here saves one request per deployed city in every mode and avoids the
+    // redundant double-fetch in army/full.
     const cityHtmls = await Promise.all(
       cities.map(async (city) => {
-        const html = await fetchPage("view=city&cityId=" + city.id);
+        let html = null;
+        if (city.relationship !== "deployedCities") {
+          html = await fetchPage("view=city&cityId=" + city.id);
+        }
         completed++;
         sendProgress(completed, total, "Fetching cities...");
         return html;
@@ -1232,6 +1250,7 @@
     if (mode === "basic") {
       // Basic: just parse city data, no extra fetches
       results = cities.map((city, i) => {
+        if (cityHtmls[i] == null) return deployedStub(city);
         const cityData = extractCityData(cityHtmls[i]);
         if (!cityData) return null;
         const buildingData = parseBuildingData(cityData.bgData);
@@ -1242,6 +1261,11 @@
       results = await Promise.all(
         cities.map(async (city, i) => {
           try {
+            if (cityHtmls[i] == null) {
+              completed++;
+              sendProgress(completed, total, "Fetching warehouses...");
+              return deployedStub(city);
+            }
             const cityData = extractCityData(cityHtmls[i]);
             if (!cityData) return null;
             const buildingData = parseBuildingData(cityData.bgData);
@@ -1290,6 +1314,11 @@
       results = await Promise.all(
         cities.map(async (city, i) => {
           try {
+            if (cityHtmls[i] == null) {
+              completed++;
+              sendProgress(completed, total, phaseLabel);
+              return deployedStub(city);
+            }
             const cityData = extractCityData(cityHtmls[i]);
             if (!cityData) return null;
 
