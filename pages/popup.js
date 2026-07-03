@@ -814,10 +814,12 @@
       if (el && data[a.key] != null) el.value = data[a.key];
     }
 
-    // Populate city dropdown
-    if (cities.length > 0) {
+    // Populate city dropdown — own cities only (exclude friendly/deployed cities,
+    // mirroring the advisor's relationship === "deployedCities" check)
+    const ownCities = cities.filter((c) => c.relationship !== "deployedCities");
+    if (ownCities.length > 0) {
       pirateCity.innerHTML = '<option value="">-- select --</option>';
-      for (const c of cities) {
+      for (const c of ownCities) {
         const opt = document.createElement("option");
         opt.value = c.id;
         opt.textContent = c.name + " " + c.coords;
