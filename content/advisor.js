@@ -1345,10 +1345,17 @@
 
             // Skip most fetches for deployed (non-own) cities
             const isDeployed = city.relationship === "deployedCities";
+            // Occupied enemy cities aren't ours: our stationed troops there are
+            // exposed via relatedCities (withdraw buttons), same as deployed
+            // allied cities — cityMilitary/barracks/shipyard would return the
+            // enemy owner's data, not our units. Defer to Phase 2.5.
+            const isOccupied = city.relationship === "occupiedCities";
+            const armyViaRelated = isDeployed || isOccupied;
 
             // Fetch extra views based on mode
-            // Deployed city military is deferred — relatedCities uses server session
-            // context, so parallel fetches would all get the same city's data.
+            // Deployed/occupied city military is deferred — relatedCities uses
+            // server session context, so parallel fetches would all get the
+            // same city's data.
             const fetches = [
               !isDeployed && (wantDetails || wantWorkers)
                 ? fetchPage("view=townHall&cityId=" + city.id)
@@ -1356,16 +1363,16 @@
               !isDeployed && (wantDetails || wantStorage) && whPos !== null
                 ? fetchPage("view=warehouse&cityId=" + city.id + "&position=" + whPos)
                 : Promise.resolve(null),
-              wantArmy && !isDeployed
+              wantArmy && !armyViaRelated
                 ? fetchPage("view=cityMilitary&activeTab=tabUnits&cityId=" + city.id)
                 : Promise.resolve(null),
               !isDeployed && wantSpy && shPos !== null
                 ? fetchPage("view=safehouse&cityId=" + city.id + "&position=" + shPos)
                 : Promise.resolve(null),
-              !isDeployed && wantArmy && bkPos !== null
+              !armyViaRelated && wantArmy && bkPos !== null
                 ? fetchPage("view=barracks&cityId=" + city.id + "&position=" + bkPos)
                 : Promise.resolve(null),
-              !isDeployed && wantArmy && syPos !== null
+              !armyViaRelated && wantArmy && syPos !== null
                 ? fetchPage("view=shipyard&cityId=" + city.id + "&position=" + syPos)
                 : Promise.resolve(null),
             ];
@@ -1402,11 +1409,15 @@
       );
     }
 
-    // Phase 2.5: fetch deployed city military data sequentially.
+    // Phase 2.5: fetch deployed + occupied city military data sequentially.
     // The relatedCities endpoint uses the server session context, so each
-    // deployed city needs a view=city fetch first to switch context.
+    // city needs a view=city fetch first to switch context. Occupied enemy
+    // cities expose our stationed troops the same way deployed allied cities
+    // do (relatedCities "own units" table with withdraw buttons).
     if (wantArmy) {
-      const deployed = results.filter((r) => r && r.city.relationship === "deployedCities");
+      const deployed = results.filter(
+        (r) => r && (r.city.relationship === "deployedCities" || r.city.relationship === "occupiedCities")
+      );
       for (const r of deployed) {
         try {
           sendProgress(completed, total, "Fetching deployed military...");
