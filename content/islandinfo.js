@@ -680,22 +680,7 @@
         pointerEvents: "none",
       });
 
-      const viewBtn = document.createElement("div");
-      viewBtn.title = "View city";
-      viewBtn.textContent = "\u{1F50D}";
-      Object.assign(viewBtn.style, {
-        fontSize: "18px",
-        lineHeight: "18px",
-        cursor: "pointer",
-      });
-      viewBtn.addEventListener("click", (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        window.location.href = "?view=city&cityId=" + city.id;
-      });
-
       row1.appendChild(label);
-      row1.appendChild(viewBtn);
       wrap.appendChild(row1);
 
       // Second row — state badge (lootable / looted Xd ago / empty), only for
@@ -743,7 +728,13 @@
   }
 
   // --- Barbarian village: ships needed calculation ---
-  const SHIP_CAPACITY = 500;
+  // Cargo ship capacity is 500 + N*20 (Seafaring "Cargo bay" research), and is
+  // a user-set, remembered parameter (global — capacity is per-account).
+  const BARB_CAP_KEY = "barbShipCapacity";
+  const BARB_CAP_BASE = 500;
+  const BARB_CAP_STEP = 20;
+  const BARB_CAP_MAX = 1500;
+  let shipCapacity = BARB_CAP_BASE;
   const BARB_RESOURCE_IDS = [
     "js_islandBarbarianResourceresource",    // wood
     "js_islandBarbarianResourcetradegood1",  // wine
@@ -765,11 +756,11 @@
       if (el) totalGoods += parseInt(el.textContent.replace(/\s/g, ""), 10) || 0;
     }
 
-    const ships = Math.ceil(totalGoods / SHIP_CAPACITY);
+    const ships = Math.ceil(totalGoods / shipCapacity);
     const div = document.createElement("div");
     div.id = "ik-ships-needed";
     div.style.cssText = "padding:6px 4px; font-size:14px; background:transparent; margin-top:-18px;";
-    div.innerHTML = `\u2693 Ships needed: ${ships} <span style="font-size:0.9em;opacity:0.7;">(${totalGoods.toLocaleString()} goods &divide; ${SHIP_CAPACITY})</span>`;
+    div.innerHTML = `\u2693 Ships needed: ${ships} <span style="font-size:0.9em;opacity:0.7;">(${totalGoods.toLocaleString()} goods &divide; ${shipCapacity})</span>`;
     // Insert after the info box, aligned to same horizontal position
     const infoBox = container.closest(".barbarianCityInfos");
     if (infoBox) {
@@ -810,14 +801,36 @@
         "margin:6px 0 2px; padding:5px 6px; border:1px solid #cba85f; " +
         "border-radius:4px; background:rgba(255,248,225,0.55);";
       const title = document.createElement("div");
-      title.textContent = "⚓ Ships needed by barbarian level (" + SHIP_CAPACITY + " cargo / ship)";
-      title.style.cssText = "font-size:11px; font-weight:bold; opacity:0.8; margin-bottom:4px;";
+      title.style.cssText =
+        "display:flex; align-items:center; gap:6px; flex-wrap:wrap; " +
+        "font-size:11px; font-weight:bold; opacity:0.8; margin-bottom:4px;";
+      const titleText = document.createElement("span");
+      titleText.textContent = "⚓ Ships needed by barbarian level —";
+      title.appendChild(titleText);
+      // Cargo capacity selector (500 + N*20), remembered via storage.
+      const capSel = document.createElement("select");
+      capSel.style.cssText = "font-size:11px; padding:0 2px;";
+      for (let cap = BARB_CAP_BASE; cap <= BARB_CAP_MAX; cap += BARB_CAP_STEP) {
+        const opt = document.createElement("option");
+        opt.value = cap;
+        opt.textContent = cap + " cargo / ship";
+        if (cap === shipCapacity) opt.selected = true;
+        capSel.appendChild(opt);
+      }
+      capSel.addEventListener("change", () => {
+        const v = parseInt(capSel.value, 10);
+        if (isNaN(v)) return;
+        shipCapacity = v;
+        chrome.storage.local.set({ [BARB_CAP_KEY]: v });
+        rebuildBarb();
+      });
+      title.appendChild(capSel);
       const buildRow = (goodsArr, startLevel) => {
         const grid = document.createElement("div");
         grid.style.cssText = "display:flex; flex-wrap:wrap; gap:2px; margin-bottom:2px;";
         goodsArr.forEach((goods, i) => {
           const lvl = startLevel + i;
-          const ships = Math.ceil(goods / SHIP_CAPACITY);
+          const ships = Math.ceil(goods / shipCapacity);
           const cell = document.createElement("div");
           cell.dataset.level = lvl;
           cell.title = `Level ${lvl}: ${goods.toLocaleString()} goods → ${ships} ships`;
@@ -850,6 +863,26 @@
       cell.style.boxShadow = on ? "0 0 0 1px #e6a817" : "none";
     });
   }
+
+  // Remove the injected barbarian widgets and rebuild them with the current
+  // ship capacity (called after the capacity selector changes or storage syncs).
+  function rebuildBarb() {
+    const sn = document.getElementById("ik-ships-needed");
+    if (sn) sn.remove();
+    const lp = document.getElementById("ik-barb-lookup");
+    if (lp) lp.remove();
+    injectShipsNeeded();
+    injectBarbLookup();
+  }
+
+  // Load the remembered cargo capacity; rebuild if the barb view is already up.
+  chrome.storage.local.get(BARB_CAP_KEY, (res) => {
+    const v = parseInt(res[BARB_CAP_KEY], 10);
+    if (!isNaN(v) && v >= BARB_CAP_BASE) shipCapacity = v;
+    if (document.getElementById("ik-barb-lookup") || document.getElementById("ik-ships-needed")) {
+      rebuildBarb();
+    }
+  });
 
   // --- Extract current island ID from URL query params ---
   function getCurrentIslandId() {
@@ -1083,6 +1116,15 @@
     }
     if (changes["cityMarks_" + worldName]) {
       refreshMarkLabels();
+    }
+    if (changes[BARB_CAP_KEY]) {
+      const v = parseInt(changes[BARB_CAP_KEY].newValue, 10);
+      if (!isNaN(v) && v >= BARB_CAP_BASE && v !== shipCapacity) {
+        shipCapacity = v;
+        if (document.getElementById("ik-barb-lookup") || document.getElementById("ik-ships-needed")) {
+          rebuildBarb();
+        }
+      }
     }
   });
 

@@ -1357,7 +1357,9 @@
             // server session context, so parallel fetches would all get the
             // same city's data.
             const fetches = [
-              !isDeployed && (wantDetails || wantWorkers)
+              // Town hall population/workers only makes sense for own cities;
+              // occupied enemy cities would return the enemy owner's data.
+              !armyViaRelated && (wantDetails || wantWorkers)
                 ? fetchPage("view=townHall&cityId=" + city.id)
                 : Promise.resolve(null),
               !isDeployed && (wantDetails || wantStorage) && whPos !== null

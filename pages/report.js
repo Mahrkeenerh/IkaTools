@@ -1099,8 +1099,9 @@
       return `<td class="right">${fmt(total)} <span class="val-pos">(+${fmt(remaining)})</span></td>`;
     }
 
-    // Exclude deployed (allied) cities — no warehouse data for them
-    const ownCities = report.cities.filter((c) => c.relationship !== "deployedCities");
+    // Only the player's own cities — exclude deployed (allied) and occupied
+    // (enemy) cities; their warehouse contents aren't the player's own storage.
+    const ownCities = report.cities.filter((c) => c.relationship === "ownCity");
 
     let tWood = 0, tWine = 0, tMarble = 0, tCrystal = 0, tSulfur = 0;
 

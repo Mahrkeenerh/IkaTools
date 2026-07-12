@@ -74,48 +74,6 @@ function bgExtractBgData(html) {
   return null;
 }
 
-// Parse a city-view HTML response into a compact building record.
-// Foreign cities expose updateBackgroundData with a `position` array that
-// describes every slot (built + empty) — we keep all of them so stats can
-// tell "never built" vs "not reached that slot yet" vs "built at level N".
-function bgParseCity(html) {
-  const data = bgExtractBgData(html);
-  if (!data || !Array.isArray(data.position)) return null;
-  const buildings = data.position.map((p, i) => {
-    const raw = (p && p.building) || "";
-    const parts = raw ? raw.split(/\s+/) : [];
-    const base = parts[0] || "";
-    const constructing = parts.includes("constructionSite");
-    // buildingGround = unbuilt slot (with optional modifier like "dockyard" or "sea")
-    const isEmpty = !base || base === "buildingGround";
-    const entry = {
-      pos: i,
-      type: isEmpty ? null : base,
-      level: p ? (parseInt(p.level || 0, 10) || 0) : 0,
-      groundId: p ? (typeof p.groundId === "number" ? p.groundId : parseInt(p.groundId || 0, 10) || 0) : 0,
-    };
-    if (constructing) {
-      entry.constructing = true;
-      const done = parseInt(p.completed || 0, 10) || 0;
-      if (done) entry.completeAt = done;
-    }
-    return entry;
-  });
-  return {
-    id: parseInt(data.id || 0, 10),
-    name: data.name || "",
-    ownerId: String(data.ownerId || ""),
-    ownerName: data.ownerName || "",
-    islandId: String(data.islandId || ""),
-    islandX: parseInt(data.islandXCoord || 0, 10),
-    islandY: parseInt(data.islandYCoord || 0, 10),
-    phase: typeof data.phase === "number" ? data.phase : (parseInt(data.phase || 0, 10) || 0),
-    isCapital: !!data.isCapital,
-    buildings,
-    timestamp: Date.now(),
-  };
-}
-
 function bgParseIslandPlayers(html, collectedIslands) {
   const data = bgExtractBgData(html);
   if (!data || !data.cities) return [];
@@ -667,55 +625,6 @@ async function bgDoIslandFetch(opts, state) {
   return { players: [...allPlayers.values()], totalIslands: toFetch.length, failed: islandsFailed };
 }
 
-async function bgDoCityFetch(opts, state) {
-  const { originUrl, worldName } = opts;
-
-  const all = await chrome.storage.local.get(null);
-  const islandPrefix = "island_" + worldName + "_";
-
-  let distanceSet = null;
-  if (opts.distanceRadius > 0 && opts.sourceCoords && opts.sourceCoords.length > 0) {
-    const mapKey = "map_" + worldName;
-    const mapData = all[mapKey];
-    if (mapData && mapData.islands) {
-      distanceSet = bgBuildDistanceSet(opts.sourceCoords, opts.distanceRadius, mapData.islands);
-    }
-  }
-
-  const cityList = [];
-  for (const key of Object.keys(all)) {
-    if (!key.startsWith(islandPrefix)) continue;
-    const island = all[key];
-    if (!island || !island.cities) continue;
-    if (distanceSet && !distanceSet.has(island.x + ":" + island.y)) continue;
-    for (const c of island.cities) {
-      if (c && c.id) cityList.push({ id: c.id });
-    }
-  }
-  if (cityList.length === 0) return null;
-
-  const writes = {};
-  // Retry cities whose fetch threw or whose parse returned null (malformed/logged-out response).
-  const cityRetryOpts = {
-    retries: 2,
-    backoffMs: [500, 1500],
-    shouldRetry: (result, err) => err !== null || result === null,
-    onExhausted: (c, attempts) => {
-      console.warn("[bg-scan] gave up on city after " + attempts + " attempts:", "cityId=" + c.id);
-    },
-  };
-  const { failed: citiesFailed } = await bgRunThrottled(cityList, async (c) => {
-    const html = await bgFetchPage(originUrl, "view=city&cityId=" + c.id);
-    const parsed = bgParseCity(html);
-    if (parsed) writes["cityData_" + worldName + "_" + c.id] = parsed;
-    return parsed;
-  }, "cities", state, cityRetryOpts);
-
-  if (state.cancelled) return null;
-  if (Object.keys(writes).length > 0) await chrome.storage.local.set(writes);
-  return { totalCities: cityList.length, fetched: Object.keys(writes).length, failed: citiesFailed };
-}
-
 async function bgLoadPlayersFromStoredIslands(worldName) {
   const all = await chrome.storage.local.get(null);
   const prefix = "island_" + worldName + "_";
@@ -812,21 +721,11 @@ async function runBgScan(opts) {
   await chrome.storage.local.set({ [RUNNING_KEY]: true });
 
   try {
-    const doIslands = opts.mode === "islands" || opts.mode === "full" || opts.mode === "fullCities";
-    const doCities = opts.mode === "cities" || opts.mode === "fullCities";
+    const doIslands = opts.mode === "islands" || opts.mode === "full";
     const doCt = opts.mode === "ct" || opts.mode === "full";
 
     if (doIslands) {
       const r = await bgDoIslandFetch(opts, state);
-      if (!r || state.cancelled) return;
-      if (doCities || doCt) {
-        const ok = await bgPhasePause(state);
-        if (!ok) return;
-      }
-    }
-
-    if (doCities) {
-      const r = await bgDoCityFetch(opts, state);
       if (!r || state.cancelled) return;
       if (doCt) {
         const ok = await bgPhasePause(state);
