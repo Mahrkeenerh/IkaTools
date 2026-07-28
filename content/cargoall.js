@@ -64,7 +64,9 @@
 
   function injectArmyAllButtons() {
     const form = document.getElementById("plunderForm")
-      || document.getElementById("armyDeploymentForm");
+      || document.getElementById("armyDeploymentForm")
+      || document.getElementById("blockadeForm")
+      || document.getElementById("fleetDeploymentForm");
     if (!form) return;
     const unitList = form.querySelector("ul.assignUnits");
     if (!unitList) return;
