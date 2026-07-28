@@ -6,6 +6,9 @@
   const BUTTON_COOLDOWN = 500;
   const CONFIRM_COOLDOWN = 500;
   const FAST_POLL_DURATION = 5000;
+  // After a successful free finish the DOM still shows the old countdown until
+  // the game re-renders — refractory period so we don't act on stale state.
+  const POST_FINISH_COOLDOWN = 1500;
 
   let enabled = true;
   let checkTimer = null;
@@ -13,6 +16,18 @@
   let fastStopTimer = null;
   let lastButtonClick = 0;
   let lastConfirmClick = 0;
+  let lastFinish = 0;
+
+  function stopFastPoll() {
+    if (fastTimer) {
+      clearInterval(fastTimer);
+      fastTimer = null;
+    }
+    if (fastStopTimer) {
+      clearTimeout(fastStopTimer);
+      fastStopTimer = null;
+    }
+  }
 
   function parseTime(text) {
     let total = 0;
@@ -28,8 +43,7 @@
   }
 
   function startFastPoll() {
-    if (fastTimer) clearInterval(fastTimer);
-    if (fastStopTimer) clearTimeout(fastStopTimer);
+    stopFastPoll();
     fastTimer = setInterval(tryAutoFinish, FAST_INTERVAL);
     fastStopTimer = setTimeout(() => {
       if (fastTimer) {
@@ -53,7 +67,8 @@
           lastConfirmClick = Date.now();
           lastButtonClick = 0;
           confirmBtn.click();
-          startFastPoll();
+          lastFinish = Date.now();
+          stopFastPoll();
         } else {
           window.dispatchEvent(new CustomEvent("ik-close-popup"));
           lastConfirmClick = Date.now();
@@ -63,6 +78,8 @@
 
       // Cooldown for speedup button
       if (Date.now() - lastButtonClick < BUTTON_COOLDOWN) return;
+      // Let the DOM settle after a finish before evaluating the next build
+      if (Date.now() - lastFinish < POST_FINISH_COOLDOWN) return;
 
       // Try premium builder queue first
       const countdown = document.getElementById("buildCountDown");
@@ -114,14 +131,7 @@
       clearInterval(checkTimer);
       checkTimer = null;
     }
-    if (fastTimer) {
-      clearInterval(fastTimer);
-      fastTimer = null;
-    }
-    if (fastStopTimer) {
-      clearTimeout(fastStopTimer);
-      fastStopTimer = null;
-    }
+    stopFastPoll();
   }
 
   IkUtils.ensureBridge();
