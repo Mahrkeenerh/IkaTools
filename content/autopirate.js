@@ -5,12 +5,16 @@
   const P = "[AP]";
   const NAVIGATE_COOLDOWN = 15000;
   const MISSION_DURATIONS = [150, 450]; // tier 1 = 2m30s, tier 2 = 7m30s
+  const CAPTCHA_STALL_MS = 60000;       // unsolved captcha this long → reload the page
+  const MAX_CAPTCHA_RELOADS = 3;        // consecutive stall reloads before giving up
+  const CAPTCHA_RELOAD_KEY = "ikCaptchaReloads";
 
   let enabled = false;
   let convertEnabled = false;
   let aggressive = false;
   let pirateCityId = null;
   let idleTimeout = 5000;
+  let captchaSeenAt = 0; // when the current unsolved captcha first showed up
 
   // Aggressive mode halves all human-like waits (pauses, breaks, idle, polling,
   // convert + navigate delays). Mission durations are real game cooldowns and
@@ -446,7 +450,28 @@
 
       if (document.querySelector("#cinema_c")) return;
 
-      if (document.querySelector("img.captchaImage")) return;
+      // Captcha watchdog. The solver can wedge — a dead service worker leaves the
+      // solve() promise hanging with `solving` stuck true, and exhausted auto-submits
+      // drop into manual mode — which parks the bot here forever. If a captcha
+      // outlives CAPTCHA_STALL_MS while we're idle and in control, do a real page
+      // load back into the fortress: fresh page = fresh solver state + fresh captcha.
+      if (document.querySelector("img.captchaImage")) {
+        if (!captchaSeenAt) {
+          captchaSeenAt = Date.now();
+        } else if (Date.now() - captchaSeenAt > CAPTCHA_STALL_MS) {
+          captchaSeenAt = Date.now(); // re-arm so we don't fire every poll
+          const reloads = (parseInt(sessionStorage.getItem(CAPTCHA_RELOAD_KEY), 10) || 0) + 1;
+          if (reloads <= MAX_CAPTCHA_RELOADS) {
+            sessionStorage.setItem(CAPTCHA_RELOAD_KEY, String(reloads));
+            console.log(P, ts(), "Captcha stalled >" + (CAPTCHA_STALL_MS / 1000) + "s — reloading (attempt " + reloads + ")");
+            location.href = "?view=pirateFortress&activeTab=tabBootyQuest&cityId=" + pirateCityId + "&position=17";
+          } else {
+            console.log(P, ts(), "Captcha stalled and reload limit reached — leaving it for the user");
+          }
+        }
+        return;
+      }
+      captchaSeenAt = 0;
 
       // Close any open building/view panel (port, shipyard, etc.) that blocks fortress navigation
       const openView = document.querySelector(".templateView:not(#pirateFortress_c) .close");
@@ -475,6 +500,7 @@
         const href = captureBtn.getAttribute("href");
         const duration = MISSION_DURATIONS[tier] || MISSION_DURATIONS[0];
         raidInProgress = true;
+        sessionStorage.removeItem(CAPTCHA_RELOAD_KEY); // raid launched — captcha path is healthy
         reportStats();
         navigate(href);
         const delay = randomDelay();
