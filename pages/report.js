@@ -577,15 +577,17 @@
 
     // Scientist/priest cells — max comes from a hardcoded wiki table that may be wrong.
     // If assigned > max, flag it so the table can be corrected.
-    function workerMaxCell(assigned, max) {
+    function workerMaxCell(assigned, max, invert) {
       if (max > 0 && assigned > max) {
         return `<td class="right" style="color:#ff3030;font-weight:bold;" title="Table max (${max}) exceeded — update MAX_*_BY_LEVEL in advisor.js">${assigned} / ${max} ⚠</td>`;
       }
+      const under = invert ? "#60c060" : "#e06060";
+      const full = invert ? "#e06060" : "#60c060";
       if (assigned < max) {
-        return `<td class="right" style="color:#e06060;">${assigned} / ${max}</td>`;
+        return `<td class="right" style="color:${under};">${assigned} / ${max}</td>`;
       }
       if (max > 0 && assigned >= max) {
-        return `<td class="right" style="color:#60c060;">${assigned} / ${max}</td>`;
+        return `<td class="right" style="color:${full};">${assigned} / ${max}</td>`;
       }
       return `<td class="right">${assigned} / ${max}</td>`;
     }
@@ -611,7 +613,7 @@
         ${workerCell(w.luxury.assigned, w.luxury.max, om.luxury)}
         ${prodCell(om.luxury)}
         ${workerMaxCell(w.scientists.assigned, w.scientists.max)}
-        ${workerMaxCell(w.priests.assigned, w.priests.max)}
+        ${workerMaxCell(w.priests.assigned, w.priests.max, true)}
         <td class="right">${fmt(city.citizens)}</td>
         <td class="right">${city.occupiedSpace != null ? city.occupiedSpace : "—"} / ${city.maxInhabitants != null ? city.maxInhabitants : "—"}</td>
         <td class="right"${city.growthPerHour != null && city.growthPerHour < 0 ? ' style="color:#e06060;"' : ""}>${city.growthPerHour != null ? fmtSignedFloat(city.growthPerHour) : "—"}</td>
