@@ -1,11 +1,13 @@
 // Wine timer — shows how long current city's wine lasts in the resource bar
 (() => {
-  const parseNum = (text) => IkUtils.parseNum(text);
+  // readAmount handles the game's abbreviated numbers ("1,03M") and prefers the
+  // exact value from the title attribute when present.
+  const readAmount = (el) => IkUtils.readAmount(el);
 
   function getWineData() {
-    const stock = parseNum(document.getElementById("js_GlobalMenu_wine")?.textContent);
-    const consumption = parseNum(document.getElementById("js_GlobalMenu_WineConsumption")?.textContent);
-    const production = parseNum(document.getElementById("js_GlobalMenu_production_wine")?.textContent);
+    const stock = readAmount(document.getElementById("js_GlobalMenu_wine"));
+    const consumption = readAmount(document.getElementById("js_GlobalMenu_WineConsumption"));
+    const production = readAmount(document.getElementById("js_GlobalMenu_production_wine"));
     return { stock, consumption, production };
   }
 

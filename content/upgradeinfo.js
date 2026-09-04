@@ -14,20 +14,18 @@
     glass: "js_GlobalMenu_crystal",
   };
 
-  const parseNum = (text) => IkUtils.parseNum(text);
+  const readAmount = (el) => IkUtils.readAmount(el);
 
   function formatNum(n) {
     return n.toLocaleString("en").replace(/,/g, " ");
   }
 
   function getCurrentResource(type) {
-    const el = document.getElementById(RESOURCE_IDS[type]);
-    return el ? parseNum(el.textContent) : 0;
+    return readAmount(document.getElementById(RESOURCE_IDS[type]));
   }
 
   function getCurrentWorkshopResource(type) {
-    const el = document.getElementById(WORKSHOP_RESOURCE_IDS[type]);
-    return el ? parseNum(el.textContent) : 0;
+    return readAmount(document.getElementById(WORKSHOP_RESOURCE_IDS[type]));
   }
 
   function appendBuildingMissing(li, missing) {
@@ -81,7 +79,7 @@
         if (li.classList.contains("red") && li.classList.contains("bold")) {
           const type = Object.keys(RESOURCE_IDS).find((t) => li.classList.contains(t));
           if (!type) continue;
-          const cost = parseNum(li.textContent);
+          const cost = readAmount(li);
           const current = getCurrentResource(type);
           const missing = cost - current;
           if (missing <= 0) continue;
@@ -93,7 +91,7 @@
         if (!li.closest(".highlightbox")) continue;
         const wsType = Object.keys(WORKSHOP_RESOURCE_IDS).find((t) => li.classList.contains(t));
         if (!wsType) continue;
-        const cost = parseNum(li.textContent);
+        const cost = readAmount(li);
         const current = getCurrentWorkshopResource(wsType);
         const missing = cost - current;
         if (missing <= 0) continue;

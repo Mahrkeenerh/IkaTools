@@ -82,6 +82,34 @@ globalThis.IkUtils = (() => {
     return m ? parseInt(m[0].replace(/[\s,.]/g, ""), 10) || 0 : 0;
   }
 
+  // Game abbreviates large numbers ("1,26M"), so a plain digit-strip parse is
+  // off by orders of magnitude. Handle the k/M/B suffixes explicitly.
+  function parseAmount(text) {
+    if (!text) return 0;
+    const m = String(text).match(/(\d[\d\s.,]*)(?:\s*(mrd|mio|[kmb])\.?(?![\p{L}]))?/iu);
+    if (!m) return 0;
+    let num = m[1].replace(/[\s\u00a0]/g, "");
+    const suf = (m[2] || "").toLowerCase();
+    const mult = suf.startsWith("mrd") || suf === "b" ? 1e9
+      : suf.startsWith("mio") || suf === "m" ? 1e6
+      : suf === "k" ? 1e3 : 1;
+    if (mult > 1) {
+      // With a suffix the last separator is a decimal point, not a grouping mark
+      const sep = Math.max(num.lastIndexOf(","), num.lastIndexOf("."));
+      if (sep >= 0) num = num.slice(0, sep).replace(/[.,]/g, "") + "." + num.slice(sep + 1);
+      return Math.round(parseFloat(num) * mult) || 0;
+    }
+    return parseInt(num.replace(/[.,]/g, ""), 10) || 0;
+  }
+
+  // Prefer the title attribute — the game puts the exact, unabbreviated amount there
+  function readAmount(el) {
+    if (!el) return 0;
+    const title = el.getAttribute && el.getAttribute("title");
+    if (title && /\d/.test(title)) return parseAmount(title);
+    return parseAmount(el.textContent);
+  }
+
   // Get city list from bridge — returns Promise<Array<{id, name, coords}>>
   function getCities() {
     return new Promise((resolve) => {
@@ -180,5 +208,5 @@ globalThis.IkUtils = (() => {
     return set.size > 0 ? set : null;
   }
 
-  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, getCities, reorderToolbarItems, parseBackgroundData, getOwnCityIds };
+  return { ensureBridge, getWorldName, getUrlWorldName, parseTilesFromDOM, parseNum, parseAmount, readAmount, getCities, reorderToolbarItems, parseBackgroundData, getOwnCityIds };
 })();
