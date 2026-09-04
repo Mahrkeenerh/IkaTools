@@ -14,6 +14,7 @@
   let initialized = false; // guard against duplicate init() calls
   let lastIslandId = null; // track current island to detect island-to-island navigation
   let currentIsland = null; // last extracted island, used by refreshLootedLabels
+  let marksDirty = false; // marks changed while the island DOM was swapped out by an overlay
 
   // World-scoped storage key helpers — all URL-based (stable across language settings)
   const worldName = IkUtils.getUrlWorldName() || "unknown";
@@ -722,9 +723,25 @@
   async function refreshMarkLabels() {
     if (document.body.id !== "island" || !currentIsland) return;
     await loadMarks();
+    // While a templateView overlay is open (military advisor, battle report,
+    // spy missions, …) the game detaches the island DOM and restores it — old
+    // labels included — when the overlay closes. Re-injecting now would be a
+    // no-op against the detached tree, leaving the restored labels stale, so
+    // defer until the island DOM is back (see the sidebar observer below).
+    if (!islandLabelsLive()) { marksDirty = true; return; }
+    marksDirty = false;
     // Strip existing labels and re-inject so mark state appears/disappears.
     document.querySelectorAll(".ik-city-label").forEach((el) => el.remove());
     injectCityLabels(currentIsland);
+  }
+
+  // True when the island's city-slot containers are actually in the document —
+  // i.e. the island view is on screen rather than covered by an overlay view.
+  function islandLabelsLive() {
+    if (!currentIsland) return false;
+    return currentIsland.cities.some(
+      (c) => document.getElementById("cityLocation" + c.position + "Scroll")
+    );
   }
 
   // --- Barbarian village: ships needed calculation ---
@@ -1076,6 +1093,9 @@
       sidebarDebounce = null;
       refreshSidebarMark();
       passiveScrapeSelectedTotal();
+      // A mark was toggled from an overlay (battle report, spy log, …) while
+      // the island DOM was swapped out — re-apply now that it is back.
+      if (marksDirty && islandLabelsLive()) refreshMarkLabels();
     }, 80);
   });
   sidebarObs.observe(document.body, { childList: true, subtree: true });
