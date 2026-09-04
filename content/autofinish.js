@@ -8,7 +8,7 @@
   const FAST_POLL_DURATION = 5000;
   // After a successful free finish the DOM still shows the old countdown until
   // the game re-renders — refractory period so we don't act on stale state.
-  const POST_FINISH_COOLDOWN = 1500;
+  const POST_FINISH_COOLDOWN = 500;
 
   let enabled = true;
   let checkTimer = null;
